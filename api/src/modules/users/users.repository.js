@@ -189,5 +189,22 @@ export class UsersRepository {
 
     return 1 // Successfully removed
   }
+
+  async getUsersList(searchQuery, tableConfig) {
+    const query = this.knex('users').select([
+      'id', 'username', 'display_name', 'email', 'created_at', 'avatar_url'
+    ]);
+
+    if (searchQuery) {
+      q.orWhereRaw(`LOWER(users.display_name) LIKE ?`, [`%${searchQuery.toLowerCase()}%`]);
+      q.orWhereRaw(`LOWER(users.email) LIKE ?`, [`%${searchQuery.toLowerCase()}%`]);
+      q.orWhereRaw(`LOWER(users.username) LIKE ?`, [`%${searchQuery.toLowerCase()}%`]);
+    }
+
+    return query
+      .limit(tableConfig.limit)
+      .offset(tableConfig.offset)
+      .orderBy(tableConfig.sortBy, tableConfig.orderBy);
+  }
 }
 

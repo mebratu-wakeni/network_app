@@ -6,7 +6,7 @@ import knex from '../../db/knex.js'
 import { UsersRepository } from './users.repository.js'
 import { UsersService } from './users.service.js'
 import { UsersController } from './users.controller.js'
-import { validate, validateParams, updateUserSchema, idParamSchema, assignRoleSchema, removeRoleSchema, assignRuleSchema, removeRuleSchema } from './users.schema.js'
+import { validate, validateParams, updateUserSchema, idParamSchema, assignRoleSchema, removeRoleSchema, assignRuleSchema, removeRuleSchema, searchUsersSchema } from './users.schema.js'
 import { authenticate, requireRole } from '../../middleware/auth.js'
 
 // Initialize dependencies
@@ -67,6 +67,12 @@ router.delete(
   validateParams(idParamSchema),
   validate(removeRuleSchema),
   usersController.removeRule
+)
+
+router.post(
+  '/search',
+  validate(searchUsersSchema),
+  usersController.getUsersList
 )
 
 export default router

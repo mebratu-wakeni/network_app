@@ -304,5 +304,9 @@ export class UsersService {
       removed: deleted > 0 // true if removed, false if not assigned
     }
   }
+
+  async getUsersList(searchQuery, tableConfig){
+    return await this.repository.getUsersList(searchQuery, tableConfig);
+  }
 }
 

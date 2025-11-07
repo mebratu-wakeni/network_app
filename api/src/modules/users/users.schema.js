@@ -97,3 +97,18 @@ export const assignRuleByIdSchema = z.object({
 export const assignRuleSchema = z.union([assignRuleByKeySchema, assignRuleByIdSchema])
 
 export const removeRuleSchema = z.union([assignRuleByKeySchema, assignRuleByIdSchema])
+
+export const searchUsersSchema = z.object({
+  searchQuery: z.string().optional().default(''),
+  tableConfig: z.object({
+    limit: z.number().min(1).max(100).default(10),
+    offset: z.number().min(0).default(0),
+    sortBy: z.enum(['id', 'username', 'email', 'display_name', 'is_active', 'created_at', 'updated_at']).default('id'),
+    orderBy: z.enum(['asc', 'desc']).default('desc')
+  }).default({
+    limit: 10,
+    offset: 0,
+    sortBy: 'id',
+    orderBy: 'desc'
+  })
+});
