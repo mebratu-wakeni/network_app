@@ -1,5 +1,6 @@
 import express from 'express'
 import dotenv from 'dotenv'
+import cors from  'cors'
 import knex from './db/knex.js'
 import v1Routes from './routes/index.js'
 import { notFound, errorHandler } from './middleware/error.js'
@@ -9,7 +10,10 @@ dotenv.config()
 export function createApp() {
   const app = express()
 
-  app.use(express.json())
+
+  app.use(cors()); // Allow LAN clients
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
   // Attach knex instance to req if needed by middlewares/controllers
   app.use((req, _res, next) => { req.knex = knex; next() })

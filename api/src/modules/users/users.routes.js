@@ -6,7 +6,10 @@ import knex from '../../db/knex.js'
 import { UsersRepository } from './users.repository.js'
 import { UsersService } from './users.service.js'
 import { UsersController } from './users.controller.js'
-import { validate, validateParams, updateUserSchema, idParamSchema, assignRoleSchema, removeRoleSchema, assignRuleSchema, removeRuleSchema, searchUsersSchema } from './users.schema.js'
+import { 
+  validate, validateParams, updateUserSchema, idParamSchema, 
+  assignRoleSchema, removeRoleSchema, assignRuleSchema, removeRuleSchema, 
+  searchUsersSchema, updateUserProfileSchema, changePasswordSchema } from './users.schema.js'
 import { authenticate, requireRole } from '../../middleware/auth.js'
 
 // Initialize dependencies
@@ -75,5 +78,23 @@ router.post(
   usersController.getUsersList
 )
 
+router.patch(
+  '/profile',
+  validate(updateUserProfileSchema), // Validation middleware
+  usersController.updateProfile
+);
+
+// Upload user avatar (POST /api/users/avatar)
+router.post(
+  '/avatar',
+  usersController.uploadAvatar
+);
+
+// Change user password (POST /api/users/change-password)
+router.post(
+  '/change-password',
+  validate(changePasswordSchema), // Validation middleware
+  usersController.changePassword
+);
 export default router
 

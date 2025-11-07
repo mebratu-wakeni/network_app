@@ -1,6 +1,4 @@
-/**
- * Repository: Data access layer for users
- */
+
 export class UsersRepository {
   constructor(knex) {
     this.knex = knex
@@ -206,5 +204,64 @@ export class UsersRepository {
       .offset(tableConfig.offset)
       .orderBy(tableConfig.sortBy, tableConfig.orderBy);
   }
+
+  updateProfile = async (userId, profileData) => {
+    const [updatedUser] = await this.knex('users')
+      .where('id', userId)
+      .update({
+        ...profileData,
+        updated_at: this.knex.fn.now()
+      })
+      .returning([
+        'id', 'username', 'email', 'display_name',
+        'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
+        'avatar_width', 'avatar_height', 'avatar_updated_at',
+        'created_at', 'updated_at'
+      ]);
+
+    return updatedUser;
+  };
+
+  updateAvatar = async (userId, avatarData) => {
+    const [updatedUser] = await this.knex('users')
+      .where('id', userId)
+      .update({
+        ...avatarData,
+        avatar_updated_at: this.knex.fn.now(),
+        updated_at: this.knex.fn.now()
+      })
+      .returning([
+        'id', 'username', 'email', 'display_name',
+        'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
+        'avatar_width', 'avatar_height', 'avatar_updated_at',
+        'created_at', 'updated_at'
+      ]);
+
+    return updatedUser;
+  };
+
+  changePassword = async (userId, hashedPassword) => {
+    await this.knex('users')
+      .where('id', userId)
+      .update({
+        password_hash: hashedPassword,
+        updated_at: this.knex.fn.now()
+      });
+
+    return { message: 'Password updated successfully' };
+  };
+
+  getUserById = async (userId) => {
+    return await this.knex('users')
+      .select([
+        'id', 'username', 'email', 'display_name', 'bio',
+        'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
+        'avatar_width', 'avatar_height', 'avatar_updated_at',
+        'created_at', 'updated_at'
+      ])
+      .where('id', userId)
+      .first();
+  };
+
 }
 

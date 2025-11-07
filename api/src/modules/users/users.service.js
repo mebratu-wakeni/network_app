@@ -308,5 +308,23 @@ export class UsersService {
   async getUsersList(searchQuery, tableConfig){
     return await this.repository.getUsersList(searchQuery, tableConfig);
   }
+
+  // In your UsersService class:
+
+  async updateProfile(userId, profileData) {
+    // Implementation using your repository
+    return await this.repository.updateProfile(userId, profileData);
+  }
+
+  async updateAvatar(userId, avatarData) {
+    // Implementation using your repository
+    return await this.repository.updateAvatar(userId, avatarData);
+  }
+
+  async changePassword(userId, passwordData) {
+    // Implementation using your repository
+    // Include password validation and hashing logic
+    return await this.repository.changePassword(userId, passwordData);
+  }
 }
 

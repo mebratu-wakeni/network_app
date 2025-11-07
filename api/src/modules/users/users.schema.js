@@ -112,3 +112,22 @@ export const searchUsersSchema = z.object({
     orderBy: 'desc'
   })
 });
+
+// Update profile schema
+export const updateUserProfileSchema = z.object({
+  username: z.string().min(3).max(30).optional(),
+  email: z.string().email().optional(),
+  displayName: z.string().min(1).max(100).optional(),
+  // Add other profile fields as needed
+});
+
+// Change password schema
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(6),
+  newPassword: z.string().min(8),
+  confirmPassword: z.string().min(8)
+}).refine((data) => data.newPassword === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"]
+});
+

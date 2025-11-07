@@ -1,6 +1,11 @@
 /**
  * Controller: HTTP layer for users
  */
+
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import sharp from 'sharp';
 export class UsersController {
   constructor(service) {
     this.service = service
@@ -106,5 +111,111 @@ export class UsersController {
       
     }
   }
+
+  // In your UsersController class:
+
+  updateProfile = async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+      const user = await this.service.updateProfile(userId, req.validBody);
+      res.json({ ok: true, user });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  uploadAvatar = async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+
+      // Create multer instance
+      const upload = multer({
+        storage: multer.diskStorage({
+          destination: (req, file, cb) => {
+            const uploadDir = 'uploads/avatars/';
+            if (!fs.existsSync(uploadDir)) {
+              fs.mkdirSync(uploadDir, { recursive: true });
+            }
+            console.log('Uploading to directory:', uploadDir); // Debug log
+            cb(null, uploadDir);
+          },
+          filename: (req, file, cb) => {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const ext = path.extname(file.originalname);
+            const filename = `avatar-${userId}-${uniqueSuffix}${ext}`;
+            console.log('Generated filename:', filename); // Debug log
+            cb(null, filename);
+          }
+        }),
+        fileFilter: (req, file, cb) => {
+          if (file.mimetype.startsWith('image/')) {
+            console.log('File accepted:', file.originalname, file.mimetype); // Debug log
+            cb(null, true);
+          } else {
+            console.log('File rejected:', file.originalname, file.mimetype); // Debug log
+            cb(new Error('Only image files are allowed'), false);
+          }
+        },
+        limits: {
+          fileSize: 5 * 1024 * 1024 // 5MB limit
+        }
+      });
+
+      // Wrap the multer middleware in a Promise to handle it properly
+      const uploadPromise = new Promise((resolve, reject) => {
+        upload.single('avatar')(req, res, (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      await uploadPromise;
+
+      if (!req.file) {
+        return res.status(400).json({ ok: false, error: 'No avatar file uploaded' });
+      }
+
+      console.log('File uploaded successfully:', req.file); // Debug log
+
+      // Process image to get metadata
+      const imageBuffer = await sharp(req.file.path)
+        .metadata()
+        .then(metadata => ({
+          width: metadata.width,
+          height: metadata.height,
+          mime: metadata.format,
+          bytes: req.file.size
+        }));
+
+      const avatarData = {
+        avatar_key: req.file.filename,
+        avatar_url: `/uploads/avatars/${req.file.filename}`,
+        avatar_mime: `image/${imageBuffer.mime}`,
+        avatar_bytes: imageBuffer.bytes,
+        avatar_width: imageBuffer.width,
+        avatar_height: imageBuffer.height
+      };
+
+      const user = await this.service.updateAvatar(userId, avatarData);
+
+      res.json({ ok: true, user });
+    } catch (error) {
+      console.error('Upload error:', error); // Debug log
+      next(error);
+    }
+  };
+
+  changePassword = async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+      const result = await this.service.changePassword(userId, req.validBody);
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
