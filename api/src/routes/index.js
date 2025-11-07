@@ -1,5 +1,7 @@
 import { Router } from 'express'
-import testItems from './testItems.routes.js'
+import testItems from '../modules/testItems/testItems.routes.js'
+import auth from '../modules/auth/auth.routes.js'
+import users from '../modules/users/users.routes.js'
 
 const router = Router()
 
@@ -11,7 +13,12 @@ router.get('/db-health', async (_req, res, next) => {
   } catch (err) { next(err) }
 })
 
+// Public auth routes
+router.use('/auth', auth)
+
+// Protected routes
 router.use('/test-items', testItems)
+router.use('/users', users)
 
 export default router
 

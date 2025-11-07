@@ -69,6 +69,8 @@ curl http://localhost:4000/api/db-health
 docker compose exec backend npx knex --knexfile db/knexfile.js migrate:latest
 ```
 
+Note: Docker Postgres is mapped to host port 5433 (db:5432 -> host:5433) to avoid conflicts with any local Postgres.
+
 ## Electron + Vite App (frontend)
 Run the desktop app during development:
 ```
@@ -89,6 +91,22 @@ Rollback last batch:
 ```
 npm run rollback
 ```
+
+### Running migrations and seeds against Docker DB from your host
+If you want to run migrations/seeds without entering the container, point `DATABASE_URL` to the exposed Docker port 5433:
+```
+cd api
+DATABASE_URL=postgres://postgres:password@localhost:5433/pharma_dev npx knex --knexfile db/knexfile.js migrate:latest
+DATABASE_URL=postgres://postgres:password@localhost:5433/pharma_dev npx knex --knexfile db/knexfile.js seed:run
+```
+
+### Verifying seeded RBAC data
+List roles inside the DB container:
+```
+docker compose exec db psql -U postgres -d pharma_dev -c "SELECT name FROM roles ORDER BY 1;"
+```
+
+You should see: admin, manager, viewer.
 
 ## Troubleshooting
 - API uses local DB instead of Docker DB:
