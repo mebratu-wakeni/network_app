@@ -16,7 +16,14 @@ electron.contextBridge.exposeInMainWorld("ipcRenderer", {
   invoke(...args) {
     const [channel, ...omit] = args;
     return electron.ipcRenderer.invoke(channel, ...omit);
-  }
+  },
+  checkDocker: () => electron.ipcRenderer.invoke("server:check-docker"),
+  startServer: (mode) => electron.ipcRenderer.invoke("server:start", mode),
+  stopServer: (mode) => electron.ipcRenderer.invoke("server:stop", mode),
+  getServerStatus: () => electron.ipcRenderer.invoke("server:status"),
+  checkServerHealth: () => electron.ipcRenderer.invoke("server:health"),
+  getServerLogs: (service, lines) => electron.ipcRenderer.invoke("server:logs", service, lines),
+  checkDevServerStatus: () => electron.ipcRenderer.invoke("server:check-dev-status")
   // You can expose other APTs you need here.
   // ...
 });

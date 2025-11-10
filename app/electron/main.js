@@ -1,7 +1,8 @@
-import { app, BrowserWindow, nativeImage } from 'electron'
+import { app, BrowserWindow, nativeImage, ipcMain } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import ServerManager from './services/serviceManager'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -29,6 +30,7 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
 let win;
+const serverManager = new ServerManager()
 
 const iconPath = path.join(__dirname, '..', 'public', 'masatech-logo.png');
 const iconImage = nativeImage.createFromPath(iconPath);
@@ -54,7 +56,43 @@ function createWindow() {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }
+  win.maximize();
 }
+
+// IPC Handlers for service management
+ipcMain.handle('server:check-docker', async () => {
+  return await serverManager.checkDocker()
+})
+
+ipcMain.handle('server:start', async (event, mode = 'docker') => {
+  if (mode === 'dev') {
+    return await serverManager.startDevServer()
+  }
+  return await serverManager.startServices()
+})
+
+ipcMain.handle('server:stop', async (event, mode = 'docker') => {
+  if (mode === 'dev') {
+    return await serverManager.stopDevServer()
+  }
+  return await serverManager.stopServices()
+})
+
+ipcMain.handle('server:status', async () => {
+  return await serverManager.getServiceStatus()
+})
+
+ipcMain.handle('server:health', async () => {
+  return await serverManager.checkApiHealth()
+})
+
+ipcMain.handle('server:logs', async (event, service, lines) => {
+  return await serverManager.getLogs(service, lines)
+})
+
+ipcMain.handle('server:check-dev-status', async () => {
+  return await serverManager.checkDevServerStatus()
+})
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
@@ -72,6 +110,11 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
   }
+})
+
+app.on('before-quit', async () => {
+  // Optionally stop services when app quits
+  // await serverManager.stopServices()
 })
 
 app.whenReady().then(createWindow)

@@ -22,14 +22,47 @@ const router = Router()
 // All routes require authentication
 router.use(authenticate)
 
-// Get user profile
+// Search users (must come before /:id route)
+router.post(
+  '/search',
+  validate(searchUsersSchema),
+  usersController.getUsersList
+)
+
+// User profile management (must come before /:id route)
+router.patch(
+  '/profile',
+  validate(updateUserProfileSchema),
+  usersController.updateProfile
+)
+
+// Upload user avatar (must come before /:id route)
+router.post(
+  '/avatar',
+  usersController.uploadAvatar
+)
+
+// Remove user avatar (must come before /:id route)
+router.delete(
+  '/avatar',
+  usersController.removeAvatar
+)
+
+// Change user password (must come before /:id route)
+router.post(
+  '/change-password',
+  validate(changePasswordSchema),
+  usersController.changePassword
+)
+
+// Get user profile by ID
 router.get(
   '/:id',
   validateParams(idParamSchema),
   usersController.getProfile
 )
 
-// Update user profile (requires users.write rule or own profile)
+// Update user profile by ID (requires users.write rule or own profile)
 router.put(
   '/:id',
   validateParams(idParamSchema),
@@ -46,6 +79,7 @@ router.post(
   usersController.assignRole
 )
 
+// Remove role from user (admin only)
 router.delete(
   '/:id/roles',
   requireRole(['admin']),
@@ -72,29 +106,19 @@ router.delete(
   usersController.removeRule
 )
 
-router.post(
-  '/search',
-  validate(searchUsersSchema),
-  usersController.getUsersList
+// Get user's roles and rules
+router.get(
+  '/:id/permissions',
+  validateParams(idParamSchema),
+  usersController.getPermissions
 )
 
 router.patch(
-  '/profile',
-  validate(updateUserProfileSchema), // Validation middleware
-  usersController.updateProfile
-);
+  '/:id/toggle-status',
+  requireRole(['admin']),
+  validateParams(idParamSchema),
+  usersController.toggleUserStatus
+)
 
-// Upload user avatar (POST /api/users/avatar)
-router.post(
-  '/avatar',
-  usersController.uploadAvatar
-);
-
-// Change user password (POST /api/users/change-password)
-router.post(
-  '/change-password',
-  validate(changePasswordSchema), // Validation middleware
-  usersController.changePassword
-);
 export default router
 

@@ -190,13 +190,16 @@ export class UsersRepository {
 
   async getUsersList(searchQuery, tableConfig) {
     const query = this.knex('users').select([
-      'id', 'username', 'display_name', 'email', 'created_at', 'avatar_url'
+      'id', 'username', 'display_name', 'email', 'created_at', 'avatar_url', 'is_active'
     ]);
 
-    if (searchQuery) {
-      q.orWhereRaw(`LOWER(users.display_name) LIKE ?`, [`%${searchQuery.toLowerCase()}%`]);
-      q.orWhereRaw(`LOWER(users.email) LIKE ?`, [`%${searchQuery.toLowerCase()}%`]);
-      q.orWhereRaw(`LOWER(users.username) LIKE ?`, [`%${searchQuery.toLowerCase()}%`]);
+    if (searchQuery && searchQuery.trim()) {
+      const search = `%${searchQuery.toLowerCase().trim()}%`
+      query.where(function() {
+        this.whereRaw('LOWER(users.display_name) LIKE ?', [search])
+          .orWhereRaw('LOWER(users.email) LIKE ?', [search])
+          .orWhereRaw('LOWER(users.username) LIKE ?', [search])
+      })
     }
 
     return query
@@ -205,11 +208,33 @@ export class UsersRepository {
       .orderBy(tableConfig.sortBy, tableConfig.orderBy);
   }
 
-  updateProfile = async (userId, profileData) => {
+  async getUsersListCount(searchQuery) {
+    const query = this.knex('users')
+    
+    if (searchQuery && searchQuery.trim()) {
+      const search = `%${searchQuery.toLowerCase().trim()}%`
+      query.where(function() {
+        this.whereRaw('LOWER(users.display_name) LIKE ?', [search])
+          .orWhereRaw('LOWER(users.email) LIKE ?', [search])
+          .orWhereRaw('LOWER(users.username) LIKE ?', [search])
+      })
+    }
+
+    const result = await query.count('id as total').first()
+    return parseInt(result.total, 10)
+  }
+
+  async updateProfile(userId, profileData) {
+    // Map camelCase to snake_case for database
+    const updateData = {}
+    if (profileData.username !== undefined) updateData.username = profileData.username
+    if (profileData.email !== undefined) updateData.email = profileData.email
+    if (profileData.displayName !== undefined) updateData.display_name = profileData.displayName
+    
     const [updatedUser] = await this.knex('users')
       .where('id', userId)
       .update({
-        ...profileData,
+        ...updateData,
         updated_at: this.knex.fn.now()
       })
       .returning([
@@ -219,10 +244,10 @@ export class UsersRepository {
         'created_at', 'updated_at'
       ]);
 
-    return updatedUser;
-  };
+    return updatedUser
+  }
 
-  updateAvatar = async (userId, avatarData) => {
+  async updateAvatar(userId, avatarData) {
     const [updatedUser] = await this.knex('users')
       .where('id', userId)
       .update({
@@ -235,33 +260,92 @@ export class UsersRepository {
         'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
         'avatar_width', 'avatar_height', 'avatar_updated_at',
         'created_at', 'updated_at'
-      ]);
+      ])
 
-    return updatedUser;
-  };
+    return updatedUser
+  }
 
-  changePassword = async (userId, hashedPassword) => {
+  /**
+   * Remove avatar from user (set all avatar fields to null)
+   */
+  async removeAvatar(userId) {
+    const [updatedUser] = await this.knex('users')
+      .where('id', userId)
+      .update({
+        avatar_key: null,
+        avatar_url: null,
+        avatar_mime: null,
+        avatar_bytes: null,
+        avatar_width: null,
+        avatar_height: null,
+        avatar_updated_at: null,
+        updated_at: this.knex.fn.now()
+      })
+      .returning([
+        'id', 'username', 'email', 'display_name',
+        'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
+        'avatar_width', 'avatar_height', 'avatar_updated_at',
+        'created_at', 'updated_at'
+      ])
+
+    return updatedUser
+  }
+
+  async changePassword(userId, hashedPassword) {
     await this.knex('users')
       .where('id', userId)
       .update({
         password_hash: hashedPassword,
         updated_at: this.knex.fn.now()
-      });
+      })
 
-    return { message: 'Password updated successfully' };
-  };
+    return { message: 'Password updated successfully' }
+  }
 
-  getUserById = async (userId) => {
+  async getUserById(userId) {
     return await this.knex('users')
       .select([
-        'id', 'username', 'email', 'display_name', 'bio',
+        'id', 'username', 'email', 'display_name',
         'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
         'avatar_width', 'avatar_height', 'avatar_updated_at',
         'created_at', 'updated_at'
       ])
       .where('id', userId)
-      .first();
-  };
+      .first()
+  }
+
+  /**
+   * Toggle user active status
+   * @param {number} userId - User ID
+   * @returns {Object} Updated user
+   */
+  async toggleUserStatus(userId) {
+    // Get current user status
+    const user = await this.findById(userId)
+    if (!user) {
+      const error = new Error('User not found')
+      error.status = 404
+      throw error
+    }
+
+    const newStatus = !user.is_active
+
+    // Update user status
+    const [updatedUser] = await this.knex('users')
+      .where('id', userId)
+      .update({
+        is_active: newStatus,
+        updated_at: this.knex.fn.now()
+      })
+      .returning([
+        'id', 'username', 'email', 'display_name', 'is_active',
+        'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
+        'avatar_width', 'avatar_height', 'avatar_updated_at',
+        'created_at', 'updated_at'
+      ])
+
+    return updatedUser
+  }
 
 }
 

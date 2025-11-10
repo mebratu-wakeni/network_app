@@ -97,18 +97,17 @@ export class UsersController {
 
   getUsersList = async (req, res, next) => {
     try {
-      const { searchQuery, tableConfig } = req.validBody || req.validBody;
-      const users = await this.service.getUsersList(searchQuery, tableConfig);
+      const { searchQuery = '', tableConfig = {} } = req.validBody || {}
+      const result = await this.service.getUsersList(searchQuery, tableConfig)
       
-      // ✅ Return empty array instead of throwing error
       res.json({
         ok: true,
-        users,
-        total: users.length, // Consider adding total count for pagination
-        hasMore: users.length === tableConfig.limit // For infinite scroll
-      });
+        users: result.users,
+        total: result.total,
+        hasMore: result.hasMore
+      })
     } catch (error) {
-      
+      next(error)
     }
   }
 
@@ -217,5 +216,69 @@ export class UsersController {
       next(error);
     }
   };
+
+  /**
+   * DELETE /api/users/avatar
+   * Remove user's avatar (delete file and clear database fields)
+   */
+  removeAvatar = async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+
+      // Get avatar key and remove from database
+      const result = await this.service.removeAvatar(userId);
+
+      // Delete the file from filesystem if it exists
+      if (result.avatarKey) {
+        const filePath = path.join('uploads', 'avatars', result.avatarKey);
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            // eslint-disable-next-line no-console
+            console.log(`Deleted avatar file: ${filePath}`);
+          }
+        } catch (fileError) {
+          // Log error but don't fail the request if file deletion fails
+          // (file might have been manually deleted or doesn't exist)
+          // eslint-disable-next-line no-console
+          console.warn(`Warning: Could not delete avatar file ${filePath}:`, fileError.message);
+        }
+      }
+
+      res.json({ ok: true, user: result.user });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Remove avatar error:', error);
+      next(error);
+    }
+  };
+
+  /**
+   * GET /api/users/:id/permissions
+   * Get user's roles and directly assigned rules
+   */
+  getPermissions = async (req, res, next) => {
+    try {
+      const { id } = req.validParams || { id: Number(req.params.id) }
+      const permissions = await this.service.getUserRolesAndRules(id)
+      res.json({ ok: true, ...permissions })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  /**
+   * PATCH /api/users/:id/toggle-status
+   * Toggle user active status (admin only)
+   */
+  toggleUserStatus = async (req, res, next) => {
+    try {
+      const { id } = req.validParams || { id: Number(req.params.id) }
+      const user = await this.service.toggleUserStatus(id)
+      res.json({ ok: true, user })
+    } catch (error) {
+      next(error)
+    }
+  }
 }
 

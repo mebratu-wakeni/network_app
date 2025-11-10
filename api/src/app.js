@@ -4,16 +4,70 @@ import cors from  'cors'
 import knex from './db/knex.js'
 import v1Routes from './routes/index.js'
 import { notFound, errorHandler } from './middleware/error.js'
+import { serverIP } from './detectIp.js'
 
 dotenv.config()
 
 export function createApp() {
   const app = express()
 
+  // CORS configuration for LAN network access
+  // Allow requests from localhost, LAN IP, and configured frontend origin
+  const allowedOrigins = []
+  
+  // Add localhost origins
+  allowedOrigins.push('http://localhost:5173', 'http://127.0.0.1:5173')
+  
+  // Add LAN IP origins (common Electron/desktop app ports)
+  if (serverIP && serverIP !== '127.0.0.1') {
+    allowedOrigins.push(
+      `http://${serverIP}:5173`,
+      `http://${serverIP}:3000`,
+      `http://${serverIP}:5174`
+    )
+  }
+  
+  // Add configured frontend origin from environment
+  if (process.env.FRONTEND_ORIGIN) {
+    const origins = process.env.FRONTEND_ORIGIN.split(',').map(o => o.trim())
+    allowedOrigins.push(...origins)
+  }
 
-  app.use(cors()); // Allow LAN clients
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  // In development, be more permissive (allow all LAN access)
+  // In production, you should restrict to specific origins
+  const corsOptions = {
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, Postman, curl)
+      if (!origin) return callback(null, true)
+      
+      // In development, allow all LAN IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+      if (process.env.NODE_ENV !== 'production') {
+        const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1')
+        const isLAN = /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(origin)
+        
+        if (isLocalhost || isLAN || allowedOrigins.includes(origin)) {
+          return callback(null, true)
+        }
+      }
+      
+      // In production, only allow specific origins
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true)
+      } else {
+        callback(new Error('Not allowed by CORS'))
+      }
+    },
+    credentials: true, // Allow cookies/auth headers
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  }
+
+  app.use(cors(corsOptions))
+  app.use(express.json())
+  app.use(express.urlencoded({ extended: true }))
+
+  // Serve static files (avatars)
+  app.use('/uploads', express.static('uploads'));
 
   // Attach knex instance to req if needed by middlewares/controllers
   app.use((req, _res, next) => { req.knex = knex; next() })

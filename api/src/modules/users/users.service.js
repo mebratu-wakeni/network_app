@@ -126,6 +126,44 @@ export class UsersService {
   }
 
   /**
+   * Get user's roles and rules formatted as requested
+   * Returns: { roles: { roleName: [ruleKeys] }, directlyAssignedRules: [ruleKeys] }
+   */
+  async getUserRolesAndRules(userId) {
+    // Verify user exists
+    await this.getById(userId)
+
+    // Get user's roles and directly assigned rules in parallel
+    const [userRoles, directRules] = await Promise.all([
+      this.repository.getUserRoles(userId),
+      this.repository.getUserRules(userId)
+    ])
+    
+    // Get rules for each role in parallel
+    const roleRulePromises = userRoles.map(role => 
+      this.repository.getRoleRules(role.id).then(rules => ({
+        roleName: role.name,
+        ruleKeys: rules.map(rule => rule.key)
+      }))
+    )
+    const rolesWithRulesArray = await Promise.all(roleRulePromises)
+
+    // Convert array to object format
+    const rolesWithRules = {}
+    for (const { roleName, ruleKeys } of rolesWithRulesArray) {
+      rolesWithRules[roleName] = ruleKeys
+    }
+
+    // Get directly assigned rule keys
+    const directlyAssignedRules = directRules.map(rule => rule.key)
+
+    return {
+      roles: rolesWithRules,
+      directlyAssignedRules
+    }
+  }
+
+  /**
    * Assign role to user
    * @param {number} userId - User ID
    * @param {Object} input - Either { roleName: string } or { roleId: number }
@@ -305,26 +343,106 @@ export class UsersService {
     }
   }
 
-  async getUsersList(searchQuery, tableConfig){
-    return await this.repository.getUsersList(searchQuery, tableConfig);
+  async getUsersList(searchQuery, tableConfig) {
+    const users = await this.repository.getUsersList(searchQuery || '', tableConfig)
+    const total = await this.repository.getUsersListCount(searchQuery || '')
+    
+    return {
+      users,
+      total,
+      hasMore: (tableConfig.offset + users.length) < total
+    }
   }
 
-  // In your UsersService class:
-
   async updateProfile(userId, profileData) {
-    // Implementation using your repository
-    return await this.repository.updateProfile(userId, profileData);
+    // Check if username is being updated and if it's unique
+    if (profileData.username) {
+      const existing = await this.repository.findByUsername(profileData.username)
+      if (existing && existing.id !== userId) {
+        const error = new Error('Username already taken')
+        error.status = 409
+        throw error
+      }
+    }
+
+    // Check if email is being updated and if it's unique
+    if (profileData.email) {
+      const existing = await this.repository.findByEmail(profileData.email)
+      if (existing && existing.id !== userId) {
+        const error = new Error('Email already registered')
+        error.status = 409
+        throw error
+      }
+    }
+
+    return await this.repository.updateProfile(userId, profileData)
   }
 
   async updateAvatar(userId, avatarData) {
-    // Implementation using your repository
-    return await this.repository.updateAvatar(userId, avatarData);
+    return await this.repository.updateAvatar(userId, avatarData)
+  }
+
+  /**
+   * Remove avatar from user
+   * Returns user data and avatar key (for file deletion in controller)
+   */
+  async removeAvatar(userId) {
+    // Verify user exists and get current avatar key
+    const user = await this.repository.findById(userId)
+    if (!user) {
+      const error = new Error('User not found')
+      error.status = 404
+      throw error
+    }
+
+    const avatarKey = user.avatar_key || null
+    
+    // Remove avatar from database
+    const updatedUser = await this.repository.removeAvatar(userId)
+    
+    return {
+      user: updatedUser,
+      avatarKey // Return key so controller can delete the file
+    }
   }
 
   async changePassword(userId, passwordData) {
-    // Implementation using your repository
-    // Include password validation and hashing logic
-    return await this.repository.changePassword(userId, passwordData);
+    const { currentPassword, newPassword } = passwordData
+
+    // Get user to verify current password
+    const user = await this.repository.findById(userId)
+    if (!user) {
+      const error = new Error('User not found')
+      error.status = 404
+      throw error
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await this.verifyPassword(currentPassword, user.password_hash)
+    if (!isCurrentPasswordValid) {
+      const error = new Error('Current password is incorrect')
+      error.status = 401
+      throw error
+    }
+
+    // Hash new password
+    const newPasswordHash = await this.hashPassword(newPassword)
+
+    // Update password
+    return await this.repository.changePassword(userId, newPasswordHash)
+  }
+
+  /**
+   * Toggle user active status
+   * @param {number} userId - User ID
+   * @returns {Object} Updated user (without password hash)
+   */
+  async toggleUserStatus(userId) {
+    const updatedUser = await this.repository.toggleUserStatus(userId)
+    
+    // Remove password hash if present
+    const { password_hash, ...userWithoutPassword } = updatedUser
+    return userWithoutPassword
   }
 }
 

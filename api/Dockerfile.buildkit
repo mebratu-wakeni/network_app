@@ -1,3 +1,6 @@
+# Optimized Dockerfile with BuildKit cache mounts
+# Usage: DOCKER_BUILDKIT=1 docker compose build backend
+
 FROM node:20-slim
 
 # Install dependencies needed for native module compilation and PostgreSQL client
@@ -15,22 +18,19 @@ ARG NODE_ENV=development
 ENV NODE_ENV=${NODE_ENV}
 
 # Set npm configuration for faster installs and better caching
-# Enable npm cache and use production=false to avoid issues with optional dependencies
 ENV NPM_CONFIG_LOGLEVEL=warn \
     NPM_CONFIG_PROGRESS=false \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false
 
 # Copy package files first for better layer caching
-# This layer will be cached unless package.json or package-lock.json changes
 COPY package*.json ./
 
-# Install dependencies
-# Use npm ci for faster, reproducible builds
-# Sharp will use pre-built binaries when available (faster than compiling)
-# For development, install all deps (including devDependencies like nodemon)
-# For production, omit dev dependencies
-RUN if [ "$NODE_ENV" = "production" ]; then \
+# Install dependencies with BuildKit cache mount for npm cache
+# This significantly speeds up subsequent builds
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,target=/app/node_modules/.cache \
+    if [ "$NODE_ENV" = "production" ]; then \
       npm ci --omit=dev --prefer-offline --no-audit; \
     else \
       npm ci --prefer-offline --no-audit; \
@@ -43,3 +43,4 @@ EXPOSE 4000
 
 # Default command (can be overridden in docker-compose.yml)
 CMD ["node", "src/index.js"]
+

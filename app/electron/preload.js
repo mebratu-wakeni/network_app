@@ -19,6 +19,14 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
     return ipcRenderer.invoke(channel, ...omit)
   },
 
+  checkDocker: () => ipcRenderer.invoke('server:check-docker'),
+  startServer: (mode) => ipcRenderer.invoke('server:start', mode),
+  stopServer: (mode) => ipcRenderer.invoke('server:stop', mode),
+  getServerStatus: () => ipcRenderer.invoke('server:status'),
+  checkServerHealth: () => ipcRenderer.invoke('server:health'),
+  getServerLogs: (service, lines) => ipcRenderer.invoke('server:logs', service, lines),
+  checkDevServerStatus: () => ipcRenderer.invoke('server:check-dev-status'),
+
   // You can expose other APTs you need here.
   // ...
 })

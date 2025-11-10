@@ -14,10 +14,19 @@ const app = createApp()
 
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server running on all interfaces`);
-  console.log(`🌐 LAN access: http://${serverIP}:${PORT}`);
-  console.log(`💻 Local access: http://localhost:${PORT}`);
-});
+  // eslint-disable-next-line no-console
+  console.log(`\n✅ Server running on all network interfaces`)
+  // eslint-disable-next-line no-console
+  console.log(`📡 Listening on: 0.0.0.0:${PORT}`)
+  if (serverIP && serverIP !== '127.0.0.1') {
+    // eslint-disable-next-line no-console
+    console.log(`🌐 LAN access: http://${serverIP}:${PORT}`)
+  }
+  // eslint-disable-next-line no-console
+  console.log(`💻 Local access: http://localhost:${PORT}`)
+  // eslint-disable-next-line no-console
+  console.log(`\n🔒 CORS: ${process.env.NODE_ENV === 'production' ? 'Restricted to allowed origins' : 'LAN access enabled'}\n`)
+})
 
 const shutdown = (signal) => {
   // eslint-disable-next-line no-console

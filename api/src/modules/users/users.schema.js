@@ -101,17 +101,25 @@ export const removeRuleSchema = z.union([assignRuleByKeySchema, assignRuleByIdSc
 export const searchUsersSchema = z.object({
   searchQuery: z.string().optional().default(''),
   tableConfig: z.object({
-    limit: z.number().min(1).max(100).default(10),
-    offset: z.number().min(0).default(0),
-    sortBy: z.enum(['id', 'username', 'email', 'display_name', 'is_active', 'created_at', 'updated_at']).default('id'),
-    orderBy: z.enum(['asc', 'desc']).default('desc')
-  }).default({
+    limit: z.coerce.number().min(1).max(100).optional().default(10),
+    offset: z.coerce.number().min(0).optional().default(0),
+    sortBy: z.enum(['id', 'username', 'email', 'display_name', 'is_active', 'created_at', 'updated_at']).optional().default('id'),
+    orderBy: z.enum(['asc', 'desc']).optional().default('desc')
+  }).optional().default({
     limit: 10,
     offset: 0,
     sortBy: 'id',
     orderBy: 'desc'
   })
-});
+}).transform((data) => ({
+  searchQuery: data.searchQuery || '',
+  tableConfig: {
+    limit: data.tableConfig?.limit ?? 10,
+    offset: data.tableConfig?.offset ?? 0,
+    sortBy: data.tableConfig?.sortBy ?? 'id',
+    orderBy: data.tableConfig?.orderBy ?? 'desc'
+  }
+}))
 
 // Update profile schema
 export const updateUserProfileSchema = z.object({
@@ -130,4 +138,5 @@ export const changePasswordSchema = z.object({
   message: "Passwords don't match",
   path: ["confirmPassword"]
 });
+
 

@@ -35,13 +35,13 @@ services:
       - /app/node_modules
     command: > 
       sh -c "
-        echo 'Waiting for Postgres at db...';
-        until pg_isready -h db -p 5432 -U postgres; do
+        echo 'Waiting for Postgres at db:5432...';
+        until pg_isready -h db -p 5432 -U postgres > /dev/null 2>&1; do
           echo 'Waiting for Postgres...';
           sleep 2;
         done;
         echo 'Postgres is ready — running migrations';
-        npx knex --knexfile db/knexfile.js migrate:latest;
+        cd /app && npx knex migrate:latest --knexfile db/knexfile.js || echo 'Migration failed or already up to date';
         echo 'Starting server...';
         npm run dev;
       "
