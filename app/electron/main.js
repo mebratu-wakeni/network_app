@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import ServerManager from './services/serviceManager'
+import UsersManager from './users/users.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -31,6 +32,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 
 let win;
 const serverManager = new ServerManager()
+const usersManager = new UsersManager()
 
 const iconPath = path.join(__dirname, '..', 'public', 'masatech-logo.png');
 const iconImage = nativeImage.createFromPath(iconPath);
@@ -92,6 +94,39 @@ ipcMain.handle('server:logs', async (event, service, lines) => {
 
 ipcMain.handle('server:check-dev-status', async () => {
   return await serverManager.checkDevServerStatus()
+})
+
+// IPC Handlers for user management
+ipcMain.handle('users:search', async (event, searchParams, token) => {
+  return await usersManager.searchUsers(searchParams, token)
+})
+
+ipcMain.handle('users:create', async (event, userForm, token) => {
+  return await usersManager.createUser(userForm, token);
+})
+
+ipcMain.handle('users:get-by-id', async (event, userId, token) => {
+  return await usersManager.getUserById(userId, token)
+})
+
+ipcMain.handle('users:update', async (event, userId, userData, token) => {
+  return await usersManager.updateUser(userId, userData, token)
+})
+
+ipcMain.handle('users:toggle-status', async (event, userId, token) => {
+  return await usersManager.toggleUserStatus(userId, token)
+})
+
+ipcMain.handle('users:get-permissions', async (event, userId, token) => {
+  return await usersManager.getUserPermissions(userId, token)
+})
+
+ipcMain.handle('users:assign-role', async (event, userId, roleData, token) => {
+  return await usersManager.assignRole(userId, roleData, token)
+})
+
+ipcMain.handle('users:remove-role', async (event, userId, roleData, token) => {
+  return await usersManager.removeRole(userId, roleData, token)
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

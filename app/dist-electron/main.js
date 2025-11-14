@@ -237,8 +237,8 @@ class ServerManager {
    */
   async checkApiHealth() {
     try {
-      const response = await fetch("http://localhost:4000/health");
-      const data = await response.json();
+      const response2 = await fetch("http://localhost:4000/health");
+      const data = await response2.json();
       return { success: true, healthy: data.ok === true };
     } catch (error) {
       return { success: false, healthy: false, error: error.message };
@@ -259,6 +259,209 @@ class ServerManager {
     }
   }
 }
+const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:4000/api";
+function getApiUrl(endpoint) {
+  const path2 = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  return `${API_BASE_URL}${path2}`;
+}
+class UsersManager {
+  constructor() {
+    this.getAuthToken = () => {
+      return null;
+    };
+  }
+  /**
+   * Helper function to make API requests
+   * Handles authentication, error handling, and response parsing
+   */
+  async apiRequest(endpoint, options = {}, token = null) {
+    const url = getApiUrl(endpoint);
+    const defaultHeaders = {
+      "Content-Type": "application/json"
+    };
+    if (token) {
+      defaultHeaders["Authorization"] = `Bearer ${token}`;
+    }
+    const config = {
+      ...options,
+      headers: {
+        ...defaultHeaders,
+        ...options.headers
+      }
+    };
+    try {
+      const response2 = await fetch(url, config);
+      const data = await response2.json();
+      if (!response2.ok) {
+        throw new Error(data.error || data.message || `HTTP ${response2.status}`);
+      }
+      return data;
+    } catch (error) {
+      console.error(`[UsersManager] API request failed: ${endpoint}`, error);
+      throw error;
+    }
+  }
+  /**
+   * Search users with pagination and filters
+   */
+  async searchUsers(searchParams, token) {
+    try {
+      const response2 = await this.apiRequest("/users/search", {
+        method: "POST",
+        body: JSON.stringify(searchParams)
+      }, token);
+      return {
+        success: response2.ok === true,
+        users: response2.users || [],
+        total: response2.total || 0,
+        hasMore: response2.hasMore ?? false
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to search users"
+      };
+    }
+  }
+  async createUser(userForm) {
+    try {
+      response = await this.apiRequest("/auth/register", {
+        method: "POST",
+        body: JSON.stringify(userForm)
+      });
+      console.log("user create response: ", response);
+      return {
+        success: response.ok === true,
+        username: response.username,
+        fullname: response.display_name
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to save user"
+      };
+    }
+  }
+  /**
+   * Get user by ID
+   */
+  async getUserById(userId, token) {
+    try {
+      const response2 = await this.apiRequest(`/users/${userId}`, {
+        method: "GET"
+      }, token);
+      return {
+        success: response2.ok === true,
+        user: response2.user
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to get user"
+      };
+    }
+  }
+  /**
+   * Update user
+   */
+  async updateUser(userId, userData, token) {
+    try {
+      const response2 = await this.apiRequest(`/users/${userId}`, {
+        method: "PUT",
+        body: JSON.stringify(userData)
+      }, token);
+      return {
+        success: response2.ok === true,
+        user: response2.user
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to update user"
+      };
+    }
+  }
+  /**
+   * Toggle user active status
+   */
+  async toggleUserStatus(userId, token) {
+    try {
+      const response2 = await this.apiRequest(`/users/${userId}/toggle-status`, {
+        method: "PATCH"
+      }, token);
+      return {
+        success: response2.ok === true,
+        user: response2.user
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to toggle user status"
+      };
+    }
+  }
+  /**
+   * Get user permissions (roles and rules)
+   */
+  async getUserPermissions(userId, token) {
+    try {
+      const response2 = await this.apiRequest(`/users/${userId}/permissions`, {
+        method: "GET"
+      }, token);
+      return {
+        success: response2.ok === true,
+        permissions: response2.permissions || response2.data || null
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to get user permissions"
+      };
+    }
+  }
+  /**
+   * Assign role to user
+   */
+  async assignRole(userId, roleData, token) {
+    try {
+      const response2 = await this.apiRequest(`/users/${userId}/roles`, {
+        method: "POST",
+        body: JSON.stringify(roleData)
+      }, token);
+      return {
+        success: response2.ok === true,
+        message: response2.message,
+        user: response2.user
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to assign role"
+      };
+    }
+  }
+  /**
+   * Remove role from user
+   */
+  async removeRole(userId, roleData, token) {
+    try {
+      const response2 = await this.apiRequest(`/users/${userId}/roles`, {
+        method: "DELETE",
+        body: JSON.stringify(roleData)
+      }, token);
+      return {
+        success: response2.ok === true,
+        message: response2.message,
+        user: response2.user
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to remove role"
+      };
+    }
+  }
+}
 createRequire(import.meta.url);
 const __dirname = path$1.dirname(fileURLToPath$1(import.meta.url));
 process.env.APP_ROOT = path$1.join(__dirname, "..");
@@ -268,6 +471,7 @@ const RENDERER_DIST = path$1.join(process.env.APP_ROOT, "dist");
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path$1.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
 let win;
 const serverManager = new ServerManager();
+const usersManager = new UsersManager();
 const iconPath = path$1.join(__dirname, "..", "public", "masatech-logo.png");
 const iconImage = nativeImage.createFromPath(iconPath);
 app.dock.setIcon(iconImage);
@@ -315,6 +519,30 @@ ipcMain.handle("server:logs", async (event, service, lines) => {
 });
 ipcMain.handle("server:check-dev-status", async () => {
   return await serverManager.checkDevServerStatus();
+});
+ipcMain.handle("users:search", async (event, searchParams, token) => {
+  return await usersManager.searchUsers(searchParams, token);
+});
+ipcMain.handle("users:create", async (event, userForm, token) => {
+  return await usersManager.createUser(userForm, token);
+});
+ipcMain.handle("users:get-by-id", async (event, userId, token) => {
+  return await usersManager.getUserById(userId, token);
+});
+ipcMain.handle("users:update", async (event, userId, userData, token) => {
+  return await usersManager.updateUser(userId, userData, token);
+});
+ipcMain.handle("users:toggle-status", async (event, userId, token) => {
+  return await usersManager.toggleUserStatus(userId, token);
+});
+ipcMain.handle("users:get-permissions", async (event, userId, token) => {
+  return await usersManager.getUserPermissions(userId, token);
+});
+ipcMain.handle("users:assign-role", async (event, userId, roleData, token) => {
+  return await usersManager.assignRole(userId, roleData, token);
+});
+ipcMain.handle("users:remove-role", async (event, userId, roleData, token) => {
+  return await usersManager.removeRole(userId, roleData, token);
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

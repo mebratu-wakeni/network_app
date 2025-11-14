@@ -16,6 +16,20 @@ const permissionsService = new PermissionsService(usersRepository)
  */
 export const authenticate = async (req, res, next) => {
   try {
+    // Development mode: Allow bypassing authentication
+    // Set DISABLE_AUTH=true in .env for development
+    if (process.env.NODE_ENV !== 'production' && process.env.DISABLE_AUTH === 'true') {
+      // Create a mock admin user for development
+      req.user = {
+        id: 1,
+        email: 'dev@localhost',
+        display_name: 'Development User',
+        is_active: true,
+        rules: ['admin'] // Grant all permissions in dev
+      }
+      return next()
+    }
+
     // Get token from Authorization header (Bearer token) or fallback to x-role for backward compatibility
     const authHeader = req.headers.authorization
     let token = null

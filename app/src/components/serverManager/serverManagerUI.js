@@ -1,21 +1,25 @@
 const { Row, StatefulRow, }  = Liteframe;
+import { Card, CardBody, CardFooter, CardHeader } from '../utils/Card.js';
+import { Input } from '../utils/Input.js';
+import Label from '../utils/Label.js';
 import ServerManagerVM from './ServerManagerVM.js'
 
-export default function serverManagerUI() {
+export default function ServerManagerUI() {
+  // Create new instance (ServerManagerVM handles cleanup of previous instance internally)
   const viewModel = new ServerManagerVM();
 
   const render = (props) => {
-    props.ensureStateKey('docker-status');
-    props.ensureStateKey('server-status');
-    props.ensureStateKey('api-health');
-    // props.ensureStateKey('starting');
-    // props.ensureStateKey('stopping');
-    // props.ensureStateKey('refreshing');
-    // props.ensureStateKey('error');
-    // props.ensureStateKey('success');
-    // props.ensureStateKey('lastUpdated');
-    // props.ensureStateKey('mode');
-    // props.ensureStateKey('dev-server-status');
+    // props.ensureStateKey('docker-status');
+    // props.ensureStateKey('server-status');
+    // props.ensureStateKey('api-health');
+    props.ensureStateKey('starting');
+    props.ensureStateKey('stopping');
+    props.ensureStateKey('refreshing');
+    props.ensureStateKey('error');
+    props.ensureStateKey('success');
+    props.ensureStateKey('lastUpdated');
+    props.ensureStateKey('mode');
+    props.ensureStateKey('dev-server-status');
     const dockerStatus = props.viewModel.getState('docker-status');
     const serverStatus = props.viewModel.getState('server-status');
     const apiHealth = props.viewModel.getState('api-health');
@@ -202,6 +206,13 @@ export default function serverManagerUI() {
           }
         }, refreshing ? [Spinner(), 'Refreshing...'] : 'Refresh Status'),
       ]),
+      Card({}, [
+        CardHeader({}, [Row({ tagType: 'h2', class: 'text-xl font-bold' }, 'My Header')]),
+        CardBody({}, [
+          Row({ class: 'h-40 bg-blue-400' })
+        ]),
+        CardFooter({ class: 'h-10 bg-red-100' })
+      ]),
       
       // Last Updated Timestamp
       lastUpdated && Row({ 
@@ -211,5 +222,6 @@ export default function serverManagerUI() {
     ])
   };
 
-  return StatefulRow({ viewModel }, render)
+  // Render and return the component
+  return StatefulRow({ viewModel }, render);
 }

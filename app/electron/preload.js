@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
     return ipcRenderer.invoke(channel, ...omit)
   },
 
+  // Convenience methods for server management (kept for consistency)
   checkDocker: () => ipcRenderer.invoke('server:check-docker'),
   startServer: (mode) => ipcRenderer.invoke('server:start', mode),
   stopServer: (mode) => ipcRenderer.invoke('server:stop', mode),
@@ -27,6 +28,8 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   getServerLogs: (service, lines) => ipcRenderer.invoke('server:logs', service, lines),
   checkDevServerStatus: () => ipcRenderer.invoke('server:check-dev-status'),
 
-  // You can expose other APTs you need here.
-  // ...
+  // Note: For user management and other APIs, use invoke() directly:
+  // window.ipcRenderer.invoke('users:search', searchParams, token)
+  // window.ipcRenderer.invoke('users:get-by-id', userId, token)
+  // etc.
 })

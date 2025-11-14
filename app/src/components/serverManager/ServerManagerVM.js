@@ -1,8 +1,30 @@
 const { ViewModel, SharedStateManager  }  = Liteframe
 
+// Module-level tracker for current ServerManagerVM instance
+// This allows cleanup when navigating away from the /server route
+let currentServerManagerVM = null;
+
+/**
+ * Cleanup function for ServerManagerVM
+ * Called when navigating away from the /server route to prevent memory leaks
+ */
+export function cleanupServerManager() {
+  if (currentServerManagerVM && typeof currentServerManagerVM.destroy === 'function') {
+    currentServerManagerVM.destroy();
+    currentServerManagerVM = null;
+  }
+}
+
 export default class ServerManagerVM extends ViewModel {
   constructor(stateManager = new SharedStateManager()) { // Default to singleton sharedState
     super(stateManager);
+    
+    // Cleanup previous instance if it exists
+    cleanupServerManager();
+    
+    // Register this instance as the current one
+    currentServerManagerVM = this;
+    
     this.initializeState();
     this.intervalId = null;
     this.checkServerStatus();
@@ -32,6 +54,7 @@ export default class ServerManagerVM extends ViewModel {
   }
 
   destroy() {
+    console.log('Destroying ServerManagerVM, clearing intervals and timers');
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
@@ -128,6 +151,7 @@ export default class ServerManagerVM extends ViewModel {
     this.updateState('stopping', true);
     this.updateState('error', null);
     this.updateState('success', null);
+    console.log(`${this.getState('mode')} server is stopping: ${this.getState('stopping')}`);
     try {
       const mode = this.getState('mode');
       const result = await window.ipcRenderer.stopServer(mode)

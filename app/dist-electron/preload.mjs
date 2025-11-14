@@ -17,6 +17,7 @@ electron.contextBridge.exposeInMainWorld("ipcRenderer", {
     const [channel, ...omit] = args;
     return electron.ipcRenderer.invoke(channel, ...omit);
   },
+  // Convenience methods for server management (kept for consistency)
   checkDocker: () => electron.ipcRenderer.invoke("server:check-docker"),
   startServer: (mode) => electron.ipcRenderer.invoke("server:start", mode),
   stopServer: (mode) => electron.ipcRenderer.invoke("server:stop", mode),
@@ -24,6 +25,8 @@ electron.contextBridge.exposeInMainWorld("ipcRenderer", {
   checkServerHealth: () => electron.ipcRenderer.invoke("server:health"),
   getServerLogs: (service, lines) => electron.ipcRenderer.invoke("server:logs", service, lines),
   checkDevServerStatus: () => electron.ipcRenderer.invoke("server:check-dev-status")
-  // You can expose other APTs you need here.
-  // ...
+  // Note: For user management and other APIs, use invoke() directly:
+  // window.ipcRenderer.invoke('users:search', searchParams, token)
+  // window.ipcRenderer.invoke('users:get-by-id', userId, token)
+  // etc.
 });
