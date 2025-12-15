@@ -3,7 +3,7 @@ const { Row } = Liteframe;
 export default function Badge({
   label,
   tone = 'default',
-  className = '',
+  class: className = '',
 }) {
   const toneClasses = {
     success: 'bg-green-100 text-green-700',

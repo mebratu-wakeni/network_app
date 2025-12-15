@@ -51,7 +51,7 @@ export class AuthService {
   }
 
   /**
-   * Login with email and password
+   * Login with username and password
    */
   async login(username, password) {
     // Find user by username

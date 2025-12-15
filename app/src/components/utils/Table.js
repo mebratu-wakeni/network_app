@@ -10,16 +10,21 @@ const Table = (props, children) => {
   // Added 'relative' to the wrapper for positioning context.
   const baseClasses = 'min-w-full divide-y divide-gray-200 sm:rounded-lg relative';
 
-  // The inner <table> tag needs no overflow settings.
+  // The inner <table> tag needs no overflow settings, but we need to prevent it from expanding
   const tableElement = Row({ tagType: 'table', class: 'min-w-full divide-y divide-gray-300' }, children);
 
   // Wrapper div for responsive scrolling AND fixed header
-  // Added 'overflow-y-auto' and a fixed height ('max-h-96' is an example)
+  // Ensure the outer wrapper cannot become the scroll container by forcing `overflow-hidden`.
+  // The inner scrollable div (`overflow-y-auto`) is the single vertical scroller that
+  // `position: sticky` on table headers will use.
   return Row({
     tagType: 'div',
-    class: `inline-block align-middle ${baseClasses} ${className}`
+    class: `overflow-hidden ${baseClasses} ${className} flex flex-col flex-1 min-h-0`
   }, [
-    Row({ tagType: 'div', class: 'overflow-x-auto flex-1 overflow-y-auto' }, [
+    Row({ tagType: 'div', class: 'overflow-x-auto overflow-y-auto flex-1 min-h-0', 
+      attributes: { 
+        // style: 'max-height: calc(100vh - 12rem);', 
+        id: props.id } }, [
       tableElement
     ])
   ]);
@@ -34,8 +39,7 @@ const Table = (props, children) => {
 const TableHeader = (props, children) => {
   return Row({
     tagType: 'thead',
-    // Added 'sticky', 'top-0', and 'z-10'
-    class: 'bg-gray-50 sticky top-0 z-10'
+    class: `bg-gray-50 ${props.class || ''}`
   }, children);
 };
 
@@ -46,10 +50,11 @@ const TableHeader = (props, children) => {
  */
 
 const TableBody = (props, children) => {
+  const {class: className = ''} = props;
   return Row({
     tagType: 'tbody',
     // Added 'odd:bg-gray-50'
-    class: 'divide-y divide-gray-200 bg-white odd:bg-gray-50'
+    class: `divide-y divide-gray-200 bg-white odd:bg-gray-50 ${className}`,
   }, children);
 };
 
@@ -59,10 +64,11 @@ const TableBody = (props, children) => {
  * @param {Array<Object>} props.children - Array of TableCell elements.
  */
 const TableRow = (props, children) => {
-  const { class: className = '' } = props;
+  const { class: className = '', onClick } = props;
   return Row({
     tagType: 'tr',
-    class: className
+    class: className,
+    events: {'click': onClick}
   }, children);
 };
 
@@ -72,8 +78,9 @@ const TableHCell = (props, children) => {
   const { class: className = '' } = props;
   return Row({
     tagType: 'th',
-    // Changed 'py-3' to 'py-2' for tighter header row
-    class: `px-6 py-5 text-left text-xs font-medium text-gray-600 uppercase tracking-wider ${className}`,
+    // Sticky positioning: each th cell sticks to top of scrollable container
+    // Use a solid white background and slightly higher z so header overlays rows reliably.
+    class: `px-6 py-5 text-left text-xs font-medium text-gray-600 uppercase tracking-wider sticky top-0 z-20 bg-white ${className}`,
     attributes: { scope: 'col' }
   }, children);
 };

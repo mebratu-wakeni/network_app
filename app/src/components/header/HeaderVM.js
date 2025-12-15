@@ -1,11 +1,14 @@
 const { ViewModel, SharedStateManager } = Liteframe;
+import NavigationVM, { navigationVM } from '../navigation/NavigationVM.js';
 
 export default class HeaderVM extends ViewModel {
   constructor(stateManager = new SharedStateManager()) {
     super(stateManager);
     this.initializeState();
+    this.navigationVM = navigationVM;
     this.intervalId = null;
     this.checkHealthStatus();
+
   }
 
   initializeState() {
@@ -13,10 +16,15 @@ export default class HeaderVM extends ViewModel {
     this.setState('serverHealth', null);
     this.setState('dbHealth', null);
     this.setState('apiHealth', null);
-    this.setState('user', {
-      name: 'Admin User', // TODO: Get from auth context
-      avatar: null, // TODO: Get from user profile
-      initials: 'AU'
+    this.setState('user', {});
+  }
+
+  syncUser() {
+    const user = this.navigationVM.getState('auth')?.user || null;
+    this.updateState('user', {
+      name: user ? user.display_name || user.username : 'Guest',
+      avatar: user ? user.avatar_url || null : null,
+      initials: user ? (user.display_name ? user.display_name.split(' ').map(n => n[0]).join('') : user.username[0]) : 'G'
     });
   }
 

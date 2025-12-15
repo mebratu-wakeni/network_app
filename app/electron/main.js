@@ -88,6 +88,8 @@ ipcMain.handle('server:health', async () => {
   return await serverManager.checkApiHealth()
 })
 
+
+
 ipcMain.handle('server:logs', async (event, service, lines) => {
   return await serverManager.getLogs(service, lines)
 })
@@ -97,6 +99,9 @@ ipcMain.handle('server:check-dev-status', async () => {
 })
 
 // IPC Handlers for user management
+ipcMain.handle('auth:login', async (event, credentials) => {
+  return await usersManager.authenticate(credentials)
+})
 ipcMain.handle('users:search', async (event, searchParams, token) => {
   return await usersManager.searchUsers(searchParams, token)
 })
@@ -104,6 +109,7 @@ ipcMain.handle('users:search', async (event, searchParams, token) => {
 ipcMain.handle('users:create', async (event, userForm, token) => {
   return await usersManager.createUser(userForm, token);
 })
+
 
 ipcMain.handle('users:get-by-id', async (event, userId, token) => {
   return await usersManager.getUserById(userId, token)

@@ -21,7 +21,7 @@ export class AuthController {
 
   /**
    * POST /api/auth/login
-   * Login with email and password
+   * Login with username and password
    */
   login = async (req, res, next) => {
     try {

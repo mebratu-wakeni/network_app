@@ -29,7 +29,7 @@ const CardHeader = (props, children) => {
   const { class: className = '' } = props;
   return Row({
     tagType: 'div',
-    class: `px-6 py-4 border-b border-gray-200 ${className}`
+    class: `border-b border-gray-200 ${className}`
   }, children);
 };
 
@@ -71,7 +71,7 @@ const Card = (props, children) => {
   const { class: className = '' } = props;
 
   // Base styling for the card container
-  const baseClasses = 'bg-white rounded-lg shadow-xl overflow-hidden';
+  const baseClasses = 'bg-white rounded-lg shadow-xl';
 
   return Row({
     tagType: 'div',

@@ -20,7 +20,8 @@ const Input = (props) => {
     placeholder = '',
     required = false,
     isError = false,
-    class: className = ''
+    class: className = '',
+    delegator,
   } = props;
 
   // 1. Define base/default Tailwind classes
@@ -44,9 +45,10 @@ const Input = (props) => {
       value: value,
       placeholder: placeholder,
       'aria-invalid': isError ? "true" : "false",
-      required
+      required,
     },
-    events: { 'change': onChange }
+    events: { 'change': onChange },
+    delegator,
   });
 };
 

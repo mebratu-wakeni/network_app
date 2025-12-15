@@ -1,43 +1,75 @@
 const { ViewModel, SharedStateManager } = Liteframe;
+import { navigationVM } from '../navigation/NavigationVM.js';
 
 const DEFAULT_USER_FORM = {
   username: '',
   display_name: '',
-  email: '',
-  password: 'user1234'
+  password: 'user1234',
+  
 }
+
 
 export default class UsersVM extends ViewModel {
   constructor(stateManager = new SharedStateManager()) {
     super(stateManager);
     this.initializeState();
+  }
 
-    this.createUser();
+  async sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   initializeState() {
     this.setState('user-list', []);
     this.setState('search-query', '');
     this.setState('loading', false);
+    this.setState('details-loading', false);
     this.setState('error', null);
+    this.setState('has-more', true);
     this.setState('table-config', {
       limit: 10,
       offset: 0,
       sortBy: 'id',
-      orderBy: 'asc',
+      orderBy: 'desc',
     });
     this.setState('total-count', 0);
     this.setState('selected-user', null);
+    this.setState('selected-user-roles', {});
+    this.setState('selected-user-direct-rules', []);
+    this.setState('permissions-loading', false);
     this.setState('user-form', DEFAULT_USER_FORM);
+    this.setState('creating', false);
   }
+
+ 
+  
+
 
   /**
    * Get auth token from storage
    * TODO: Replace with actual token storage mechanism
    */
   getAuthToken() {
-    // Get token from localStorage or secure storage
-    return localStorage.getItem('authToken') || null;
+    // Prefer token kept in-memory by NavigationVM, fall back to localStorage.
+    try {
+      const navAuth = navigationVM.getState('auth') || {};
+      if (navAuth && navAuth.token) return navAuth.token;
+    } catch (e) {
+      // ignore - fallback to localStorage
+    }
+    try {
+      return localStorage.getItem('authToken') || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  updateUserForm(key, value) {
+    const userForm = this.getState('user-form');
+    this.updateState('user-form', {
+      ...userForm,
+      [key]: value,
+    })
   }
 
   /**
@@ -68,33 +100,57 @@ export default class UsersVM extends ViewModel {
       if (result.success) {
         this.updateState('user-list', result.users);
         this.updateState('total-count', result.total);
+
       } else {
         throw new Error(result.error || 'Failed to load users');
       }
     } catch (error) {
       console.error('Error loading users:', error);
       this.updateState('error', error.message || 'Failed to load users');
-      if (!append) {
-        this.updateState('user-list', []);
-      }
+      this.updateState('user-list', []);
     } finally {
+      await this.sleep(100);
       this.updateState('loading', false);
     }
   }
 
-  async createUser() {
-    const userForm = this.getState('user-form');
-    userForm.display_name = 'Abebe Tesema';
-    userForm.username = 'abebe';
-    const result = window.ipcRenderer.invoke('users:create', userForm); 
 
-    console.log('user create result: ', result);
+  async createUser() {
+    this.updateState('creating', true);
+    this.updateState('error', null);
+    const userForm = this.getState('user-form');
+    const token = this.getAuthToken();
+    
+    
+    try {
+      const result = await window.ipcRenderer.invoke('users:create', userForm, token); 
+      
+      if (result.success) {
+        await this.loadUsers();
+      } else {
+        console.error('Failed to create user:', result.error);
+        if (result.details) {
+          console.error('Validation errors:', result.details);
+        }
+        const errorMessage = result.details 
+          ? `${result.error}: ${result.details.map(d => `${d.field}: ${d.message}`).join(', ')}`
+          : result.error || 'Failed to create user';
+        this.updateState('error', errorMessage);
+        throw new Error(result.error || 'Failed to load users');
+      }
+    } catch (error) {
+      console.error('Error creating user:', error);
+      this.updateState('error', error.message || 'Failed to create user');
+    } finally {
+      this.updateState('creating', false);
+    }
   }
 
   async fetchUserById(userId, { useDetailsLoader = false } = {}) {
     const token = this.getAuthToken();
     const loadingKey = useDetailsLoader ? 'details-loading' : 'loading';
     this.updateState(loadingKey, true);
+
     this.updateState('error', null);
 
     try {
@@ -113,11 +169,60 @@ export default class UsersVM extends ViewModel {
     }
   }
 
+  /**
+   * Fetch user permissions (roles and directly assigned rules) via main process
+   */
+  async fetchUserPermissions(userId) {
+    const token = this.getAuthToken();
+    this.updateState('permissions-loading', true);
+    this.updateState('error', null);
+
+    try {
+      const result = await window.ipcRenderer.invoke('users:get-permissions', userId, token);
+      console.log('[users:get-permissions]', result);
+      if (result.success) {
+        const permissions = result.permissions || {};
+        // API returns { roles: { roleName: [ruleKeys] }, directlyAssignedRules: [] }
+        this.updateState('selected-user-roles', permissions.roles || {});
+        this.updateState('selected-user-direct-rules', permissions.directlyAssignedRules || []);
+        return permissions;
+      }
+
+      throw new Error(result.error || 'Failed to load permissions');
+    } catch (error) {
+      console.error('Error fetching permissions:', error);
+      this.updateState('error', error.message || 'Failed to load permissions');
+      this.updateState('selected-user-roles', {});
+      this.updateState('selected-user-direct-rules', []);
+      return null;
+    } finally {
+      this.updateState('permissions-loading', false);
+    }
+  }
+
   async openUserDetails(userId) {
-    this.updateState('selected-user-id', userId);
     try {
       const user = await this.fetchUserById(userId, { useDetailsLoader: true });
       this.updateState('selected-user', user);
+      console.log('fetched user for details: ', user);
+      this.updateState('user-form', {
+        username: user.username || '',
+        display_name: user.display_name || '',
+        password: '',
+        status: user.is_active,
+        registered_at: user.created_at,
+        last_updated: user.updated_at,
+      });
+      
+
+      // Fetch and attach roles/rules for details panel
+      try {
+        await this.fetchUserPermissions(userId);
+      } catch (e) {
+        // ignore - fetchUserPermissions already sets error state
+      }
+
+      // console.log('selected  user: ', this.getState('selected-user'));
     } catch (error) {
       this.updateState('selected-user', null);
     }
@@ -241,4 +346,21 @@ export default class UsersVM extends ViewModel {
       offset: prevOffset,
     }, { append: false });
   }
+
+  async setLimit(page) {
+    const config = this.getState('table-config');
+
+    this.updateState('table-config', {
+      ...config,
+      limit: page,
+      offset: 0,
+    });
+    this.updateState('search-query', '');
+
+    await this.loadUsers();
+
+
+
+  }
 }
+

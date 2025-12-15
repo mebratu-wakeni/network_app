@@ -237,8 +237,8 @@ class ServerManager {
    */
   async checkApiHealth() {
     try {
-      const response2 = await fetch("http://localhost:4000/health");
-      const data = await response2.json();
+      const response = await fetch("http://localhost:4000/health");
+      const data = await response.json();
       return { success: true, healthy: data.ok === true };
     } catch (error) {
       return { success: false, healthy: false, error: error.message };
@@ -259,7 +259,19 @@ class ServerManager {
     }
   }
 }
-const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:4000/api";
+const __vite_import_meta_env__ = { "BASE_URL": "/", "DEV": true, "MODE": "development", "PROD": false, "SSR": false, "VITE_DEV_SERVER_URL": "http://localhost:5173/" };
+const DEFAULT_API = "http://localhost:4000/api";
+function readApiBase() {
+  if (typeof process !== "undefined" && process && process.env && process.env.API_BASE_URL) {
+    return process.env.API_BASE_URL;
+  }
+  try {
+    if (typeof import.meta !== "undefined" && __vite_import_meta_env__ && void 0) ;
+  } catch (e) {
+  }
+  return DEFAULT_API;
+}
+const API_BASE_URL = readApiBase();
 function getApiUrl(endpoint) {
   const path2 = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
   return `${API_BASE_URL}${path2}`;
@@ -290,10 +302,14 @@ class UsersManager {
       }
     };
     try {
-      const response2 = await fetch(url, config);
-      const data = await response2.json();
-      if (!response2.ok) {
-        throw new Error(data.error || data.message || `HTTP ${response2.status}`);
+      const response = await fetch(url, config);
+      const data = await response.json();
+      if (!response.ok) {
+        const error = new Error(data.error || data.message || `HTTP ${response.status}`);
+        if (data.details && Array.isArray(data.details)) {
+          error.details = data.details;
+        }
+        throw error;
       }
       return data;
     } catch (error) {
@@ -306,15 +322,15 @@ class UsersManager {
    */
   async searchUsers(searchParams, token) {
     try {
-      const response2 = await this.apiRequest("/users/search", {
+      const response = await this.apiRequest("/users/search", {
         method: "POST",
         body: JSON.stringify(searchParams)
       }, token);
       return {
-        success: response2.ok === true,
-        users: response2.users || [],
-        total: response2.total || 0,
-        hasMore: response2.hasMore ?? false
+        success: response.ok === true,
+        users: response.users || [],
+        total: response.total || 0,
+        hasMore: response.hasMore ?? false
       };
     } catch (error) {
       return {
@@ -323,22 +339,30 @@ class UsersManager {
       };
     }
   }
-  async createUser(userForm) {
+  async createUser(userForm, token) {
+    var _a, _b;
     try {
-      response = await this.apiRequest("/auth/register", {
+      const cleanedForm = { ...userForm };
+      if (cleanedForm.email === "" || cleanedForm.email === null) {
+        delete cleanedForm.email;
+      }
+      const response = await this.apiRequest("/auth/register", {
         method: "POST",
-        body: JSON.stringify(userForm)
-      });
+        body: JSON.stringify(cleanedForm)
+      }, token);
       console.log("user create response: ", response);
       return {
         success: response.ok === true,
-        username: response.username,
-        fullname: response.display_name
+        user: response.user,
+        token: response.token,
+        username: (_a = response.user) == null ? void 0 : _a.username,
+        fullname: (_b = response.user) == null ? void 0 : _b.display_name
       };
     } catch (error) {
       return {
         success: false,
-        error: error.message || "Failed to save user"
+        error: error.message || "Failed to save user",
+        details: error.details || null
       };
     }
   }
@@ -347,12 +371,12 @@ class UsersManager {
    */
   async getUserById(userId, token) {
     try {
-      const response2 = await this.apiRequest(`/users/${userId}`, {
+      const response = await this.apiRequest(`/users/${userId}`, {
         method: "GET"
       }, token);
       return {
-        success: response2.ok === true,
-        user: response2.user
+        success: response.ok === true,
+        user: response.user
       };
     } catch (error) {
       return {
@@ -361,18 +385,36 @@ class UsersManager {
       };
     }
   }
+  async authenticate(credentials) {
+    try {
+      const response = await this.apiRequest("/auth/login", {
+        method: "POST",
+        body: JSON.stringify(credentials)
+      });
+      return {
+        success: response.ok === true,
+        user: response.user,
+        token: response.token
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to authenticate"
+      };
+    }
+  }
   /**
    * Update user
    */
   async updateUser(userId, userData, token) {
     try {
-      const response2 = await this.apiRequest(`/users/${userId}`, {
+      const response = await this.apiRequest(`/users/${userId}`, {
         method: "PUT",
         body: JSON.stringify(userData)
       }, token);
       return {
-        success: response2.ok === true,
-        user: response2.user
+        success: response.ok === true,
+        user: response.user
       };
     } catch (error) {
       return {
@@ -386,12 +428,12 @@ class UsersManager {
    */
   async toggleUserStatus(userId, token) {
     try {
-      const response2 = await this.apiRequest(`/users/${userId}/toggle-status`, {
+      const response = await this.apiRequest(`/users/${userId}/toggle-status`, {
         method: "PATCH"
       }, token);
       return {
-        success: response2.ok === true,
-        user: response2.user
+        success: response.ok === true,
+        user: response.user
       };
     } catch (error) {
       return {
@@ -405,12 +447,23 @@ class UsersManager {
    */
   async getUserPermissions(userId, token) {
     try {
-      const response2 = await this.apiRequest(`/users/${userId}/permissions`, {
+      const response = await this.apiRequest(`/users/${userId}/permissions`, {
         method: "GET"
       }, token);
+      let permissions = null;
+      if (response.permissions) {
+        permissions = response.permissions;
+      } else if (response.roles || response.directlyAssignedRules) {
+        permissions = {
+          roles: response.roles || {},
+          directlyAssignedRules: response.directlyAssignedRules || []
+        };
+      } else if (response.data) {
+        permissions = response.data;
+      }
       return {
-        success: response2.ok === true,
-        permissions: response2.permissions || response2.data || null
+        success: response.ok === true,
+        permissions
       };
     } catch (error) {
       return {
@@ -424,14 +477,14 @@ class UsersManager {
    */
   async assignRole(userId, roleData, token) {
     try {
-      const response2 = await this.apiRequest(`/users/${userId}/roles`, {
+      const response = await this.apiRequest(`/users/${userId}/roles`, {
         method: "POST",
         body: JSON.stringify(roleData)
       }, token);
       return {
-        success: response2.ok === true,
-        message: response2.message,
-        user: response2.user
+        success: response.ok === true,
+        message: response.message,
+        user: response.user
       };
     } catch (error) {
       return {
@@ -445,14 +498,14 @@ class UsersManager {
    */
   async removeRole(userId, roleData, token) {
     try {
-      const response2 = await this.apiRequest(`/users/${userId}/roles`, {
+      const response = await this.apiRequest(`/users/${userId}/roles`, {
         method: "DELETE",
         body: JSON.stringify(roleData)
       }, token);
       return {
-        success: response2.ok === true,
-        message: response2.message,
-        user: response2.user
+        success: response.ok === true,
+        message: response.message,
+        user: response.user
       };
     } catch (error) {
       return {
@@ -519,6 +572,9 @@ ipcMain.handle("server:logs", async (event, service, lines) => {
 });
 ipcMain.handle("server:check-dev-status", async () => {
   return await serverManager.checkDevServerStatus();
+});
+ipcMain.handle("auth:login", async (event, credentials) => {
+  return await usersManager.authenticate(credentials);
 });
 ipcMain.handle("users:search", async (event, searchParams, token) => {
   return await usersManager.searchUsers(searchParams, token);

@@ -44,7 +44,12 @@ class UsersManager {
       const data = await response.json();
       
       if (!response.ok) {
-        throw new Error(data.error || data.message || `HTTP ${response.status}`);
+        const error = new Error(data.error || data.message || `HTTP ${response.status}`);
+        // Include validation details if present
+        if (data.details && Array.isArray(data.details)) {
+          error.details = data.details;
+        }
+        throw error;
       }
       
       return data;
@@ -80,24 +85,33 @@ class UsersManager {
     }
   }
 
-  async createUser(userForm) {
+  async createUser(userForm, token) {
     try {
-      response = await this.apiRequest('/auth/register', {
+      // Clean up the user form: remove empty email field (schema expects undefined, not empty string)
+      const cleanedForm = { ...userForm };
+      if (cleanedForm.email === '' || cleanedForm.email === null) {
+        delete cleanedForm.email;
+      }
+      
+      const response = await this.apiRequest('/auth/register', {
         method: 'POST',
-        body: JSON.stringify(userForm)
-      });
+        body: JSON.stringify(cleanedForm)
+      }, token);
 
       console.log('user create response: ', response);
 
       return {
-        success: response.ok  === true,
-        username: response.username,
-        fullname: response.display_name, 
+        success: response.ok === true,
+        user: response.user,
+        token: response.token,
+        username: response.user?.username,
+        fullname: response.user?.display_name, 
       }
     } catch (error) {
       return {
         success: false,
-        error: error.message || 'Failed to save user'
+        error: error.message || 'Failed to save user',
+        details: error.details || null
       };
     }
   }
@@ -121,6 +135,27 @@ class UsersManager {
         error: error.message || 'Failed to get user'
       };
     }
+  }
+
+  async authenticate(credentials) {
+
+    try {
+      const response = await this.apiRequest('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify(credentials)
+      });
+
+      return {
+        success: response.ok === true,
+        user: response.user,
+        token: response.token
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to authenticate'
+      };
+    } 
   }
 
   /**
@@ -175,9 +210,23 @@ class UsersManager {
         method: 'GET',
       }, token);
 
+      // Normalize API response shape: controller returns { ok: true, ...permissions }
+      // where permissions may be top-level `roles` and `directlyAssignedRules`.
+      let permissions = null;
+      if (response.permissions) {
+        permissions = response.permissions;
+      } else if (response.roles || response.directlyAssignedRules) {
+        permissions = {
+          roles: response.roles || {},
+          directlyAssignedRules: response.directlyAssignedRules || []
+        };
+      } else if (response.data) {
+        permissions = response.data;
+      }
+
       return {
         success: response.ok === true,
-        permissions: response.permissions || response.data || null
+        permissions
       };
     } catch (error) {
       return {

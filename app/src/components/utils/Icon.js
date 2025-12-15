@@ -116,18 +116,21 @@ const IconButton = (props, children) => {
 const IonIcon = (props) => {
   const { name, class: className = '', size = '' } = props;
 
+
   // Base styling for the icon. Text color will inherit from parent or be explicitly set.
   const baseClasses = `inline-block align-middle text-indigo-600 font-bold ${className}`; // inline-block for proper sizing, align-middle to center with text
+
 
   return Row({
     // Using 'ion-icon' tag directly for Ionicons.
     // If you're using a different icon font (e.g., Material Icons),
     // you might use 'i' and adjust the class based on 'name'.
     tagType: 'ion-icon',
-    class: baseClasses,
+    // class: baseClasses,
     attributes: {
       name: name,
-      ...(size && { size: size }) // Conditionally add size attribute if provided
+      ...(size && { size: size }), // Conditionally add size attribute if provided
+      class: baseClasses
     }
     // No children for ion-icon, as the icon is defined by the 'name' attribute
   });
