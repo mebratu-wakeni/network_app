@@ -18,6 +18,7 @@ export const registerUserSchema = z.object({
  */
 export const updateUserSchema = z.object({
   display_name: z.string().min(1, 'Display name cannot be empty').trim().optional(),
+  email: z.string().email('Invalid email').optional(),
   is_active: z.boolean().optional()
 }).refine(
   (data) => Object.keys(data).length > 0,
@@ -45,7 +46,7 @@ export const validate = (schema) => {
         field: e.path.join('.'),
         message: e.message
       }))
-      return next(error)
+      return next(error) // execute error callback with error
     }
     
     req.validBody = result.data
@@ -124,8 +125,8 @@ export const searchUsersSchema = z.object({
 // Update profile schema
 export const updateUserProfileSchema = z.object({
   username: z.string().min(3).max(30).optional(),
-  email: z.string().email().optional(),
-  displayName: z.string().min(1).max(100).optional(),
+  // email: z.string().email().optional(),
+  display_name: z.string().min(1).max(100).optional(),
   // Add other profile fields as needed
 });
 

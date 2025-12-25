@@ -5,6 +5,9 @@ import path from 'node:path'
 import ServerManager from './services/serviceManager'
 import UsersManager from './users/users.js'
 
+import fs from "fs";
+import FormData from "form-data"; // Node FormData
+
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -125,6 +128,40 @@ ipcMain.handle('users:toggle-status', async (event, userId, token) => {
 
 ipcMain.handle('users:get-permissions', async (event, userId, token) => {
   return await usersManager.getUserPermissions(userId, token)
+})
+
+
+ipcMain.handle("users:update-avatar", async (event, payload, token) => {
+  try {
+    // Convert array of numbers back to Buffer for Node.js FormData
+    // payload.buffer is an array of numbers from Uint8Array conversion
+    if (!Array.isArray(payload.buffer)) {
+      console.error('Invalid payload.buffer type:', typeof payload.buffer, payload.buffer?.constructor?.name);
+      throw new Error(`Invalid buffer format: expected array, got ${typeof payload.buffer}`);
+    }
+    
+    const buffer = Buffer.from(payload.buffer);
+    console.log('Created buffer, length:', buffer.length, 'filename:', payload.filename, 'userId:', payload.userId);
+    
+    const formData = new FormData();
+    formData.append('avatar', buffer, {
+      filename: payload.filename,
+      contentType: payload.mimetype
+    });
+
+    return await usersManager.updateAvatar(payload.userId, formData, token);
+  } catch (error) {
+    console.error('Error in users:update-avatar handler:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to update avatar'
+    };
+  }
+});
+
+
+ipcMain.handle('users:remove-avatar', async (event, userId, token) => {
+  return await usersManager.removeAvatar(userId, token)
 })
 
 ipcMain.handle('users:assign-role', async (event, userId, roleData, token) => {

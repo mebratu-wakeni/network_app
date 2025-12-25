@@ -229,7 +229,8 @@ export class UsersRepository {
     const updateData = {}
     if (profileData.username !== undefined) updateData.username = profileData.username
     if (profileData.email !== undefined) updateData.email = profileData.email
-    if (profileData.displayName !== undefined) updateData.display_name = profileData.displayName
+    if (profileData.display_name !== undefined) updateData.display_name = profileData.display_name
+    if (profileData.is_active !== undefined) updateData.is_active = profileData.is_active
     
     const [updatedUser] = await this.knex('users')
       .where('id', userId)

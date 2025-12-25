@@ -118,7 +118,7 @@ const IonIcon = (props) => {
 
 
   // Base styling for the icon. Text color will inherit from parent or be explicitly set.
-  const baseClasses = `inline-block align-middle text-indigo-600 font-bold ${className}`; // inline-block for proper sizing, align-middle to center with text
+  const baseClasses = `inline-block align-middle text-indigo-600 font-bold hydrated ${className}`; // inline-block for proper sizing, align-middle to center with text
 
 
   return Row({

@@ -91,9 +91,11 @@ export class UsersService {
    * Update user (excludes password - use separate endpoint for password change)
    */
   async update(id, input) {
+
     const updateData = {}
     if (input.display_name !== undefined) updateData.display_name = input.display_name
     if (input.is_active !== undefined) updateData.is_active = input.is_active
+    if (input.email !== undefined) updateData.email = input.email;
 
     const [updated] = await this.repository.update(id, updateData)
     if (!updated) {
@@ -368,12 +370,14 @@ export class UsersService {
     // Check if email is being updated and if it's unique
     if (profileData.email) {
       const existing = await this.repository.findByEmail(profileData.email)
-      if (existing && existing.id !== userId) {
+      const emailTaken  = existing && parseInt(existing.id) !== userId;
+      if (emailTaken) {
         const error = new Error('Email already registered')
         error.status = 409
         throw error
       }
     }
+   
 
     return await this.repository.updateProfile(userId, profileData)
   }

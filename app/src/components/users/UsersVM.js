@@ -1,4 +1,5 @@
 const { ViewModel, SharedStateManager } = Liteframe;
+import { getApiAsset } from '../../../electron/config/apiConfig.js';
 import { navigationVM } from '../navigation/NavigationVM.js';
 
 const DEFAULT_USER_FORM = {
@@ -39,6 +40,11 @@ export default class UsersVM extends ViewModel {
     this.setState('permissions-loading', false);
     this.setState('user-form', DEFAULT_USER_FORM);
     this.setState('creating', false);
+    this.setState('avatar-preview', '');
+  }
+
+  reload() {
+    this.updateState('loading', false);
   }
 
  
@@ -62,6 +68,11 @@ export default class UsersVM extends ViewModel {
     } catch (e) {
       return null;
     }
+  }
+
+  updateAvatarPreview(path) {
+    if(path === '') return;
+    this.updateState('avatar-preview', getApiAsset(path));
   }
 
   updateUserForm(key, value) {
@@ -110,6 +121,88 @@ export default class UsersVM extends ViewModel {
       this.updateState('user-list', []);
     } finally {
       await this.sleep(100);
+      this.updateState('loading', false);
+    }
+  }
+
+  async updateAvatar(file) {
+    this.updateState('loading', true);
+    this.updateState('error', null);
+
+    const selectedUser = this.getState('selected-user');
+    const token = this.getAuthToken();
+
+    if (!file) {
+      this.updateState('error', 'No file selected');
+      this.updateState('loading', false);
+      return;
+    }
+
+    if (!selectedUser || !selectedUser.id) {
+      this.updateState('error', 'No user selected');
+      this.updateState('loading', false);
+      return;
+    }
+
+    try {
+      // Convert File to ArrayBuffer for IPC transfer
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Array.from(new Uint8Array(arrayBuffer));
+      
+      const payload = {
+        buffer: buffer,
+        filename: file.name,
+        mimetype: file.type,
+        size: file.size,
+        userId: selectedUser.id // Pass the target user ID
+      };
+
+      const result = await window.ipcRenderer.invoke(
+        'users:update-avatar',
+        payload,
+        token
+      );
+
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to update avatar');
+      }
+
+      // Refresh user details so new avatar URL is picked up
+      await this.openUserDetails(selectedUser.id);
+
+    } catch (error) {
+      console.error('Error updating avatar:', error);
+      this.updateState('error', error.message || 'Failed to update avatar');
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+
+  async removeAvatar() {
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    const selectedUser = this.getState('selected-user');
+    const token = this.getAuthToken();
+    
+    
+    try {
+      const result = await window.ipcRenderer.invoke('users:remove-avatar', selectedUser.id, token); 
+      
+      if (result.success) {
+        // Refresh the user details to show updated avatar
+        await this.openUserDetails(selectedUser.id);
+      } else {
+        console.error('Failed to remove avatar:', result.error);
+        const errorMessage = result.error || 'Failed to remove avatar';
+        this.updateState('error', errorMessage);
+        throw new Error(result.error || 'Failed to remove avatar');
+      }
+    } catch (error) {
+      console.error('Error removing avatar:', error);
+      this.updateState('error', error.message || 'Failed to remove avatar');
+    } finally {
       this.updateState('loading', false);
     }
   }
@@ -179,7 +272,6 @@ export default class UsersVM extends ViewModel {
 
     try {
       const result = await window.ipcRenderer.invoke('users:get-permissions', userId, token);
-      console.log('[users:get-permissions]', result);
       if (result.success) {
         const permissions = result.permissions || {};
         // API returns { roles: { roleName: [ruleKeys] }, directlyAssignedRules: [] }
@@ -204,10 +296,11 @@ export default class UsersVM extends ViewModel {
     try {
       const user = await this.fetchUserById(userId, { useDetailsLoader: true });
       this.updateState('selected-user', user);
-      console.log('fetched user for details: ', user);
+      this.updateAvatarPreview(user.avatar_url);
       this.updateState('user-form', {
         username: user.username || '',
         display_name: user.display_name || '',
+        email: user.email,
         password: '',
         status: user.is_active,
         registered_at: user.created_at,
@@ -241,8 +334,10 @@ export default class UsersVM extends ViewModel {
     this.updateState('error', null);
     const token = this.getAuthToken();
 
+
     try {
       const result = await window.ipcRenderer.invoke('users:update', userId, userData, token);
+
 
       if (result.success) {
         // Refresh the user list to show updated data

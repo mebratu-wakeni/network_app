@@ -36,15 +36,17 @@ router.patch(
   usersController.updateProfile
 )
 
-// Upload user avatar (must come before /:id route)
+// User profile avatar management (after /:id routes to avoid conflicts)
 router.post(
-  '/avatar',
+  '/:id/avatar',
+  validateParams(idParamSchema),
   usersController.uploadAvatar
 )
 
-// Remove user avatar (must come before /:id route)
+// Remove user avatar
 router.delete(
-  '/avatar',
+  '/:id/avatar',
+  validateParams(idParamSchema),
   usersController.removeAvatar
 )
 

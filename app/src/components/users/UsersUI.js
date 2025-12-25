@@ -12,7 +12,9 @@ import Modal from "../shared/Modal";
 import ModalContent from "./CreateUserModal";
 import Drawer from "../shared/ExampleDrawer";
 import { formatUTCDate } from "../shared/TimeConverters.js";
-import GeneralTabContent from "./GeneralTab.js";    
+import GeneralTabContent from "./tabs/GeneralTab.js";    
+import RolesTab from "./tabs/RolesTab.js";
+import RulesTab from "./tabs/RulesTab.js";
 
 const { StatefulRow, Row } = Liteframe;
 
@@ -84,8 +86,8 @@ const UsersTable = () => {
             showDetails && UserDetailsPanel(props),
             !showDetails && UserEditTabs(props, [
               GeneralTabContent(props),
-              Row({ class: 'p-5 text-sm text-gray-500' }, 'Roles content goes here...'),
-              Row({ class: 'p-5 text-sm text-gray-500' }, 'Rules content goes here...'),
+              RolesTab(props),
+              RulesTab(props),
               Row({ class: 'p-5 text-sm text-gray-500' }, 'Audit Log content goes here...'),
             ])
           ]),
@@ -109,13 +111,14 @@ function table({ userList, selectedUserId, onRowClick }) {
     TableBody({}, [
       ...userList.map(user => {
         const isSelected = selectedUserId === user.id;
+        const avatarPreview = getApiAsset(user.avatar_url);
         return TableRow({
           class: `transition-colors duration-150 cursor-pointer ${isSelected ? 'bg-blue-50 border-l-2 border-blue-500' : 'hover:bg-blue-50'}`,
           onClick: () => onRowClick(user),
         }, [
           TableDCell({ class: 'px-4 py-3' }, [
             Avatar({
-              src: user.avatar_url || user.avatar || null,
+              src: avatarPreview,
               alt: user.display_name || user.username || user.email || 'User Avatar',
               fallback: user.display_name || user.username || user.email || ''
             })
@@ -198,8 +201,6 @@ function UserDetailsPanel(props) {
   const directRules = ['can.view.dashboard', 'can.edit.profile'];
   const permissionsLoading = props.viewModel.getState('permissions-loading');
 
-  console.log('directRules: ', directRules);
-
 
 
   const formatToTitle = (input) => {
@@ -273,56 +274,6 @@ function UserDetailsPanel(props) {
         UserPermissions({ label: 'Direct Rules', values: rules, icon: 'key-outline' }),
     ]),
   ]),
-    // // Permissions (roles & rules)
-    // !loading && user && Row({ class: 'px-4 pb-6' }, [
-    //   Row({ class: 'text-sm font-semibold text-gray-700 mb-2' }, 'Roles & Rules'),
-    //   (() => {
-        // const rolesObj = props.viewModel.getState('selected-user-roles') || {};
-        // const directRules = props.viewModel.getState('selected-user-direct-rules') || [];
-        // const permissionsLoading = props.viewModel.getState('permissions-loading');
-
-    //     if (permissionsLoading) {
-    //       return Row({ class: 'text-sm text-gray-500' }, 'Loading permissions...');
-    //     }
-
-    //     const roleNames = Object.keys(rolesObj || {});
-
-    //     return Row({ class: 'flex flex-col gap-3' }, [
-    //       // Roles
-    //       Row({ class: 'flex flex-col gap-2' }, [
-    //         Row({ class: 'text-xs text-gray-500' }, 'Roles'),
-    //         roleNames.length === 0 && Row({ class: 'text-sm text-gray-500' }, 'No roles assigned'),
-    //         roleNames.length > 0 && Row({ class: 'flex flex-wrap gap-2' }, [
-    //           ...roleNames.map(rn => Row({ class: 'px-2 py-1 bg-indigo-50 text-indigo-800 rounded text-sm' }, rn))
-    //         ])
-    //       ]),
-
-    //       // Role rules
-    //       roleNames.length > 0 && Row({ class: 'flex flex-col gap-1' }, [
-    //         Row({ class: 'text-xs text-gray-500' }, 'Role Rules'),
-    //         ...roleNames.map(rn => {
-    //           const rules = rolesObj[rn] || [];
-    //           return Row({ class: 'flex flex-col' }, [
-    //             Row({ class: 'text-sm font-medium text-gray-700' }, rn),
-    //             rules.length === 0 && Row({ class: 'text-sm text-gray-500 ml-2' }, 'No rules from this role'),
-    //             rules.length > 0 && Row({ class: 'flex flex-wrap gap-2 ml-2' }, [
-    //               ...rules.map(k => Row({ class: 'px-2 py-1 bg-gray-100 text-gray-800 rounded text-xs' }, k))
-    //             ])
-    //           ]);
-    //         })
-    //       ]),
-
-    //       // Direct rules
-    //       Row({ class: 'flex flex-col gap-1' }, [
-    //         Row({ class: 'text-xs text-gray-500' }, 'Directly Assigned Rules'),
-    //         directRules.length === 0 && Row({ class: 'text-sm text-gray-500' }, 'No directly assigned rules'),
-    //         directRules.length > 0 && Row({ class: 'flex flex-wrap gap-2' }, [
-    //           ...directRules.map(k => Row({ class: 'px-2 py-1 bg-gray-100 text-gray-800 rounded text-xs' }, k))
-    //         ])
-    //       ])
-    //     ]);
-    //   })()
-    // ]),
     !loading && !user && Row({ class: 'p-5 text-sm text-gray-500' }, 'User details unavailable')
   ])
 }
@@ -454,7 +405,7 @@ function UserEditTabs(props, children) {
   }
 
   const tabs = tabList.map(tab => Row({
-    class: `h-full flex items-center cursor-pointer py-2 px-4 ${tab.isActive ? 'border-b-2 border-indigo-600 text-indigo-600 font-semibold' : 'text-gray-500'}`,
+    class: `h-full flex-1 flex justify-center items-center cursor-pointer py-2 px-4 ${tab.isActive ? 'border-b-2 border-indigo-600 text-indigo-600 font-semibold' : 'text-gray-500'}`,
     events: { 'click': () => handleTabClick(tab.name) }
   }, Row({ tagType: 'span', class: 'text-md' }, tab.displayAs)));
 
@@ -463,7 +414,8 @@ function UserEditTabs(props, children) {
       IconButton({ className: 'mr-5 text-2xl', onClick: () => handleBackClick() }, [
         IonIcon({ name: 'arrow-back-outline', class: 'text-2xl hydrated' })
       ]),
-      ...tabs,
+      Row({class: 'h-full flex-1 flex justify-around'}, tabs),
+      // ...tabs,
       IconButton({ className: 'ml-auto text-2xl', onClick: async () => await handleClose(300) }, [
         IonIcon({ name: 'close-outline', class: 'text-xl' })
       ]),

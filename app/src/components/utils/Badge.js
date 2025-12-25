@@ -6,16 +6,16 @@ export default function Badge({
   class: className = '',
 }) {
   const toneClasses = {
-    success: 'bg-green-100 text-green-700',
-    warning: 'bg-yellow-100 text-yellow-700',
-    danger: 'bg-red-100 text-red-700',
-    info: 'bg-blue-100 text-blue-700',
-    default: 'bg-gray-200 text-gray-700',
+    success: 'bg-green-200 text-green-800',
+    warning: 'bg-yellow-200 text-yellow-800',
+    danger: 'bg-red-200 text-red-800',
+    info: 'bg-blue-200 text-blue-800',
+    default: 'bg-gray-200 text-gray-800',
   };
 
   const selectedClasses = toneClasses[tone] || toneClasses.default;
 
   return Row({
-    class: `inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${selectedClasses} ${className}`.trim(),
+    class: `inline-flex items-center px-4 py-1 rounded-full text-xs font-medium ${selectedClasses} ${className}`.trim(),
   }, label || 'Badge');
 }

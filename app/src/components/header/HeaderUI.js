@@ -4,6 +4,7 @@ import { Input } from '../utils/Input.js';
 import HeaderVM from './HeaderVM.js';
 import Dropdown from '../utils/Dropdown.js';
 import { IconButton, IonIcon } from '../utils/Icon.js';
+import { getApiAsset } from '../../../electron/config/apiConfig.js';
 
 export default function HeaderUI() {
   const viewModel = new HeaderVM();
@@ -55,11 +56,11 @@ export default function HeaderUI() {
         return Row({ 
           tagType: 'img', 
           class: 'w-10 h-10 rounded-full object-cover',
-          attributes: { src: user.avatar, alt: user.name }
+          attributes: { src: getApiAsset(user.avatar), alt: user.name }
         });
       }
       return Row({ 
-        class: 'w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold text-sm'
+        class: 'w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold text-sm'
       }, user?.initials || 'U');
     };
     

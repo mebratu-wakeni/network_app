@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import FormData from 'form-data';
 
 /**
  * UsersManager - Handles all API communication for user management
@@ -21,43 +22,115 @@ class UsersManager {
    */
   async apiRequest(endpoint, options = {}, token = null) {
     const url = getApiUrl(endpoint);
-    
-    const defaultHeaders = {
-      'Content-Type': 'application/json',
-    };
-    
-    // Add Authorization header if token exists
-    if (token) {
-      defaultHeaders['Authorization'] = `Bearer ${token}`;
-    }
-    
-    const config = {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-    };
-    
-    try {
-      const response = await fetch(url, config);
-      const data = await response.json();
-      
-      if (!response.ok) {
-        const error = new Error(data.error || data.message || `HTTP ${response.status}`);
-        // Include validation details if present
-        if (data.details && Array.isArray(data.details)) {
-          error.details = data.details;
-        }
-        throw error;
+    const headers = { ...(options.headers || {}) };
+    let body = options.body;
+
+    // If body is a Buffer with multipart headers, use it as-is
+    // Otherwise, handle JSON or other content types
+    if (Buffer.isBuffer(body) && headers['content-type'] && headers['content-type'].includes('multipart')) {
+      // Buffer with multipart headers - use as-is
+    } else if (body && typeof body.getHeaders === 'function') {
+      // FormData stream - should be converted to buffer before calling this
+      const formDataHeaders = body.getHeaders();
+      Object.assign(headers, formDataHeaders);
+    } else if (body && !(body instanceof FormData) && !headers['Content-Type'] && !headers['content-type']) {
+      headers['Content-Type'] = 'application/json';
+      if (typeof body === 'object' && !Buffer.isBuffer(body)) {
+        body = JSON.stringify(body);
       }
-      
-      return data;
-    } catch (error) {
-      console.error(`[UsersManager] API request failed: ${endpoint}`, error);
+    }
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(url, {
+      method: options.method || 'GET',
+      headers,
+      body: body
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      const error = new Error(data.error || data.message || `HTTP ${response.status}`);
+      if (data.details) error.details = data.details;
       throw error;
     }
+
+    return data;
   }
+
+
+
+
+  async updateAvatar(userId, formData, token) {
+    try {
+      console.log('avatar formData: ', formData)
+      if (!(formData instanceof FormData)) {
+        throw new Error("updateAvatar expects FormData");
+      }
+
+      // Get headers from FormData (must be called before reading stream)
+      const headers = formData.getHeaders();
+      
+      // Convert FormData readable stream to Buffer
+      const streamToBuffer = (stream) => {
+        return new Promise((resolve, reject) => {
+          const chunks = [];
+          let finished = false;
+          
+          const cleanup = () => {
+            if (!finished) {
+              finished = true;
+              stream.removeAllListeners('data');
+              stream.removeAllListeners('end');
+              stream.removeAllListeners('error');
+            }
+          };
+          
+          stream.on('data', (chunk) => {
+            // Ensure chunk is a Buffer (convert string to Buffer if needed)
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          stream.on('end', () => {
+            cleanup();
+            resolve(Buffer.concat(chunks));
+          });
+          stream.on('error', (err) => {
+            cleanup();
+            reject(err);
+          });
+          
+          // Ensure stream starts flowing
+          stream.resume();
+        });
+      };
+      
+      const buffer = await streamToBuffer(formData);
+
+      const response = await this.apiRequest(
+        `/users/${userId}/avatar`,
+        {
+          method: 'POST',
+          body: buffer,
+          headers: headers
+        },
+        token
+      );
+
+      return {
+        success: response.ok === true,
+        user: response.user
+      };
+    } catch (error) {
+      console.error('Error in updateAvatar:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to update avatar'
+      };
+    }
+  }
+
 
   /**
    * Search users with pagination and filters

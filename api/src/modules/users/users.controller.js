@@ -25,19 +25,6 @@ export class UsersController {
     }
   }
 
-  /**
-   * PUT /api/users/:id
-   * Update user profile
-   */
-  updateProfile = async (req, res, next) => {
-    try {
-      const { id } = req.validParams || { id: Number(req.params.id) }
-      const user = await this.service.update(id, req.validBody)
-      res.json({ ok: true, user })
-    } catch (error) {
-      next(error)
-    }
-  }
 
   /**
    * POST /api/users/:id/roles
@@ -115,8 +102,10 @@ export class UsersController {
 
   updateProfile = async (req, res, next) => {
     try {
-      const userId = req.user.id;
-      const user = await this.service.updateProfile(userId, req.validBody);
+      // const userId = req.user.id;
+      const { id } = req.validParams || { id: Number(req.params.id) };
+      const userId = id;
+      const user = await this.service.updateProfile(userId, {...req.validBody, ...req.body});
       res.json({ ok: true, user });
     } catch (error) {
       next(error);
@@ -125,7 +114,9 @@ export class UsersController {
 
   uploadAvatar = async (req, res, next) => {
     try {
-      const userId = req.user.id;
+      // Get user ID from route params (allows admin to update any user's avatar)
+      const { id } = req.validParams || { id: Number(req.params.id) };
+      const userId = id;
 
       // Create multer instance
       const upload = multer({
@@ -135,23 +126,20 @@ export class UsersController {
             if (!fs.existsSync(uploadDir)) {
               fs.mkdirSync(uploadDir, { recursive: true });
             }
-            console.log('Uploading to directory:', uploadDir); // Debug log
             cb(null, uploadDir);
           },
           filename: (req, file, cb) => {
             const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
             const ext = path.extname(file.originalname);
             const filename = `avatar-${userId}-${uniqueSuffix}${ext}`;
-            console.log('Generated filename:', filename); // Debug log
             cb(null, filename);
           }
         }),
         fileFilter: (req, file, cb) => {
           if (file.mimetype.startsWith('image/')) {
-            console.log('File accepted:', file.originalname, file.mimetype); // Debug log
+            
             cb(null, true);
           } else {
-            console.log('File rejected:', file.originalname, file.mimetype); // Debug log
             cb(new Error('Only image files are allowed'), false);
           }
         },
@@ -177,7 +165,7 @@ export class UsersController {
         return res.status(400).json({ ok: false, error: 'No avatar file uploaded' });
       }
 
-      console.log('File uploaded successfully:', req.file); // Debug log
+      
 
       // Process image to get metadata
       const imageBuffer = await sharp(req.file.path)
@@ -223,7 +211,9 @@ export class UsersController {
    */
   removeAvatar = async (req, res, next) => {
     try {
-      const userId = req.user.id;
+      // Get user ID from route params (allows admin to remove any user's avatar)
+      const { id } = req.validParams || { id: Number(req.params.id) };
+      const userId = id;
 
       // Get avatar key and remove from database
       const result = await this.service.removeAvatar(userId);
@@ -235,7 +225,6 @@ export class UsersController {
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
             // eslint-disable-next-line no-console
-            console.log(`Deleted avatar file: ${filePath}`);
           }
         } catch (fileError) {
           // Log error but don't fail the request if file deletion fails
