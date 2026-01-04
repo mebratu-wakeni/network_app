@@ -5,8 +5,7 @@ import { navigationVM } from '../navigation/NavigationVM.js';
 const DEFAULT_USER_FORM = {
   username: '',
   display_name: '',
-  password: 'user1234',
-  
+  password: 'user1234', 
 }
 
 
@@ -35,7 +34,7 @@ export default class UsersVM extends ViewModel {
     });
     this.setState('total-count', 0);
     this.setState('selected-user', null);
-    this.setState('selected-user-roles', {});
+    this.setState('selected-user-roles', []);
     this.setState('selected-user-direct-rules', []);
     this.setState('permissions-loading', false);
     this.setState('user-form', DEFAULT_USER_FORM);
@@ -121,6 +120,28 @@ export default class UsersVM extends ViewModel {
       this.updateState('user-list', []);
     } finally {
       await this.sleep(100);
+      this.updateState('loading', false);
+    }
+  }
+
+  async exportUsersToCsv() {
+    this.updateState('loading', true);
+    this.updateState('error', null);
+
+    const token = this.getAuthToken();
+
+    try {
+      const result = await window.ipcRenderer.invoke('users:export-csv', token);
+
+      if( result.success ) {
+        return result.filePath
+      }
+
+      throw new Error(result.error || 'Failed to export users');
+    } catch (error) {
+      console.log('Error exporting users: ', error);
+      this.updateState('error', error.message || 'Failed to export users');
+    } finally {
       this.updateState('loading', false);
     }
   }
@@ -213,6 +234,7 @@ export default class UsersVM extends ViewModel {
     this.updateState('error', null);
     const userForm = this.getState('user-form');
     const token = this.getAuthToken();
+    userForm.password = 'user1234';
     
     
     try {
@@ -275,8 +297,8 @@ export default class UsersVM extends ViewModel {
       if (result.success) {
         const permissions = result.permissions || {};
         // API returns { roles: { roleName: [ruleKeys] }, directlyAssignedRules: [] }
-        this.updateState('selected-user-roles', permissions.roles || {});
-        this.updateState('selected-user-direct-rules', permissions.directlyAssignedRules || []);
+        this.updateState('selected-user-roles', permissions.roles || []);
+        this.updateState('selected-user-direct-rules', permissions.rules || []);
         return permissions;
       }
 
@@ -284,7 +306,7 @@ export default class UsersVM extends ViewModel {
     } catch (error) {
       console.error('Error fetching permissions:', error);
       this.updateState('error', error.message || 'Failed to load permissions');
-      this.updateState('selected-user-roles', {});
+      this.updateState('selected-user-roles', []);
       this.updateState('selected-user-direct-rules', []);
       return null;
     } finally {
@@ -324,6 +346,24 @@ export default class UsersVM extends ViewModel {
   closeUserDetails() {
     this.updateState('selected-user-id', null);
     this.updateState('selected-user', null);
+  }
+
+  async deleteUser(userId) {
+    const token = this.getAuthToken();
+    try {
+      const result = await window.ipcRenderer.invoke('users:delete-user', userId, token);
+      console.log('deleting user result: ', result)
+
+      if ( result.success ) {
+        this.loadUsers()
+        return result.user
+      }
+      throw new Error(result.error || 'Failed to delete user');
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      this.updateState('error', error.message || 'Failed to delete user');
+      this.updateState('loading', false)
+    }
   }
 
   /**
@@ -454,8 +494,96 @@ export default class UsersVM extends ViewModel {
 
     await this.loadUsers();
 
+  }
 
+  async assignRole(userId, roleData) {
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    const token = this.getAuthToken();
 
+    try {
+      const result = await window.ipcRenderer.invoke('users:assign-role', userId, roleData, token);
+
+      if (result.success) {
+        // Refresh the user list to show updated data
+        await this.fetchUserPermissions(userId);
+        return result.role;
+      }
+      throw new Error(result.error || 'Failed to assign role');
+    } catch (error) {
+      console.error('Error assigning role:', error);
+      this.updateState('error', error.message || 'Failed to assign role');
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  async assignRule(userId, ruleData) {
+    this.updateState('loading', true);
+    this.updateState('error', null);
+
+    const token = this.getAuthToken();
+
+    try {
+      const result = await window.ipcRenderer.invoke('users:assign-rule', userId, ruleData, token)
+
+      if( result.success ) {
+        await this.fetchUserPermissions(userId);
+        return result.rule
+      }
+      throw new Error(result.error || 'Failed to assign rule');
+    } catch (error) {
+      console.error('Error: assign rule: ', error);
+      this.updateState('error', error.message || 'Failed to assign rule');
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  async removeRole(userId, roleData) {
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    const token = this.getAuthToken();
+
+    try {
+      const result = await window.ipcRenderer.invoke('users:remove-role', userId, roleData, token);
+
+      if (result.success) {
+        // Refresh the user list to show updated data
+        await this.fetchUserPermissions(userId);
+        return result.role;
+      }
+      throw new Error(result.error || 'Failed to assign role');
+    } catch (error) {
+      console.error('Error assigning role:', error);
+      this.updateState('error', error.message || 'Failed to assign role');
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  async removeRule(userId, ruleData) {
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    const token = this.getAuthToken();
+
+    try {
+      const response = await window.ipcRenderer.invoke('users:remove-rule', userId, ruleData, token);
+
+      if( response.success ) {
+        this.fetchUserPermissions(userId);
+        return response.rule;
+      }
+      throw new Error(response.error || 'Failed to remove rule')
+    } catch (error) {
+      console.error('Error assigning rule to user: ', error);
+      this.updateState('error', error.message || 'Failed to assign rule');
+    } finally {
+      this.updateState('loading', false)
+    }
   }
 }
 

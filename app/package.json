@@ -23,6 +23,7 @@
   "dependencies": {
     "axios": "^1.13.2",
     "clsx": "^2.1.1",
+    "csv": "^6.4.1",
     "form-data": "^4.0.5",
     "ionicons": "^8.0.13",
     "tailwind-merge": "^3.4.0"

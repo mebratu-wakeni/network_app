@@ -28,8 +28,8 @@ class NavigationVM extends ViewModel {
       token: null,
       // prefill for dev convenience; remove in prod
       loginForm: {
-        username: 'hassu',
-        password: 'user1234'
+        username: 'admin',
+        password: 'adminuser'
       }
     })
   }

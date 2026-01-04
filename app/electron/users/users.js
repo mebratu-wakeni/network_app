@@ -1,5 +1,9 @@
 import { getApiUrl } from '../config/apiConfig.js';
 import FormData from 'form-data';
+import fs from 'fs/promises';
+import path from 'path';
+import { stringify } from 'csv/sync';
+import { app } from 'electron';
 
 /**
  * UsersManager - Handles all API communication for user management
@@ -157,6 +161,60 @@ class UsersManager {
       };
     }
   }
+  async exportToCsv(token) {
+    try {
+      const response = await this.apiRequest('/users/search', {
+        method: 'POST',
+        body: JSON.stringify({
+          searchQuery: '',
+          tableConfig: {
+            limit: 10000, // to get all the users
+            offset: 0,
+            sortBy: 'id',
+            orderBy: 'desc'
+          }
+        }),
+      }, token);
+
+      const userList = response.users || [];
+      // Explicit column definition (CRITICAL)
+      const columns = [
+        { key: 'id', header: 'ID' },
+        { key: 'username', header: 'Username'},
+        { key: 'display_name', header: 'Name' },
+        { key: 'status', header: 'Status' },
+      ];
+
+      const records = userList.map(user => ({
+        id: user.id,
+        username: user.user,
+        display_name: user.display_name,
+        status: user.is_active ? 'Active' : 'Not Active',
+      }));
+      const csv = stringify(records, {
+        header: true,
+        columns,
+      });
+      const outputDir = app.getPath('downloads');
+
+      const fileName = `users_${Date.now()}.csv`;
+      const filePath = path.join(outputDir, fileName);
+
+      await fs.writeFile(filePath, csv, 'utf8');
+
+      return {
+        success: response.ok,
+        filePath,
+        fileName,
+        rowCount: records.length,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to export users list to csv'
+      };
+    }
+  }
 
   async createUser(userForm, token) {
     try {
@@ -288,10 +346,10 @@ class UsersManager {
       let permissions = null;
       if (response.permissions) {
         permissions = response.permissions;
-      } else if (response.roles || response.directlyAssignedRules) {
+      } else if (response.roles || response.rules) {
         permissions = {
-          roles: response.roles || {},
-          directlyAssignedRules: response.directlyAssignedRules || []
+          roles: response.roles || [],
+          rules: response.rules || []
         };
       } else if (response.data) {
         permissions = response.data;
@@ -322,12 +380,33 @@ class UsersManager {
       return {
         success: response.ok === true,
         message: response.message,
-        user: response.user
+        role: response.role
       };
     } catch (error) {
       return {
         success: false,
         error: error.message || 'Failed to assign role'
+      };
+    }
+  }
+
+  async assignRule(userId, ruleData, token) {
+    try {
+      const response = await this.apiRequest(`/users/${userId}/rules`, {
+        method: 'POST',
+        body: JSON.stringify(ruleData),
+      }, token);
+
+      return {
+        success: response.ok,
+        message: response.message,
+        rule: response.rule
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to assign rule to user'
       };
     }
   }
@@ -354,6 +433,47 @@ class UsersManager {
       };
     }
   }
+
+  async removeRule(userId, ruleData, token) {
+    try {
+      const response = await this.apiRequest(`/users/${userId}/rules`, {
+        method: 'DELETE',
+        body: JSON.stringify(ruleData),
+      }, token);
+      return {
+        success: response.ok,
+        message: response.message,
+        rule: response.rule,
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to remove rule'
+      }
+    }
+  }
+
+  async deleteUser(userId, token) {
+    try {
+      const response = await this.apiRequest(
+        `/users/${userId}`,
+        { method: 'DELETE' },
+        token
+      );
+
+      return {
+        success: response.ok,
+        user: response.data,
+        message: 'User deleted successfully',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to delete user',
+      };
+    }
+  }
+
 }
 
 export default UsersManager;

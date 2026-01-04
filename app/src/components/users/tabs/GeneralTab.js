@@ -4,6 +4,8 @@ import { IonIcon } from "../../utils/Icon.js";
 import Badge from "../../utils/Badge.js";
 import { getApiAsset } from "../../../../electron/config/apiConfig.js";
 import { formatUTCDate } from "../../shared/TimeConverters.js";
+import RuleRow from "../../shared/RuleRow.js";
+import Modal from "../../shared/Modal.js";
 
 const { Row } = Liteframe;
 
@@ -123,9 +125,9 @@ export default function GeneralTabContent(props) {
     props.viewModel.updateUserForm('is_active', props.getLocalState('isActive'));
   }
 
-  return Row({class: 'h-full w-full'}, [
+  return Row({ class: 'h-full w-full'}, [
     Row({ class: 'flex justify-end gap-4 px-4 mb-6' }, [
-      Button({ variant: 'secondary', class: 'my-4 px-5', onClick: () => {} }, 'Delete'),
+      Button({ variant: 'secondary', class: 'my-4 px-5', onClick: () => DeleteUserConfirmModal(props) }, 'Delete'),
       Button({ variant: 'primary', disabled: loading, class: 'my-4 px-5', onClick: handleSave }, 'Save'),
     ]),
     formRow({
@@ -183,8 +185,29 @@ export default function GeneralTabContent(props) {
       right: Row({ class: 'text-gray-500 text-sm float-left'}, formatUTCDate(user.created_at))
     }),
     formRow({
-      left: Row({ class: 'text-gray-900 font-medium float-right' }, "Last Updated"),
-      right: Row({ class: 'text-gray-500 text-sm float-left' }, formatUTCDate(user.updated_at))
+      left: Row({ class: 'text-gray-900 font-medium float-right' }, "Last Login"),
+      right: Row({ class: 'text-gray-500 text-sm float-left' }, formatUTCDate(user.last_login_at))
     })    
   ])
+}
+
+function DeleteUserConfirmModal(props) {
+  Modal({}, (delegator, closeHandler) => {
+
+    const user = props.viewModel.getState('selected-user');
+    const deleteHandler = () => {
+      props.viewModel.deleteUser(user.id);
+      props.viewModel.updateState('selected-user', null)
+      closeHandler();
+    } 
+    
+    return Row({class: 'px-6 pb-2 flex flex-col border-t-4 border-indigo-600 bg-gray-50'}, [
+      Row({class: 'flex items-center justify-center text-gray-500 text-md font-semibold my-4'}, 'Delete'),
+      Row({tagTye: 'p', class: 'float-center text-sm text-gray-500'}, 'Are you sure to delete this user?'),
+      Row({class: 'flex items-center justify-between gap-4 my-3'}, [
+        Button({variant: 'secondary', class: 'w-25 rounded-sm', onClick: closeHandler, delegator }, 'Cancel'),
+        Button({ variant: 'primary', class: 'w-25 rounded-sm', onClick: deleteHandler, delegator }, 'Delete')
+      ])
+  ])
+})
 }

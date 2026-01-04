@@ -1,3 +1,4 @@
+import { twMerge } from 'tailwind-merge'
 const { Row } = Liteframe;
 
 /**
@@ -114,11 +115,13 @@ const IconButton = (props, children) => {
  * Ionicons uses this as an attribute.
  */
 const IonIcon = (props) => {
-  const { name, class: className = '', size = '' } = props;
+  const { name, class: className = '', size = '', ...rowProps } = props;
 
 
   // Base styling for the icon. Text color will inherit from parent or be explicitly set.
-  const baseClasses = `inline-block align-middle text-indigo-600 font-bold hydrated ${className}`; // inline-block for proper sizing, align-middle to center with text
+  const baseClasses = `inline-block align-middle text-indigo-600 font-bold hydrated`; // inline-block for proper sizing, align-middle to center with text
+
+  const finalClasses = twMerge(baseClasses, className);
 
 
   return Row({
@@ -130,8 +133,9 @@ const IonIcon = (props) => {
     attributes: {
       name: name,
       ...(size && { size: size }), // Conditionally add size attribute if provided
-      class: baseClasses
-    }
+      class: finalClasses
+    },
+    ...rowProps
     // No children for ion-icon, as the icon is defined by the 'name' attribute
   });
 };

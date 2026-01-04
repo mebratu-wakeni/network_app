@@ -40,6 +40,30 @@ export class UsersController {
     }
   }
 
+  // controllers/users.controller.js
+  deleteUser = async (req, res, next) => {
+    try {
+      const { id } = req.validParams;
+      const loggedInUserId = Number(req.user.id);
+
+      if (id === loggedInUserId) {
+        const error = new Error('You cannot delete your own account');
+        error.status = 403;
+        return next(error);
+      }
+
+      const deletedUser = await this.service.deleteUser(id);
+
+      return res.json({
+        ok: true,
+        data: deletedUser,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+
   /**
    * DELETE /api/users/:id/roles
    * Remove role from user (admin only)

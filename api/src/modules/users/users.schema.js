@@ -75,7 +75,7 @@ export const validateParams = (schema) => {
 
 // Assign role: allow either roleName or roleId
 export const assignRoleByNameSchema = z.object({
-  roleName: z.string().min(1, 'roleName is required').trim().toLowerCase()
+  roleName: z.string().min(1, 'roleName is required').trim()
 })
 
 export const assignRoleByIdSchema = z.object({
@@ -102,7 +102,7 @@ export const removeRuleSchema = z.union([assignRuleByKeySchema, assignRuleByIdSc
 export const searchUsersSchema = z.object({
   searchQuery: z.string().optional().default(''),
   tableConfig: z.object({
-    limit: z.coerce.number().min(1).max(100).optional().default(10),
+    limit: z.coerce.number().min(1).max(10000).optional().default(10),
     offset: z.coerce.number().min(0).optional().default(0),
     sortBy: z.enum(['id', 'username', 'email', 'display_name', 'is_active', 'created_at', 'updated_at']).optional().default('id'),
     orderBy: z.enum(['asc', 'desc']).optional().default('desc')

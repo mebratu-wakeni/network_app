@@ -31,7 +31,7 @@ export class UsersRepository {
   async create(data) {
     return this.knex('users')
       .insert(data)
-      .returning(['id', 'email', 'display_name', 'is_active', 'created_at', 'updated_at'])
+      .returning(['id', 'email', 'display_name', 'is_active', 'created_at', 'updated_at', 'last_login_at'])
   }
 
   /**
@@ -41,17 +41,20 @@ export class UsersRepository {
     return this.knex('users')
       .where({ id })
       .update(data)
-      .returning(['id', 'email', 'display_name', 'is_active', 'avatar_url', 'avatar_key', 'created_at', 'updated_at'])
+      .returning(['id', 'email', 'display_name', 'is_active', 'avatar_url', 'avatar_key', 'created_at', 'updated_at', 'last_login_at'])
   }
 
   /**
    * Get user's roles
    */
   async getUserRoles(userId) {
+
+    const roles = await this.knex('roles')
+
     return this.knex('user_roles')
       .join('roles', 'user_roles.role_id', 'roles.id')
       .where('user_roles.user_id', userId)
-      .select('roles.id', 'roles.name', 'roles.description')
+      .select('roles.id', 'roles.name', 'roles.description', 'roles.color')
   }
 
   /**
@@ -72,6 +75,16 @@ export class UsersRepository {
       .join('rules', 'role_rules.rule_id', 'rules.id')
       .where('role_rules.role_id', roleId)
       .select('rules.id', 'rules.key', 'rules.description')
+  }
+
+  /**
+   * Get roles for a role
+   */
+  async getRuleRoles(ruleId) {
+    return this.knex('role_rules')
+      .join('roles', 'role_rules.role_id', 'roles.id')
+      .where('role_rules.rule_id', ruleId)
+      .select('roles.id', 'roles.name', 'roles.description', 'roles.color')
   }
 
   /**
@@ -188,9 +201,34 @@ export class UsersRepository {
     return 1 // Successfully removed
   }
 
+  // repository/users.repository.js
+  async deleteUser(id) {
+    const user = await this.knex('users')
+      .where({ id })
+      .first();
+
+    if (!user) {
+      const error = new Error('User not found');
+      error.code = 'USER_NOT_FOUND';
+      throw error;
+    }
+
+    await this.knex('users')
+      .where({ id })
+      .delete();
+
+    // Return a controlled subset (important)
+    return {
+      id: user.id,
+      display_name: user.display_name,
+      username: user.username
+    };
+  }
+
+
   async getUsersList(searchQuery, tableConfig) {
     const query = this.knex('users').select([
-      'id', 'username', 'display_name', 'email', 'created_at', 'avatar_url', 'is_active'
+      'id', 'username', 'display_name', 'email', 'created_at', 'avatar_url', 'is_active', 'last_login_at'
     ]);
 
     if (searchQuery && searchQuery.trim()) {
@@ -242,7 +280,7 @@ export class UsersRepository {
         'id', 'username', 'email', 'display_name',
         'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
         'avatar_width', 'avatar_height', 'avatar_updated_at',
-        'created_at', 'updated_at'
+        'created_at', 'updated_at', 'last_login_at'
       ]);
 
     return updatedUser
@@ -260,7 +298,7 @@ export class UsersRepository {
         'id', 'username', 'email', 'display_name',
         'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
         'avatar_width', 'avatar_height', 'avatar_updated_at',
-        'created_at', 'updated_at'
+        'created_at', 'updated_at', 'last_login_at'
       ])
 
     return updatedUser
@@ -286,7 +324,7 @@ export class UsersRepository {
         'id', 'username', 'email', 'display_name',
         'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
         'avatar_width', 'avatar_height', 'avatar_updated_at',
-        'created_at', 'updated_at'
+        'created_at', 'updated_at', 'last_login_at'
       ])
 
     return updatedUser
@@ -309,7 +347,7 @@ export class UsersRepository {
         'id', 'username', 'email', 'display_name',
         'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
         'avatar_width', 'avatar_height', 'avatar_updated_at',
-        'created_at', 'updated_at'
+        'created_at', 'updated_at', 'last_login_at'
       ])
       .where('id', userId)
       .first()
@@ -342,10 +380,26 @@ export class UsersRepository {
         'id', 'username', 'email', 'display_name', 'is_active',
         'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
         'avatar_width', 'avatar_height', 'avatar_updated_at',
-        'created_at', 'updated_at'
+        'created_at', 'updated_at', 'last_login_at'
       ])
 
     return updatedUser
+  }
+
+  async updateLoginTime(username) {
+    const user = await this.knex('users')
+      .where({ username })
+      .update({ last_login_at: this.knex.fn.now() }).returning([
+        'id', 'username', 'email', 'display_name', 'is_active', 'last_login_at'
+      ]);
+    return user;
+  }
+  async getAllRoles() {
+    return this.knex('roles').select('id', 'name', 'description', 'color');
+  }
+
+  async getAllRules() {
+    return this.knex('rules').select('id', 'key', 'description')
   }
 
 }

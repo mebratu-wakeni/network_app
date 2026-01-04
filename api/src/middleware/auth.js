@@ -91,6 +91,7 @@ export const authenticate = async (req, res, next) => {
  */
 export const requireRules = (requiredRules = []) => {
   return async (req, res, next) => {
+    
     try {
       // If using x-role header (backward compatibility), allow it
       if (req.headers['x-role'] && !req.user) {
@@ -165,6 +166,7 @@ export const requireAnyRule = (requiredRules = []) => {
  */
 export const requireRole = (allowedRoles = []) => {
   return async (req, res, next) => {
+    console.log('authentication req: ', req.user);
     try {
       // First, try to authenticate if JWT token is present
       const authHeader = req.headers.authorization

@@ -10,7 +10,7 @@ import {
   validate, validateParams, updateUserSchema, idParamSchema, 
   assignRoleSchema, removeRoleSchema, assignRuleSchema, removeRuleSchema, 
   searchUsersSchema, updateUserProfileSchema, changePasswordSchema } from './users.schema.js'
-import { authenticate, requireRole } from '../../middleware/auth.js'
+import { authenticate, requireRole, requireRules } from '../../middleware/auth.js'
 
 // Initialize dependencies
 const usersRepository = new UsersRepository(knex)
@@ -25,6 +25,7 @@ router.use(authenticate)
 // Search users (must come before /:id route)
 router.post(
   '/search',
+  requireRules(['CanSeeUsers']),
   validate(searchUsersSchema),
   usersController.getUsersList
 )
@@ -75,7 +76,7 @@ router.put(
 // Assign role to user (admin only)
 router.post(
   '/:id/roles',
-  requireRole(['admin']),
+  requireRules(['CanEditUsers']),
   validateParams(idParamSchema),
   validate(assignRoleSchema),
   usersController.assignRole
@@ -84,7 +85,7 @@ router.post(
 // Remove role from user (admin only)
 router.delete(
   '/:id/roles',
-  requireRole(['admin']),
+  requireRules(['CanEditUsers']),
   validateParams(idParamSchema),
   validate(removeRoleSchema),
   usersController.removeRole
@@ -93,7 +94,7 @@ router.delete(
 // Assign rule to user (admin only)
 router.post(
   '/:id/rules',
-  requireRole(['admin']),
+  requireRules(['CanEditUsers']),
   validateParams(idParamSchema),
   validate(assignRuleSchema),
   usersController.assignRule
@@ -102,22 +103,32 @@ router.post(
 // Remove rule from user (admin only)
 router.delete(
   '/:id/rules',
-  requireRole(['admin']),
+  requireRules(['CanEditUsers']),
   validateParams(idParamSchema),
   validate(removeRuleSchema),
   usersController.removeRule
 )
 
+// Remove user 
+
+router.delete(
+  '/:id',
+  requireRules(['CanEditUsers']),
+  validateParams(idParamSchema),
+  usersController.deleteUser
+)
+
 // Get user's roles and rules
 router.get(
   '/:id/permissions',
+  requireRules(['CanSeeUsers']),
   validateParams(idParamSchema),
   usersController.getPermissions
 )
 
 router.patch(
   '/:id/toggle-status',
-  requireRole(['admin']),
+  requireRules(['CanEditUsers']),
   validateParams(idParamSchema),
   usersController.toggleUserStatus
 )

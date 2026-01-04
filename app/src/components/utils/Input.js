@@ -17,6 +17,7 @@ const Input = (props) => {
     name,
     value,
     onChange,
+    onInput = () => {},
     placeholder = '',
     required = false,
     isError = false,
@@ -47,7 +48,11 @@ const Input = (props) => {
       'aria-invalid': isError ? "true" : "false",
       required,
     },
-    events: { 'change': onChange },
+    events: { 
+      'change': onChange,
+      'input': onInput 
+    },
+  
     delegator,
   });
 };

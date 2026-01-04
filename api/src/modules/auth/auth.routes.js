@@ -19,7 +19,7 @@ const authController = new AuthController(authService)
 const router = Router()
 
 // Public routes
-router.post('/register', authenticate, requireRole(['admin']), validate(registerSchema), authController.register)
+router.post('/register', authenticate, requireRole(['Admin']), validate(registerSchema), authController.register)
 router.post('/login', validate(loginSchema), authController.login)
 
 // Protected route (requires valid JWT)

@@ -135,6 +135,8 @@ export class UsersService {
     // Verify user exists
     await this.getById(userId)
 
+    const allRoles = await this.repository.getAllRoles();
+    const allRules = await this.repository.getAllRules();
     // Get user's roles and directly assigned rules in parallel
     const [userRoles, directRules] = await Promise.all([
       this.repository.getUserRoles(userId),
@@ -159,9 +161,28 @@ export class UsersService {
     // Get directly assigned rule keys
     const directlyAssignedRules = directRules.map(rule => rule.key)
 
+
+    const roles = []
+    const rules = []
+
+    for ( const role of allRoles ) {
+      roles.push({
+        role,
+        isAssigned: userRoles.map(rl => rl.id).includes(role.id)
+      })
+    }
+
+    for (const rule of allRules ) {
+      rules.push({
+        rule,
+        roles: await this.repository.getRuleRoles(rule.id),
+        isDirect: directRules.map(rl => rl.id).includes(rule.id)
+      })
+    }
+
     return {
-      roles: rolesWithRules,
-      directlyAssignedRules
+      roles,
+      rules
     }
   }
 
@@ -299,6 +320,28 @@ export class UsersService {
       assigned: inserted > 0 // true if newly assigned, false if already existed
     }
   }
+
+
+  // remove user 
+
+  // services/users.service.js
+  async deleteUser(id) {
+    try {
+      return await this.repository.deleteUser(id);
+    } catch (error) {
+      // Re-throw known domain errors
+      if (error.code === 'USER_NOT_FOUND') {
+        throw error;
+      }
+
+      // Wrap unknown errors
+      const wrapped = new Error('Failed to delete user');
+      wrapped.cause = error;
+      wrapped.code = 'DELETE_USER_FAILED';
+      throw wrapped;
+    }
+  }
+
 
   /**
    * Remove rule from user

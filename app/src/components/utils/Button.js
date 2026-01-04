@@ -1,3 +1,4 @@
+import { twMerge } from 'tailwind-merge'
 const { Row } = Liteframe;
 
 
@@ -50,11 +51,13 @@ const Button = (props, children) => {
     : '';
 
   // --- 4. Final Classes ---
-  const finalClasses = `${baseClasses} ${variantClasses} ${disabledClasses} ${className}`;
+  const finalClasses = `${baseClasses} ${variantClasses} ${disabledClasses}`;
+
+  const lastClasses = twMerge(finalClasses, className);
 
   return Row({
     tagType: 'button',
-    class: finalClasses,
+    class: lastClasses,
     attributes: {
       type: type,
       disabled: disabled ? 'disabled' : null, // Set the HTML disabled attribute

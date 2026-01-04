@@ -1,4 +1,4 @@
-import { nativeImage, app, ipcMain, BrowserWindow } from "electron";
+import { app, nativeImage, ipcMain, BrowserWindow } from "electron";
 import { createRequire } from "node:module";
 import { fileURLToPath as fileURLToPath$1 } from "node:url";
 import path$2 from "node:path";
@@ -7,10 +7,11 @@ import require$$1, { promisify } from "util";
 import path$1 from "path";
 import require$$5, { fileURLToPath } from "url";
 import require$$6, { existsSync } from "fs";
-import require$$0$1 from "stream";
+import stream from "stream";
 import require$$3 from "http";
 import require$$4 from "https";
 import require$$8 from "crypto";
+import fs$1 from "fs/promises";
 const execAsync = promisify(exec);
 const __dirname$1 = path$1.dirname(fileURLToPath(import.meta.url));
 function findProjectRoot(startPath) {
@@ -283,7 +284,7 @@ function getApiUrl(endpoint) {
 function getDefaultExportFromCjs(x) {
   return x && x.__esModule && Object.prototype.hasOwnProperty.call(x, "default") ? x["default"] : x;
 }
-var Stream$2 = require$$0$1.Stream;
+var Stream$2 = stream.Stream;
 var util$2 = require$$1;
 var delayed_stream = DelayedStream$1;
 function DelayedStream$1() {
@@ -369,7 +370,7 @@ DelayedStream$1.prototype._checkIfMaxDataSizeExceeded = function() {
   this.emit("error", new Error(message));
 };
 var util$1 = require$$1;
-var Stream$1 = require$$0$1.Stream;
+var Stream$1 = stream.Stream;
 var DelayedStream = delayed_stream;
 var combined_stream = CombinedStream$1;
 function CombinedStream$1() {
@@ -393,26 +394,26 @@ CombinedStream$1.create = function(options) {
   }
   return combinedStream;
 };
-CombinedStream$1.isStreamLike = function(stream) {
-  return typeof stream !== "function" && typeof stream !== "string" && typeof stream !== "boolean" && typeof stream !== "number" && !Buffer.isBuffer(stream);
+CombinedStream$1.isStreamLike = function(stream2) {
+  return typeof stream2 !== "function" && typeof stream2 !== "string" && typeof stream2 !== "boolean" && typeof stream2 !== "number" && !Buffer.isBuffer(stream2);
 };
-CombinedStream$1.prototype.append = function(stream) {
-  var isStreamLike = CombinedStream$1.isStreamLike(stream);
+CombinedStream$1.prototype.append = function(stream2) {
+  var isStreamLike = CombinedStream$1.isStreamLike(stream2);
   if (isStreamLike) {
-    if (!(stream instanceof DelayedStream)) {
-      var newStream = DelayedStream.create(stream, {
+    if (!(stream2 instanceof DelayedStream)) {
+      var newStream = DelayedStream.create(stream2, {
         maxDataSize: Infinity,
         pauseStream: this.pauseStreams
       });
-      stream.on("data", this._checkDataSize.bind(this));
-      stream = newStream;
+      stream2.on("data", this._checkDataSize.bind(this));
+      stream2 = newStream;
     }
-    this._handleErrors(stream);
+    this._handleErrors(stream2);
     if (this.pauseStreams) {
-      stream.pause();
+      stream2.pause();
     }
   }
-  this._streams.push(stream);
+  this._streams.push(stream2);
   return this;
 };
 CombinedStream$1.prototype.pipe = function(dest, options) {
@@ -437,40 +438,40 @@ CombinedStream$1.prototype._getNext = function() {
   }
 };
 CombinedStream$1.prototype._realGetNext = function() {
-  var stream = this._streams.shift();
-  if (typeof stream == "undefined") {
+  var stream2 = this._streams.shift();
+  if (typeof stream2 == "undefined") {
     this.end();
     return;
   }
-  if (typeof stream !== "function") {
-    this._pipeNext(stream);
+  if (typeof stream2 !== "function") {
+    this._pipeNext(stream2);
     return;
   }
-  var getStream = stream;
-  getStream((function(stream2) {
-    var isStreamLike = CombinedStream$1.isStreamLike(stream2);
+  var getStream = stream2;
+  getStream((function(stream3) {
+    var isStreamLike = CombinedStream$1.isStreamLike(stream3);
     if (isStreamLike) {
-      stream2.on("data", this._checkDataSize.bind(this));
-      this._handleErrors(stream2);
+      stream3.on("data", this._checkDataSize.bind(this));
+      this._handleErrors(stream3);
     }
-    this._pipeNext(stream2);
+    this._pipeNext(stream3);
   }).bind(this));
 };
-CombinedStream$1.prototype._pipeNext = function(stream) {
-  this._currentStream = stream;
-  var isStreamLike = CombinedStream$1.isStreamLike(stream);
+CombinedStream$1.prototype._pipeNext = function(stream2) {
+  this._currentStream = stream2;
+  var isStreamLike = CombinedStream$1.isStreamLike(stream2);
   if (isStreamLike) {
-    stream.on("end", this._getNext.bind(this));
-    stream.pipe(this, { end: false });
+    stream2.on("end", this._getNext.bind(this));
+    stream2.pipe(this, { end: false });
     return;
   }
-  var value = stream;
+  var value = stream2;
   this.write(value);
   this._getNext();
 };
-CombinedStream$1.prototype._handleErrors = function(stream) {
+CombinedStream$1.prototype._handleErrors = function(stream2) {
   var self = this;
-  stream.on("error", function(err) {
+  stream2.on("error", function(err) {
     self._emitError(err);
   });
 };
@@ -517,11 +518,11 @@ CombinedStream$1.prototype._checkDataSize = function() {
 CombinedStream$1.prototype._updateDataSize = function() {
   this.dataSize = 0;
   var self = this;
-  this._streams.forEach(function(stream) {
-    if (!stream.dataSize) {
+  this._streams.forEach(function(stream2) {
+    if (!stream2.dataSize) {
       return;
     }
-    self.dataSize += stream.dataSize;
+    self.dataSize += stream2.dataSize;
   });
   if (this._currentStream && this._currentStream.dataSize) {
     this.dataSize += this._currentStream.dataSize;
@@ -11309,7 +11310,7 @@ var mimeDb = require$$0;
     }
     return exports.types[extension2] || false;
   }
-  function populateMaps(extensions, types) {
+  function populateMaps(extensions, types2) {
     var preference = ["nginx", "apache", void 0, "iana"];
     Object.keys(db).forEach(function forEachMimeType(type2) {
       var mime2 = db[type2];
@@ -11320,14 +11321,14 @@ var mimeDb = require$$0;
       extensions[type2] = exts;
       for (var i = 0; i < exts.length; i++) {
         var extension2 = exts[i];
-        if (types[extension2]) {
-          var from = preference.indexOf(db[types[extension2]].source);
+        if (types2[extension2]) {
+          var from = preference.indexOf(db[types2[extension2]].source);
           var to = preference.indexOf(mime2.source);
-          if (types[extension2] !== "application/octet-stream" && (from > to || from === to && types[extension2].substr(0, 12) === "application/")) {
+          if (types2[extension2] !== "application/octet-stream" && (from > to || from === to && types2[extension2].substr(0, 12) === "application/")) {
             continue;
           }
         }
-        types[extension2] = type2;
+        types2[extension2] = type2;
       }
     });
   }
@@ -11483,14 +11484,7 @@ var _eval = EvalError;
 var range = RangeError;
 var ref = ReferenceError;
 var syntax = SyntaxError;
-var type;
-var hasRequiredType;
-function requireType() {
-  if (hasRequiredType) return type;
-  hasRequiredType = 1;
-  type = TypeError;
-  return type;
-}
+var type = TypeError;
 var uri = URIError;
 var abs$1 = Math.abs;
 var floor$1 = Math.floor;
@@ -11736,7 +11730,7 @@ function requireCallBindApplyHelpers() {
   if (hasRequiredCallBindApplyHelpers) return callBindApplyHelpers;
   hasRequiredCallBindApplyHelpers = 1;
   var bind3 = functionBind;
-  var $TypeError2 = requireType();
+  var $TypeError2 = type;
   var $call2 = requireFunctionCall();
   var $actualApply = requireActualApply();
   callBindApplyHelpers = function callBindBasic(args) {
@@ -11747,10 +11741,10 @@ function requireCallBindApplyHelpers() {
   };
   return callBindApplyHelpers;
 }
-var get;
+var get$1;
 var hasRequiredGet;
 function requireGet() {
-  if (hasRequiredGet) return get;
+  if (hasRequiredGet) return get$1;
   hasRequiredGet = 1;
   var callBind = requireCallBindApplyHelpers();
   var gOPD2 = gopd;
@@ -11770,13 +11764,13 @@ function requireGet() {
   );
   var $Object2 = Object;
   var $getPrototypeOf = $Object2.getPrototypeOf;
-  get = desc && typeof desc.get === "function" ? callBind([desc.get]) : typeof $getPrototypeOf === "function" ? (
+  get$1 = desc && typeof desc.get === "function" ? callBind([desc.get]) : typeof $getPrototypeOf === "function" ? (
     /** @type {import('./get')} */
     function getDunder(value) {
       return $getPrototypeOf(value == null ? value : $Object2(value));
     }
   ) : false;
-  return get;
+  return get$1;
 }
 var getProto$1;
 var hasRequiredGetProto;
@@ -11809,7 +11803,7 @@ var $EvalError = _eval;
 var $RangeError = range;
 var $ReferenceError = ref;
 var $SyntaxError = syntax;
-var $TypeError$1 = requireType();
+var $TypeError$1 = type;
 var $URIError = uri;
 var abs = abs$1;
 var floor = floor$1;
@@ -12025,9 +12019,9 @@ var $spliceApply = bind2.call($apply, Array.prototype.splice);
 var $replace = bind2.call($call, String.prototype.replace);
 var $strSlice = bind2.call($call, String.prototype.slice);
 var $exec = bind2.call($call, RegExp.prototype.exec);
-var rePropName = /[^%.[\]]+|\[(?:(-?\d+(?:\.\d+)?)|(["'])((?:(?!\2)[^\\]|\\.)*?)\2)\]|(?=(?:\.|\[\])(?:\.|\[\]|%$))/g;
-var reEscapeChar = /\\(\\)?/g;
-var stringToPath = function stringToPath2(string) {
+var rePropName$1 = /[^%.[\]]+|\[(?:(-?\d+(?:\.\d+)?)|(["'])((?:(?!\2)[^\\]|\\.)*?)\2)\]|(?=(?:\.|\[\])(?:\.|\[\]|%$))/g;
+var reEscapeChar$1 = /\\(\\)?/g;
+var stringToPath$1 = function stringToPath(string) {
   var first = $strSlice(string, 0, 1);
   var last = $strSlice(string, -1);
   if (first === "%" && last !== "%") {
@@ -12036,8 +12030,8 @@ var stringToPath = function stringToPath2(string) {
     throw new $SyntaxError("invalid intrinsic syntax, expected opening `%`");
   }
   var result = [];
-  $replace(string, rePropName, function(match, number, quote, subString) {
-    result[result.length] = quote ? $replace(subString, reEscapeChar, "$1") : number || match;
+  $replace(string, rePropName$1, function(match, number, quote, subString) {
+    result[result.length] = quote ? $replace(subString, reEscapeChar$1, "$1") : number || match;
   });
   return result;
 };
@@ -12074,7 +12068,7 @@ var getIntrinsic = function GetIntrinsic(name, allowMissing) {
   if ($exec(/^%?[^%]*%?$/, name) === null) {
     throw new $SyntaxError("`%` may not be present anywhere but at the beginning and end of the intrinsic name");
   }
-  var parts = stringToPath(name);
+  var parts = stringToPath$1(name);
   var intrinsicBaseName = parts.length > 0 ? parts[0] : "";
   var intrinsic = getBaseIntrinsic("%" + intrinsicBaseName + "%", allowMissing);
   var intrinsicRealName = intrinsic.name;
@@ -12140,7 +12134,7 @@ var GetIntrinsic2 = getIntrinsic;
 var $defineProperty = GetIntrinsic2("%Object.defineProperty%", true);
 var hasToStringTag = requireShams()();
 var hasOwn$1 = hasown;
-var $TypeError = requireType();
+var $TypeError = type;
 var toStringTag = hasToStringTag ? Symbol.toStringTag : null;
 var esSetTostringtag = function setToStringTag(object, value) {
   var overrideIfSet = arguments.length > 2 && !!arguments[2] && arguments[2].force;
@@ -12174,7 +12168,7 @@ var http = require$$3;
 var https = require$$4;
 var parseUrl = require$$5.parse;
 var fs = require$$6;
-var Stream = require$$0$1.Stream;
+var Stream = stream.Stream;
 var crypto = require$$8;
 var mime = mimeTypes;
 var asynckit = asynckit$1;
@@ -12480,6 +12474,898 @@ FormData.prototype.toString = function() {
 setToStringTag2(FormData.prototype, "FormData");
 var form_data = FormData;
 const FormData$1 = /* @__PURE__ */ getDefaultExportFromCjs(form_data);
+const init_state = (options) => {
+  return {
+    start_time: options.duration ? Date.now() : null,
+    fixed_size_buffer: "",
+    count_written: 0,
+    count_created: 0
+  };
+};
+const random = function(options = {}) {
+  if (options.seed) {
+    return options.seed = options.seed * Math.PI * 100 % 100 / 100;
+  } else {
+    return Math.random();
+  }
+};
+const types = {
+  // Generate an ASCII value.
+  ascii: function({ options }) {
+    const column = [];
+    const nb_chars = Math.ceil(random(options) * options.maxWordLength);
+    for (let i = 0; i < nb_chars; i++) {
+      const char = Math.floor(random(options) * 32);
+      column.push(String.fromCharCode(char + (char < 16 ? 65 : 97 - 16)));
+    }
+    return column.join("");
+  },
+  // Generate an integer value.
+  int: function({ options }) {
+    return Math.floor(random(options) * Math.pow(2, 52));
+  },
+  // Generate an boolean value.
+  bool: function({ options }) {
+    return Math.floor(random(options) * 2);
+  }
+};
+const camelize = function(str) {
+  return str.replace(/_([a-z])/gi, function(_, match) {
+    return match.toUpperCase();
+  });
+};
+const normalize_options$1 = (opts) => {
+  if (opts.object_mode) {
+    opts.objectMode = opts.object_mode;
+  }
+  if (opts.high_water_mark) {
+    opts.highWaterMark = opts.high_water_mark;
+  }
+  const options = {};
+  for (const k in opts) {
+    options[camelize(k)] = opts[k];
+  }
+  const dft = {
+    columns: 8,
+    delimiter: ",",
+    duration: null,
+    encoding: null,
+    end: null,
+    eof: false,
+    fixedSize: false,
+    length: -1,
+    maxWordLength: 16,
+    rowDelimiter: "\n",
+    seed: false,
+    sleep: 0
+  };
+  for (const k in dft) {
+    if (options[k] === void 0) {
+      options[k] = dft[k];
+    }
+  }
+  if (options.eof === true) {
+    options.eof = options.rowDelimiter;
+  }
+  if (typeof options.columns === "number") {
+    options.columns = new Array(options.columns);
+  }
+  const accepted_header_types = Object.keys(types).filter(
+    (t) => !["super_", "camelize"].includes(t)
+  );
+  for (let i = 0; i < options.columns.length; i++) {
+    const v = options.columns[i] || "ascii";
+    if (typeof v === "string") {
+      if (!accepted_header_types.includes(v)) {
+        throw Error(
+          `Invalid column type: got "${v}", default values are ${JSON.stringify(accepted_header_types)}`
+        );
+      }
+      options.columns[i] = types[v];
+    }
+  }
+  return options;
+};
+const read = (options, state2, size, push, close) => {
+  const data = [];
+  let recordsLength = 0;
+  if (options.fixedSize) {
+    recordsLength = state2.fixed_size_buffer.length;
+    if (recordsLength !== 0) {
+      data.push(state2.fixed_size_buffer);
+    }
+  }
+  while (true) {
+    if (state2.count_created === options.length || options.end && Date.now() > options.end || options.duration && Date.now() > state2.start_time + options.duration) {
+      if (data.length) {
+        if (options.objectMode) {
+          for (const record2 of data) {
+            push(record2);
+          }
+        } else {
+          push(data.join("") + (options.eof ? options.eof : ""));
+        }
+        state2.end = true;
+      } else {
+        close();
+      }
+      return;
+    }
+    let record = [];
+    let recordLength;
+    for (const fn of options.columns) {
+      const result = fn({ options, state: state2 });
+      const type2 = typeof result;
+      if (result !== null && type2 !== "string" && type2 !== "number") {
+        close(
+          Error(
+            [
+              "INVALID_VALUE:",
+              "values returned by column function must be",
+              "a string, a number or null,",
+              `got ${JSON.stringify(result)}`
+            ].join(" ")
+          )
+        );
+        return;
+      }
+      record.push(result);
+    }
+    if (options.objectMode) {
+      recordLength = 0;
+      for (const column of record) {
+        recordLength += column.length;
+      }
+    } else {
+      record = (state2.count_created === 0 ? "" : options.rowDelimiter) + record.join(options.delimiter);
+      recordLength = record.length;
+    }
+    state2.count_created++;
+    if (recordsLength + recordLength > size) {
+      if (options.objectMode) {
+        data.push(record);
+        for (const record2 of data) {
+          push(record2);
+        }
+      } else {
+        if (options.fixedSize) {
+          state2.fixed_size_buffer = record.substr(size - recordsLength);
+          data.push(record.substr(0, size - recordsLength));
+        } else {
+          data.push(record);
+        }
+        push(data.join(""));
+      }
+      return;
+    }
+    recordsLength += recordLength;
+    data.push(record);
+  }
+};
+const Generator = function(options = {}) {
+  this.options = normalize_options$1(options);
+  stream.Readable.call(this, this.options);
+  this.state = init_state(this.options);
+  return this;
+};
+require$$1.inherits(Generator, stream.Readable);
+Generator.prototype.end = function() {
+  this.push(null);
+};
+Generator.prototype._read = function(size) {
+  setImmediate(() => {
+    this.__read(size);
+  });
+};
+Generator.prototype.__read = function(size) {
+  read(
+    this.options,
+    this.state,
+    size,
+    (chunk) => {
+      this.__push(chunk);
+    },
+    (err) => {
+      if (err) {
+        this.destroy(err);
+      } else {
+        this.push(null);
+      }
+    }
+  );
+};
+Generator.prototype.__push = function(record) {
+  const push = () => {
+    this.state.count_written++;
+    this.push(record);
+    if (this.state.end === true) {
+      return this.push(null);
+    }
+  };
+  this.options.sleep > 0 ? setTimeout(push, this.options.sleep) : push();
+};
+({
+  // Note, the following are equals:
+  // Buffer.from("\ufeff")
+  // Buffer.from([239, 187, 191])
+  // Buffer.from('EFBBBF', 'hex')
+  utf8: Buffer.from([239, 187, 191]),
+  // Note, the following are equals:
+  // Buffer.from "\ufeff", 'utf16le
+  // Buffer.from([255, 254])
+  utf16le: Buffer.from([255, 254])
+});
+const charCodeOfDot = ".".charCodeAt(0);
+const reEscapeChar = /\\(\\)?/g;
+const rePropName = RegExp(
+  // Match anything that isn't a dot or bracket.
+  `[^.[\\]]+|\\[(?:([^"'][^[]*)|(["'])((?:(?!\\2)[^\\\\]|\\\\.)*?)\\2)\\]|(?=(?:\\.|\\[\\])(?:\\.|\\[\\]|$))`,
+  "g"
+);
+const reIsDeepProp = /\.|\[(?:[^[\]]*|(["'])(?:(?!\1)[^\\]|\\.)*?\1)\]/;
+const reIsPlainProp = /^\w*$/;
+const getTag = function(value) {
+  return Object.prototype.toString.call(value);
+};
+const isSymbol = function(value) {
+  const type2 = typeof value;
+  return type2 === "symbol" || type2 === "object" && value && getTag(value) === "[object Symbol]";
+};
+const isKey = function(value, object) {
+  if (Array.isArray(value)) {
+    return false;
+  }
+  const type2 = typeof value;
+  if (type2 === "number" || type2 === "symbol" || type2 === "boolean" || !value || isSymbol(value)) {
+    return true;
+  }
+  return reIsPlainProp.test(value) || !reIsDeepProp.test(value) || object != null && value in Object(object);
+};
+const stringToPath2 = function(string) {
+  const result = [];
+  if (string.charCodeAt(0) === charCodeOfDot) {
+    result.push("");
+  }
+  string.replace(rePropName, function(match, expression, quote, subString) {
+    let key = match;
+    if (quote) {
+      key = subString.replace(reEscapeChar, "$1");
+    } else if (expression) {
+      key = expression.trim();
+    }
+    result.push(key);
+  });
+  return result;
+};
+const castPath = function(value, object) {
+  if (Array.isArray(value)) {
+    return value;
+  } else {
+    return isKey(value, object) ? [value] : stringToPath2(value);
+  }
+};
+const toKey = function(value) {
+  if (typeof value === "string" || isSymbol(value)) return value;
+  const result = `${value}`;
+  return result == "0" && 1 / value == -INFINITY ? "-0" : result;
+};
+const get = function(object, path2) {
+  path2 = castPath(path2, object);
+  let index = 0;
+  const length = path2.length;
+  while (object != null && index < length) {
+    object = object[toKey(path2[index++])];
+  }
+  return index && index === length ? object : void 0;
+};
+const is_object = function(obj) {
+  return typeof obj === "object" && obj !== null && !Array.isArray(obj);
+};
+const normalize_columns = function(columns) {
+  if (columns === void 0 || columns === null) {
+    return [void 0, void 0];
+  }
+  if (typeof columns !== "object") {
+    return [Error('Invalid option "columns": expect an array or an object')];
+  }
+  if (!Array.isArray(columns)) {
+    const newcolumns = [];
+    for (const k in columns) {
+      newcolumns.push({
+        key: k,
+        header: columns[k]
+      });
+    }
+    columns = newcolumns;
+  } else {
+    const newcolumns = [];
+    for (const column of columns) {
+      if (typeof column === "string") {
+        newcolumns.push({
+          key: column,
+          header: column
+        });
+      } else if (typeof column === "object" && column !== null && !Array.isArray(column)) {
+        if (!column.key) {
+          return [
+            Error('Invalid column definition: property "key" is required')
+          ];
+        }
+        if (column.header === void 0) {
+          column.header = column.key;
+        }
+        newcolumns.push(column);
+      } else {
+        return [
+          Error("Invalid column definition: expect a string or an object")
+        ];
+      }
+    }
+    columns = newcolumns;
+  }
+  return [void 0, columns];
+};
+class CsvError extends Error {
+  constructor(code, message, ...contexts) {
+    if (Array.isArray(message)) message = message.join(" ");
+    super(message);
+    if (Error.captureStackTrace !== void 0) {
+      Error.captureStackTrace(this, CsvError);
+    }
+    this.code = code;
+    for (const context of contexts) {
+      for (const key in context) {
+        const value = context[key];
+        this[key] = Buffer.isBuffer(value) ? value.toString() : value == null ? value : JSON.parse(JSON.stringify(value));
+      }
+    }
+  }
+}
+const underscore = function(str) {
+  return str.replace(/([A-Z])/g, function(_, match) {
+    return "_" + match.toLowerCase();
+  });
+};
+const normalize_options = function(opts) {
+  const options = {};
+  for (const opt in opts) {
+    options[underscore(opt)] = opts[opt];
+  }
+  if (options.bom === void 0 || options.bom === null || options.bom === false) {
+    options.bom = false;
+  } else if (options.bom !== true) {
+    return [
+      new CsvError("CSV_OPTION_BOOLEAN_INVALID_TYPE", [
+        "option `bom` is optional and must be a boolean value,",
+        `got ${JSON.stringify(options.bom)}`
+      ])
+    ];
+  }
+  if (options.delimiter === void 0 || options.delimiter === null) {
+    options.delimiter = ",";
+  } else if (Buffer.isBuffer(options.delimiter)) {
+    options.delimiter = options.delimiter.toString();
+  } else if (typeof options.delimiter !== "string") {
+    return [
+      new CsvError("CSV_OPTION_DELIMITER_INVALID_TYPE", [
+        "option `delimiter` must be a buffer or a string,",
+        `got ${JSON.stringify(options.delimiter)}`
+      ])
+    ];
+  }
+  if (options.quote === void 0 || options.quote === null) {
+    options.quote = '"';
+  } else if (options.quote === true) {
+    options.quote = '"';
+  } else if (options.quote === false) {
+    options.quote = "";
+  } else if (Buffer.isBuffer(options.quote)) {
+    options.quote = options.quote.toString();
+  } else if (typeof options.quote !== "string") {
+    return [
+      new CsvError("CSV_OPTION_QUOTE_INVALID_TYPE", [
+        "option `quote` must be a boolean, a buffer or a string,",
+        `got ${JSON.stringify(options.quote)}`
+      ])
+    ];
+  }
+  if (options.quoted === void 0 || options.quoted === null) {
+    options.quoted = false;
+  }
+  if (options.escape_formulas === void 0 || options.escape_formulas === null) {
+    options.escape_formulas = false;
+  } else if (typeof options.escape_formulas !== "boolean") {
+    return [
+      new CsvError("CSV_OPTION_ESCAPE_FORMULAS_INVALID_TYPE", [
+        "option `escape_formulas` must be a boolean,",
+        `got ${JSON.stringify(options.escape_formulas)}`
+      ])
+    ];
+  }
+  if (options.quoted_empty === void 0 || options.quoted_empty === null) {
+    options.quoted_empty = void 0;
+  }
+  if (options.quoted_match === void 0 || options.quoted_match === null || options.quoted_match === false) {
+    options.quoted_match = null;
+  } else if (!Array.isArray(options.quoted_match)) {
+    options.quoted_match = [options.quoted_match];
+  }
+  if (options.quoted_match) {
+    for (const quoted_match of options.quoted_match) {
+      const isString = typeof quoted_match === "string";
+      const isRegExp = quoted_match instanceof RegExp;
+      if (!isString && !isRegExp) {
+        return [
+          Error(
+            `Invalid Option: quoted_match must be a string or a regex, got ${JSON.stringify(quoted_match)}`
+          )
+        ];
+      }
+    }
+  }
+  if (options.quoted_string === void 0 || options.quoted_string === null) {
+    options.quoted_string = false;
+  }
+  if (options.eof === void 0 || options.eof === null) {
+    options.eof = true;
+  }
+  if (options.escape === void 0 || options.escape === null) {
+    options.escape = '"';
+  } else if (Buffer.isBuffer(options.escape)) {
+    options.escape = options.escape.toString();
+  } else if (typeof options.escape !== "string") {
+    return [
+      Error(
+        `Invalid Option: escape must be a buffer or a string, got ${JSON.stringify(options.escape)}`
+      )
+    ];
+  }
+  if (options.escape.length > 1) {
+    return [
+      Error(
+        `Invalid Option: escape must be one character, got ${options.escape.length} characters`
+      )
+    ];
+  }
+  if (options.header === void 0 || options.header === null) {
+    options.header = false;
+  }
+  const [errColumns, columns] = normalize_columns(options.columns);
+  if (errColumns !== void 0) return [errColumns];
+  options.columns = columns;
+  if (options.quoted === void 0 || options.quoted === null) {
+    options.quoted = false;
+  }
+  if (options.cast === void 0 || options.cast === null) {
+    options.cast = {};
+  }
+  if (options.cast.bigint === void 0 || options.cast.bigint === null) {
+    options.cast.bigint = (value) => "" + value;
+  }
+  if (options.cast.boolean === void 0 || options.cast.boolean === null) {
+    options.cast.boolean = (value) => value ? "1" : "";
+  }
+  if (options.cast.date === void 0 || options.cast.date === null) {
+    options.cast.date = (value) => "" + value.getTime();
+  }
+  if (options.cast.number === void 0 || options.cast.number === null) {
+    options.cast.number = (value) => "" + value;
+  }
+  if (options.cast.object === void 0 || options.cast.object === null) {
+    options.cast.object = (value) => JSON.stringify(value);
+  }
+  if (options.cast.string === void 0 || options.cast.string === null) {
+    options.cast.string = function(value) {
+      return value;
+    };
+  }
+  if (options.on_record !== void 0 && typeof options.on_record !== "function") {
+    return [Error(`Invalid Option: "on_record" must be a function.`)];
+  }
+  if (options.record_delimiter === void 0 || options.record_delimiter === null) {
+    options.record_delimiter = "\n";
+  } else if (Buffer.isBuffer(options.record_delimiter)) {
+    options.record_delimiter = options.record_delimiter.toString();
+  } else if (typeof options.record_delimiter !== "string") {
+    return [
+      Error(
+        `Invalid Option: record_delimiter must be a buffer or a string, got ${JSON.stringify(options.record_delimiter)}`
+      )
+    ];
+  }
+  switch (options.record_delimiter) {
+    case "unix":
+      options.record_delimiter = "\n";
+      break;
+    case "mac":
+      options.record_delimiter = "\r";
+      break;
+    case "windows":
+      options.record_delimiter = "\r\n";
+      break;
+    case "ascii":
+      options.record_delimiter = "";
+      break;
+    case "unicode":
+      options.record_delimiter = "\u2028";
+      break;
+  }
+  return [void 0, options];
+};
+const bom_utf8 = Buffer.from([239, 187, 191]);
+const stringifier = function(options, state2, info) {
+  return {
+    options,
+    state: state2,
+    info,
+    __transform: function(chunk, push) {
+      if (!Array.isArray(chunk) && typeof chunk !== "object") {
+        return Error(
+          `Invalid Record: expect an array or an object, got ${JSON.stringify(chunk)}`
+        );
+      }
+      if (this.info.records === 0) {
+        if (Array.isArray(chunk)) {
+          if (this.options.header === true && this.options.columns === void 0) {
+            return Error(
+              "Undiscoverable Columns: header option requires column option or object records"
+            );
+          }
+        } else if (this.options.columns === void 0) {
+          const [err2, columns] = normalize_columns(Object.keys(chunk));
+          if (err2) return;
+          this.options.columns = columns;
+        }
+      }
+      if (this.info.records === 0) {
+        this.bom(push);
+        const err2 = this.headers(push);
+        if (err2) return err2;
+      }
+      try {
+        if (this.options.on_record) {
+          this.options.on_record(chunk, this.info.records);
+        }
+      } catch (err2) {
+        return err2;
+      }
+      let err, chunk_string;
+      if (this.options.eof) {
+        [err, chunk_string] = this.stringify(chunk);
+        if (err) return err;
+        if (chunk_string === void 0) {
+          return;
+        } else {
+          chunk_string = chunk_string + this.options.record_delimiter;
+        }
+      } else {
+        [err, chunk_string] = this.stringify(chunk);
+        if (err) return err;
+        if (chunk_string === void 0) {
+          return;
+        } else {
+          if (this.options.header || this.info.records) {
+            chunk_string = this.options.record_delimiter + chunk_string;
+          }
+        }
+      }
+      this.info.records++;
+      push(chunk_string);
+    },
+    stringify: function(chunk, chunkIsHeader = false) {
+      if (typeof chunk !== "object") {
+        return [void 0, chunk];
+      }
+      const { columns } = this.options;
+      const record = [];
+      if (Array.isArray(chunk)) {
+        if (columns) {
+          chunk.splice(columns.length);
+        }
+        for (let i = 0; i < chunk.length; i++) {
+          const field = chunk[i];
+          const [err, value] = this.__cast(field, {
+            index: i,
+            column: i,
+            records: this.info.records,
+            header: chunkIsHeader
+          });
+          if (err) return [err];
+          record[i] = [value, field];
+        }
+      } else {
+        for (let i = 0; i < columns.length; i++) {
+          const field = get(chunk, columns[i].key);
+          const [err, value] = this.__cast(field, {
+            index: i,
+            column: columns[i].key,
+            records: this.info.records,
+            header: chunkIsHeader
+          });
+          if (err) return [err];
+          record[i] = [value, field];
+        }
+      }
+      let csvrecord = "";
+      for (let i = 0; i < record.length; i++) {
+        let options2, err;
+        let [value, field] = record[i];
+        if (typeof value === "string") {
+          options2 = this.options;
+        } else if (is_object(value)) {
+          options2 = value;
+          value = options2.value;
+          delete options2.value;
+          if (typeof value !== "string" && value !== void 0 && value !== null) {
+            if (err)
+              return [
+                Error(
+                  `Invalid Casting Value: returned value must return a string, null or undefined, got ${JSON.stringify(value)}`
+                )
+              ];
+          }
+          options2 = { ...this.options, ...options2 };
+          [err, options2] = normalize_options(options2);
+          if (err !== void 0) {
+            return [err];
+          }
+        } else if (value === void 0 || value === null) {
+          options2 = this.options;
+        } else {
+          return [
+            Error(
+              `Invalid Casting Value: returned value must return a string, an object, null or undefined, got ${JSON.stringify(value)}`
+            )
+          ];
+        }
+        const {
+          delimiter,
+          escape,
+          quote,
+          quoted,
+          quoted_empty,
+          quoted_string,
+          quoted_match,
+          record_delimiter,
+          escape_formulas
+        } = options2;
+        if ("" === value && "" === field) {
+          let quotedMatch = quoted_match && quoted_match.filter((quoted_match2) => {
+            if (typeof quoted_match2 === "string") {
+              return value.indexOf(quoted_match2) !== -1;
+            } else {
+              return quoted_match2.test(value);
+            }
+          });
+          quotedMatch = quotedMatch && quotedMatch.length > 0;
+          const shouldQuote = quotedMatch || true === quoted_empty || true === quoted_string && false !== quoted_empty;
+          if (shouldQuote === true) {
+            value = quote + value + quote;
+          }
+          csvrecord += value;
+        } else if (value) {
+          if (typeof value !== "string") {
+            return [
+              Error(
+                `Formatter must return a string, null or undefined, got ${JSON.stringify(value)}`
+              )
+            ];
+          }
+          const containsdelimiter = delimiter.length && value.indexOf(delimiter) >= 0;
+          const containsQuote = quote !== "" && value.indexOf(quote) >= 0;
+          const containsEscape = value.indexOf(escape) >= 0 && escape !== quote;
+          const containsRecordDelimiter = value.indexOf(record_delimiter) >= 0;
+          const quotedString = quoted_string && typeof field === "string";
+          let quotedMatch = quoted_match && quoted_match.filter((quoted_match2) => {
+            if (typeof quoted_match2 === "string") {
+              return value.indexOf(quoted_match2) !== -1;
+            } else {
+              return quoted_match2.test(value);
+            }
+          });
+          quotedMatch = quotedMatch && quotedMatch.length > 0;
+          if (escape_formulas) {
+            switch (value[0]) {
+              case "=":
+              case "+":
+              case "-":
+              case "@":
+              case "	":
+              case "\r":
+              case "＝":
+              case "＋":
+              case "－":
+              case "＠":
+                value = `'${value}`;
+                break;
+            }
+          }
+          const shouldQuote = containsQuote === true || containsdelimiter || containsRecordDelimiter || quoted || quotedString || quotedMatch;
+          if (shouldQuote === true && containsEscape === true) {
+            const regexp = escape === "\\" ? new RegExp(escape + escape, "g") : new RegExp(escape, "g");
+            value = value.replace(regexp, escape + escape);
+          }
+          if (containsQuote === true) {
+            const regexp = new RegExp(quote, "g");
+            value = value.replace(regexp, escape + quote);
+          }
+          if (shouldQuote === true) {
+            value = quote + value + quote;
+          }
+          csvrecord += value;
+        } else if (quoted_empty === true || field === "" && quoted_string === true && quoted_empty !== false) {
+          csvrecord += quote + quote;
+        }
+        if (i !== record.length - 1) {
+          csvrecord += delimiter;
+        }
+      }
+      return [void 0, csvrecord];
+    },
+    bom: function(push) {
+      if (this.options.bom !== true) {
+        return;
+      }
+      push(bom_utf8);
+    },
+    headers: function(push) {
+      if (this.options.header === false) {
+        return;
+      }
+      if (this.options.columns === void 0) {
+        return;
+      }
+      let err;
+      let headers = this.options.columns.map((column) => column.header);
+      if (this.options.eof) {
+        [err, headers] = this.stringify(headers, true);
+        headers += this.options.record_delimiter;
+      } else {
+        [err, headers] = this.stringify(headers);
+      }
+      if (err) return err;
+      push(headers);
+    },
+    __cast: function(value, context) {
+      const type2 = typeof value;
+      try {
+        if (type2 === "string") {
+          return [void 0, this.options.cast.string(value, context)];
+        } else if (type2 === "bigint") {
+          return [void 0, this.options.cast.bigint(value, context)];
+        } else if (type2 === "number") {
+          return [void 0, this.options.cast.number(value, context)];
+        } else if (type2 === "boolean") {
+          return [void 0, this.options.cast.boolean(value, context)];
+        } else if (value instanceof Date) {
+          return [void 0, this.options.cast.date(value, context)];
+        } else if (type2 === "object" && value !== null) {
+          return [void 0, this.options.cast.object(value, context)];
+        } else {
+          return [void 0, value, value];
+        }
+      } catch (err) {
+        return [err];
+      }
+    }
+  };
+};
+const stringify = function(records, opts = {}) {
+  const data = [];
+  const [err, options] = normalize_options(opts);
+  if (err !== void 0) throw err;
+  const state2 = {
+    stop: false
+  };
+  const info = {
+    records: 0
+  };
+  const api = stringifier(options, state2, info);
+  for (const record of records) {
+    const err2 = api.__transform(record, function(record2) {
+      data.push(record2);
+    });
+    if (err2 !== void 0) throw err2;
+  }
+  if (data.length === 0) {
+    api.bom((d) => {
+      data.push(d);
+    });
+    const err2 = api.headers((headers) => {
+      data.push(headers);
+    });
+    if (err2 !== void 0) throw err2;
+  }
+  return data.join("");
+};
+const Transformer = function(options = {}, handler) {
+  this.options = options;
+  if (options.consume === void 0 || options.consume === null) {
+    this.options.consume = false;
+  }
+  this.options.objectMode = true;
+  if (options.parallel === void 0 || options.parallel === null) {
+    this.options.parallel = 100;
+  }
+  if (options.params === void 0 || options.params === null) {
+    options.params = null;
+  }
+  this.handler = handler;
+  stream.Transform.call(this, this.options);
+  this.state = {
+    running: 0,
+    started: 0,
+    finished: 0,
+    paused: false
+  };
+  return this;
+};
+require$$1.inherits(Transformer, stream.Transform);
+Transformer.prototype._transform = function(chunk, _, cb) {
+  this.state.started++;
+  this.state.running++;
+  if (!this.state.paused && this.state.running < this.options.parallel) {
+    cb();
+    cb = null;
+  }
+  try {
+    let l = this.handler.length;
+    if (this.options.params !== null) {
+      l--;
+    }
+    if (l === 1) {
+      const result = this.handler.call(this, chunk, this.options.params);
+      if (result && result.then) {
+        result.then((result2) => {
+          this.__done(null, [result2], cb);
+        });
+        result.catch((err) => {
+          this.__done(err);
+        });
+      } else {
+        this.__done(null, [result], cb);
+      }
+    } else if (l === 2) {
+      const callback = (err, ...chunks) => this.__done(err, chunks, cb);
+      this.handler.call(this, chunk, callback, this.options.params);
+    } else {
+      throw Error("Invalid handler arguments");
+    }
+    return false;
+  } catch (err) {
+    this.__done(err);
+  }
+};
+Transformer.prototype._flush = function(cb) {
+  if (this.state.running === 0) {
+    cb();
+  } else {
+    this._ending = function() {
+      cb();
+    };
+  }
+};
+Transformer.prototype.__done = function(err, chunks, cb) {
+  this.state.running--;
+  if (err) {
+    return this.destroy(err);
+  }
+  this.state.finished++;
+  for (let chunk of chunks) {
+    if (typeof chunk === "number") {
+      chunk = `${chunk}`;
+    }
+    if (chunk !== void 0 && chunk !== null && chunk !== "") {
+      this.state.paused = !this.push(chunk);
+    }
+  }
+  if (cb) {
+    cb();
+  }
+  if (this._ending && this.state.running === 0) {
+    this._ending();
+  }
+};
 class UsersManager {
   constructor() {
     this.getAuthToken = () => {
@@ -12527,30 +13413,30 @@ class UsersManager {
         throw new Error("updateAvatar expects FormData");
       }
       const headers = formData.getHeaders();
-      const streamToBuffer = (stream) => {
+      const streamToBuffer = (stream2) => {
         return new Promise((resolve, reject) => {
           const chunks = [];
           let finished = false;
           const cleanup = () => {
             if (!finished) {
               finished = true;
-              stream.removeAllListeners("data");
-              stream.removeAllListeners("end");
-              stream.removeAllListeners("error");
+              stream2.removeAllListeners("data");
+              stream2.removeAllListeners("end");
+              stream2.removeAllListeners("error");
             }
           };
-          stream.on("data", (chunk) => {
+          stream2.on("data", (chunk) => {
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
           });
-          stream.on("end", () => {
+          stream2.on("end", () => {
             cleanup();
             resolve(Buffer.concat(chunks));
           });
-          stream.on("error", (err) => {
+          stream2.on("error", (err) => {
             cleanup();
             reject(err);
           });
-          stream.resume();
+          stream2.resume();
         });
       };
       const buffer = await streamToBuffer(formData);
@@ -12594,6 +13480,55 @@ class UsersManager {
       return {
         success: false,
         error: error.message || "Failed to search users"
+      };
+    }
+  }
+  async exportToCsv(token) {
+    try {
+      const response = await this.apiRequest("/users/search", {
+        method: "POST",
+        body: JSON.stringify({
+          searchQuery: "",
+          tableConfig: {
+            limit: 1e4,
+            // to get all the users
+            offset: 0,
+            sortBy: "id",
+            orderBy: "desc"
+          }
+        })
+      }, token);
+      const userList = response.users || [];
+      const columns = [
+        { key: "id", header: "ID" },
+        { key: "username", header: "Username" },
+        { key: "display_name", header: "Name" },
+        { key: "status", header: "Status" }
+      ];
+      const records = userList.map((user) => ({
+        id: user.id,
+        username: user.user,
+        display_name: user.display_name,
+        status: user.is_active ? "Active" : "Not Active"
+      }));
+      const csv = stringify(records, {
+        header: true,
+        columns
+      });
+      const outputDir = app.getPath("downloads");
+      const fileName = `users_${Date.now()}.csv`;
+      const filePath = path$1.join(outputDir, fileName);
+      await fs$1.writeFile(filePath, csv, "utf8");
+      return {
+        success: response.ok,
+        filePath,
+        fileName,
+        rowCount: records.length
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to export users list to csv"
       };
     }
   }
@@ -12711,10 +13646,10 @@ class UsersManager {
       let permissions = null;
       if (response.permissions) {
         permissions = response.permissions;
-      } else if (response.roles || response.directlyAssignedRules) {
+      } else if (response.roles || response.rules) {
         permissions = {
-          roles: response.roles || {},
-          directlyAssignedRules: response.directlyAssignedRules || []
+          roles: response.roles || [],
+          rules: response.rules || []
         };
       } else if (response.data) {
         permissions = response.data;
@@ -12742,12 +13677,30 @@ class UsersManager {
       return {
         success: response.ok === true,
         message: response.message,
-        user: response.user
+        role: response.role
       };
     } catch (error) {
       return {
         success: false,
         error: error.message || "Failed to assign role"
+      };
+    }
+  }
+  async assignRule(userId, ruleData, token) {
+    try {
+      const response = await this.apiRequest(`/users/${userId}/rules`, {
+        method: "POST",
+        body: JSON.stringify(ruleData)
+      }, token);
+      return {
+        success: response.ok,
+        message: response.message,
+        rule: response.rule
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to assign rule to user"
       };
     }
   }
@@ -12769,6 +13722,43 @@ class UsersManager {
       return {
         success: false,
         error: error.message || "Failed to remove role"
+      };
+    }
+  }
+  async removeRule(userId, ruleData, token) {
+    try {
+      const response = await this.apiRequest(`/users/${userId}/rules`, {
+        method: "DELETE",
+        body: JSON.stringify(ruleData)
+      }, token);
+      return {
+        success: response.ok,
+        message: response.message,
+        rule: response.rule
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to remove rule"
+      };
+    }
+  }
+  async deleteUser(userId, token) {
+    try {
+      const response = await this.apiRequest(
+        `/users/${userId}`,
+        { method: "DELETE" },
+        token
+      );
+      return {
+        success: response.ok,
+        user: response.data,
+        message: "User deleted successfully"
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to delete user"
       };
     }
   }
@@ -12852,6 +13842,10 @@ ipcMain.handle("users:toggle-status", async (event, userId, token) => {
 ipcMain.handle("users:get-permissions", async (event, userId, token) => {
   return await usersManager.getUserPermissions(userId, token);
 });
+ipcMain.handle("users:export-csv", async (event, token) => {
+  const response = await usersManager.exportToCsv(token);
+  return response;
+});
 ipcMain.handle("users:update-avatar", async (event, payload, token) => {
   var _a, _b;
   try {
@@ -12878,11 +13872,20 @@ ipcMain.handle("users:update-avatar", async (event, payload, token) => {
 ipcMain.handle("users:remove-avatar", async (event, userId, token) => {
   return await usersManager.removeAvatar(userId, token);
 });
+ipcMain.handle("users:delete-user", async (event, userId, token) => {
+  return await usersManager.deleteUser(userId, token);
+});
 ipcMain.handle("users:assign-role", async (event, userId, roleData, token) => {
   return await usersManager.assignRole(userId, roleData, token);
 });
 ipcMain.handle("users:remove-role", async (event, userId, roleData, token) => {
   return await usersManager.removeRole(userId, roleData, token);
+});
+ipcMain.handle("users:assign-rule", async (event, userId, ruleData, token) => {
+  return await usersManager.assignRule(userId, ruleData, token);
+});
+ipcMain.handle("users:remove-rule", async (event, userId, ruleData, token) => {
+  return await usersManager.removeRule(userId, ruleData, token);
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

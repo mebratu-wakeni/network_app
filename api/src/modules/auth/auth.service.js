@@ -55,7 +55,8 @@ export class AuthService {
    */
   async login(username, password) {
     // Find user by username
-    const user = await this.usersRepository.findByUsername(username)
+    const user = await this.usersRepository.findByUsername(username);
+    
     if (!user) {
       const error = new Error('Invalid username or password')
       error.status = 401
@@ -76,6 +77,9 @@ export class AuthService {
       error.status = 401
       throw error
     }
+
+    // update last_login_at 
+    await this.usersRepository.updateLoginTime(username);
 
     // Generate token
     const token = this.generateToken(user.id)

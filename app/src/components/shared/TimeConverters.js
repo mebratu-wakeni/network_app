@@ -1,6 +1,10 @@
 function formatUTCDate(isoString) {
   const date = new Date(isoString);
 
+  if(!isoString) {
+    return '-'
+  }
+
   const months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'

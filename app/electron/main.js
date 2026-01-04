@@ -130,6 +130,12 @@ ipcMain.handle('users:get-permissions', async (event, userId, token) => {
   return await usersManager.getUserPermissions(userId, token)
 })
 
+ipcMain.handle('users:export-csv', async (event, token) => {
+  const response = await usersManager.exportToCsv(token);
+
+  return response;
+})
+
 
 ipcMain.handle("users:update-avatar", async (event, payload, token) => {
   try {
@@ -164,12 +170,24 @@ ipcMain.handle('users:remove-avatar', async (event, userId, token) => {
   return await usersManager.removeAvatar(userId, token)
 })
 
+ipcMain.handle('users:delete-user', async (event, userId, token) => {
+  return await usersManager.deleteUser(userId, token)
+})
+
 ipcMain.handle('users:assign-role', async (event, userId, roleData, token) => {
   return await usersManager.assignRole(userId, roleData, token)
 })
 
 ipcMain.handle('users:remove-role', async (event, userId, roleData, token) => {
   return await usersManager.removeRole(userId, roleData, token)
+})
+
+ipcMain.handle('users:assign-rule', async (event, userId, ruleData, token) => {
+  return await usersManager.assignRule(userId, ruleData, token)
+})
+
+ipcMain.handle('users:remove-rule', async (event, userId, ruleData, token) => {
+  return await usersManager.removeRule(userId, ruleData, token);
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

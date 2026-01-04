@@ -196,10 +196,11 @@ function UserDetailsPanel(props) {
     ]);
   };
 
-  const rolesObj = props.viewModel.getState('selected-user-roles') || {};
-  // const directRules = props.viewModel.getState('selected-user-direct-rules') || ['can.view.dashboard', 'can.edit.profile'];
-  const directRules = ['can.view.dashboard', 'can.edit.profile'];
+  const rolesObj = props.viewModel.getState('selected-user-roles') || [];
+  const directRules = props.viewModel.getState('selected-user-direct-rules')    ;
+  // const directRules = ['can.view.dashboard', 'can.edit.profile'];
   const permissionsLoading = props.viewModel.getState('permissions-loading');
+
 
 
 
@@ -211,9 +212,9 @@ function UserDetailsPanel(props) {
       )
       .join(' ');                 // Join with spaces
   }
-
-  const roleNames = Object.keys(rolesObj || {}).map(rn => Row({ class: 'px-2 py-1 bg-indigo-50 text-indigo-800 rounded text-sm' }, rn.charAt(0).toUpperCase() + rn.slice(1)));
-  const rules = directRules.map(rn => Row({ class: 'px-2 py-1 bg-indigo-50 text-indigo-800 rounded text-sm' }, formatToTitle(rn)));
+ 
+  const roleNames = rolesObj.filter(rn => rn.isAssigned).map(rn => Row({ class: 'px-2 py-1 bg-indigo-50 text-indigo-800 rounded text-sm' }, rn.role.name));
+  const rules = directRules.filter(rn => rn.isDirect).map(rn => Row({ class: 'px-2 py-1 bg-indigo-50 text-indigo-800 rounded text-sm' }, rn.rule.description));
 
   const UserPermissions = ({label, values, icon}) => {
     return Row({ class: 'mb-4' }, [
@@ -303,6 +304,11 @@ function PageControl(props)  {
     // props.viewModel.loadUsers();
   };
 
+  const handleExport = async () => {
+    const result = await props.viewModel.exportUsersToCsv()
+    console.log('export: ', result);
+  }
+
   return Row({class: 'flex justify-between items-center pr-16 py-2'}, [
     Row({class: 'flex-1 flex items-center gap-5'}, [
       Button({ variant: 'primary', class: 'text-md font-bold text-white', onClick: () => openAddUserModal(props)}, [
@@ -312,7 +318,7 @@ function PageControl(props)  {
         placeholder: 'Search', class: 'max-w-100', value: props.viewModel.getState('search-query'),
         onChange: handleSearch
        }),
-      Button({ variant: 'secondary', class: 'bg-gray-200' }, [
+      Button({ variant: 'secondary', class: 'px-10 bg-gray-200 nowrap', onClick: handleExport }, [
         IonIcon({ name: 'download-outline', class: 'mr-2 text-indigo-800 text-xl font-bold' }), 'Export to csv'
       ]),
     ]),
@@ -363,7 +369,7 @@ function UserEditTabs(props, children) {
   const generalTab = props.getLocalState('tabs').general;
   const rolesTab = props.getLocalState('tabs').roles;
   const rulesTab = props.getLocalState('tabs').rules;
-  const auditLogTab = props.getLocalState('tabs').auditLog  ;
+  // const auditLogTab = props.getLocalState('tabs').auditLog;
 
 
 
@@ -393,11 +399,11 @@ function UserEditTabs(props, children) {
       isActive: rulesTab,
       displayAs: 'Rules'
     },
-    {
-      name: 'audit-log-tab',
-      isActive: auditLogTab,
-      displayAs: 'Audit Log'
-    },
+    // {
+    //   name: 'audit-log-tab',
+    //   isActive: auditLogTab,
+    //   displayAs: 'Audit Log'
+    // },
   ]
 
   const handleBackClick = () => {
@@ -424,7 +430,7 @@ function UserEditTabs(props, children) {
       generalTab && children[0],
       rolesTab && children[1],
       rulesTab && children[2],
-      auditLogTab && children[3],
+      // auditLogTab && children[3],
     ])
   ])
 }
