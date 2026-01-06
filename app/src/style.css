@@ -19,6 +19,22 @@
   }
 }
 
+@keyframes toast-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-toast-slide-down {
+  animation: toast-slide-down 180ms ease-out;
+}
+
 /* put in your app stylesheet for quick test */
 /*
 ion-icon {

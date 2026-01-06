@@ -5,8 +5,11 @@ import { navigationVM } from '../navigation/NavigationVM.js';
 const DEFAULT_USER_FORM = {
   username: '',
   display_name: '',
-  password: 'user1234', 
+  password: 'user1234',
+  is_active: true, 
 }
+
+const TIMEOUT = 1000;
 
 
 export default class UsersVM extends ViewModel {
@@ -119,7 +122,7 @@ export default class UsersVM extends ViewModel {
       this.updateState('error', error.message || 'Failed to load users');
       this.updateState('user-list', []);
     } finally {
-      await this.sleep(100);
+      await this.sleep(TIMEOUT);
       this.updateState('loading', false);
     }
   }
@@ -196,6 +199,7 @@ export default class UsersVM extends ViewModel {
       console.error('Error updating avatar:', error);
       this.updateState('error', error.message || 'Failed to update avatar');
     } finally {
+      await this.sleep(TIMEOUT)
       this.updateState('loading', false);
     }
   }
@@ -224,6 +228,7 @@ export default class UsersVM extends ViewModel {
       console.error('Error removing avatar:', error);
       this.updateState('error', error.message || 'Failed to remove avatar');
     } finally {
+      await this.sleep(TIMEOUT)
       this.updateState('loading', false);
     }
   }
@@ -257,6 +262,7 @@ export default class UsersVM extends ViewModel {
       console.error('Error creating user:', error);
       this.updateState('error', error.message || 'Failed to create user');
     } finally {
+      await this.sleep(TIMEOUT);
       this.updateState('creating', false);
     }
   }
@@ -390,6 +396,7 @@ export default class UsersVM extends ViewModel {
       this.updateState('error', error.message || 'Failed to update user');
       throw error;
     } finally {
+      await this.sleep(TIMEOUT)
       this.updateState('loading', false);
     }
   }
@@ -515,6 +522,7 @@ export default class UsersVM extends ViewModel {
       this.updateState('error', error.message || 'Failed to assign role');
       throw error;
     } finally {
+      await this.sleep(TIMEOUT);
       this.updateState('loading', false);
     }
   }
@@ -538,6 +546,7 @@ export default class UsersVM extends ViewModel {
       this.updateState('error', error.message || 'Failed to assign rule');
       throw error;
     } finally {
+      await this.sleep(TIMEOUT);
       this.updateState('loading', false);
     }
   }
@@ -561,6 +570,7 @@ export default class UsersVM extends ViewModel {
       this.updateState('error', error.message || 'Failed to assign role');
       throw error;
     } finally {
+      await this.sleep(TIMEOUT);
       this.updateState('loading', false);
     }
   }
@@ -574,7 +584,7 @@ export default class UsersVM extends ViewModel {
       const response = await window.ipcRenderer.invoke('users:remove-rule', userId, ruleData, token);
 
       if( response.success ) {
-        this.fetchUserPermissions(userId);
+        await this.fetchUserPermissions(userId);
         return response.rule;
       }
       throw new Error(response.error || 'Failed to remove rule')
@@ -582,8 +592,13 @@ export default class UsersVM extends ViewModel {
       console.error('Error assigning rule to user: ', error);
       this.updateState('error', error.message || 'Failed to assign rule');
     } finally {
+      await this.sleep(TIMEOUT);
       this.updateState('loading', false)
     }
+  }
+
+  sleep = async (delay) => {
+    return new Promise(resolve => setTimeout(resolve, delay));
   }
 }
 

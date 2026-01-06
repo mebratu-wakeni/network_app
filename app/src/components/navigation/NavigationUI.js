@@ -1,6 +1,7 @@
 const { Row, StatefulRow } = Liteframe;
 import ServerManagerUI from "../serverManager/ServerManagerUI.js";
 import { cleanupServerManager } from "../serverManager/ServerManagerVM.js";
+import UserProfile from "../users/profile/profile.js";
 import UsersTable from "../users/UsersUI.js";
 import { Card, CardHeader } from "../utils/Card.js";
 import ExampleCard from "../utils/example.js";
@@ -34,6 +35,8 @@ export default function  NavigationUI(props) {
         ProductsTable()
       ])
       if (option.route === '/users') return UsersTable();
+
+      if (option.route === '/user-profile') return UserProfile();
       
       return Row({ tagType: 'h2'}, 'Unspecified Route')
        // Replace with actual content

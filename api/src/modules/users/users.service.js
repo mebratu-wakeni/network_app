@@ -180,9 +180,18 @@ export class UsersService {
       })
     }
 
+    
+
+
+
     return {
       roles,
-      rules
+      rules: rules.map(rt => ({
+        ...rt,
+        roles: rt.roles.filter(rr => {
+          return roles.filter(r =>  r.isAssigned).map(ar => ar.role.id).includes(rr.id)
+        })
+      }))
     }
   }
 

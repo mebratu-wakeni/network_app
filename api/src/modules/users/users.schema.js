@@ -8,7 +8,7 @@ import { z } from 'zod'
  */
 export const registerUserSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters').trim().toLowerCase(),
-  email: z.string().email('Invalid email address').trim().toLowerCase().optional(),
+  // email: z.string().email('Invalid email address').trim().toLowerCase().optional(),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   display_name: z.string().min(1, 'Display name is required').trim().optional()
 })
@@ -18,7 +18,7 @@ export const registerUserSchema = z.object({
  */
 export const updateUserSchema = z.object({
   display_name: z.string().min(1, 'Display name cannot be empty').trim().optional(),
-  email: z.string().email('Invalid email').optional(),
+  // email: z.string().email('Invalid email').optional(),
   is_active: z.boolean().optional()
 }).refine(
   (data) => Object.keys(data).length > 0,

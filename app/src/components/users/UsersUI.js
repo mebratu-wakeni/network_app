@@ -83,6 +83,9 @@ const UsersTable = () => {
               onRowClick: handleRowClick
             }),
           selectedUser && Drawer({openSlide: showSlide, class: 'h-full'}, [
+            loading && Row({class: 'absolute inset-0 flex items-center justify-center bg-gray-100/40 z-100'}, [
+              Row({ class: 'animate-spin border-4 border-green-600 border-t-transparent rounded-full h-10 w-10' }, [])
+            ]),
             showDetails && UserDetailsPanel(props),
             !showDetails && UserEditTabs(props, [
               GeneralTabContent(props),
@@ -135,7 +138,7 @@ function table({ userList, selectedUserId, onRowClick }) {
           TableDCell({ class: 'px-4 py-3 text-sm' }, [
             Badge({
               label: user.is_active ? 'Active' : 'Inactive',
-              tone: user.is_active ? 'success' : 'default'
+              tone: user.is_active ? 'success' : 'danger'
             })
           ])
         ])

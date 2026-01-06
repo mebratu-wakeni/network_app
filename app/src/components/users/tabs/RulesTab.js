@@ -45,6 +45,8 @@ export default function RulesTab(props) {
       userId: user.id,
     };
 
+    
+
     if(rt.isDirect) {
       await props.viewModel.removeRule(user.id, ruleData);
     } else {
@@ -87,7 +89,9 @@ export default function RulesTab(props) {
     isRuleModifying && isDirectlyAssigned && Row({ class: 'bg-gray-100' }, [
       ...allRules.map((rt, idx) => Row({ class: 'flex items-center gap-4 border-b border-gray-200 px-4 py-2' }, [
         Row({ class: 'inline-block', events: { 'click': () => handleRuleClick(rt, idx) } }, [
-          IonIcon({ name: `${rt.isDirect ? 'checkbox-sharp' : 'square-outline'}`, class: 'text-green-600 text-2xl select-none' }),
+          IonIcon({ 
+            name: `${rt.isDirect ? 'checkbox' : 'square-outline'}`, 
+            class: `${rt.isDirect? 'text-indigo-600' : 'text-gray-500'} text-3xl select-none` }),
         ]),
         Row({class: 'flex flex-col'}, [
           Row({ class: 'text-gray-700 font-medium' }, rt.rule.key),

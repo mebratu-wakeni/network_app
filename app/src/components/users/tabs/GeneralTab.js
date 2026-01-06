@@ -14,8 +14,8 @@ export default function GeneralTabContent(props) {
 
   const user = props.viewModel.getState('selected-user');
   const userForm = props.viewModel.getState('user-form');
-  props.ensureLocalStateKey('isActive', user?.is_active || false);
-  const isActive = props.getLocalState('isActive');
+  // props.ensureLocalStateKey('isActive', user?.is_active || false);
+  const isActive = userForm.is_active;
 
   const loading  = props.viewModel.getState('loading');
 
@@ -27,7 +27,7 @@ export default function GeneralTabContent(props) {
     const userData = {
       display_name: userForm?.display_name ||  '',
       email: userForm?.email || '',
-      is_active: props.getLocalState('isActive'),
+      is_active: isActive,
     };
 
     const userId = user.id;
@@ -121,8 +121,8 @@ export default function GeneralTabContent(props) {
   };
 
   const handleStatusChange = () => {
-    props.setLocalState('isActive', !props.getLocalState('isActive'))
-    props.viewModel.updateUserForm('is_active', props.getLocalState('isActive'));
+    props.viewModel.updateUserForm('is_active', !props.viewModel.getState('user-form').is_active);
+    props.viewModel.updateState('loading', false);
   }
 
   return Row({ class: 'h-full w-full'}, [

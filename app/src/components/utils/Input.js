@@ -1,4 +1,5 @@
 const { Row } = Liteframe;
+import { twMerge } from 'tailwind-merge'
 
 /**
  * Renders a highly configurable <input> element.
@@ -33,8 +34,9 @@ const Input = (props) => {
     ? 'border-red-500 focus:ring-red-500 focus:border-red-500' // Error look
     : 'border-gray-300 focus:ring-indigo-500 focus:border-indigo-500'; // Normal look
 
+  const combinedClasses = `${baseClasses} ${errorClasses}`
   // 3. Final Input Classes
-  const finalInputClasses = `${baseClasses} ${errorClasses} ${className}`;
+  const finalInputClasses = twMerge(combinedClasses, className);
 
   return Row({
     tagType: 'input',

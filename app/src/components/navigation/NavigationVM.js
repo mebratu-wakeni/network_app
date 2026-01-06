@@ -4,7 +4,8 @@ const MENU = [
   { title: 'Dashboard', route: '/', icon: "grid-outline" },
   {title: 'Inventory', route: '/inventory', icon: "layers-outline" },
   {title: 'Server', route: '/server', icon: "server-outline" },
-  {title: 'Users', route: '/users', icon: "people-outline"}
+  {title: 'Users', route: '/users', icon: "people-outline"},
+  { title: 'Profile', route: '/user-profile', icon: 'person-outline'}
 ]
 
 class NavigationVM extends ViewModel {

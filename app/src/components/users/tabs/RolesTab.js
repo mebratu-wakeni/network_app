@@ -75,7 +75,10 @@ export default function RolesTab(props) {
       ...allRoles.map((role, idx) => {
         return Row({ class: 'flex items-center gap-4 border-b border-gray-200 px-4 py-2'}, [
           Row({class: 'inline-block', events: {'click': () => handleRoleClick(role, idx)}}, [
-            IonIcon({ name: `${role.isAssigned ? 'checkbox-sharp' : 'square-outline'}`, class: 'text-indigo-600 text-2xl select-none' }),
+            IonIcon({ 
+              name: `${role.isAssigned ? 'checkbox' : 'square-outline'}`, 
+              class: `${role.isAssigned ? 'text-indigo-500' : 'text-gray=600'} text-3xl select-none` 
+            }),
           ]),
           
           Row({ class: 'flex items-center gap-2' }, [
