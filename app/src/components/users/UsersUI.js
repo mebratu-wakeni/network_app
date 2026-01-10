@@ -15,6 +15,7 @@ import { formatUTCDate } from "../shared/TimeConverters.js";
 import GeneralTabContent from "./tabs/GeneralTab.js";    
 import RolesTab from "./tabs/RolesTab.js";
 import RulesTab from "./tabs/RulesTab.js";
+import { getInitials } from "../utils/Avatar";
 
 const { StatefulRow, Row } = Liteframe;
 
@@ -154,23 +155,23 @@ function UserDetailsPanel(props) {
 
   const UserImage = () => {
     // Resolve avatar URL from API or fall back to bundled default image
-    const rawSrc = (user && (user.avatar_url || user.avatar)) || '';
-    let finalSrc = '/img/erin-lindford.jpg'; // local default in renderer public
+    const avatarPreview = props.viewModel.getState('avatar-preview');
 
-    if (rawSrc) {
-      if (rawSrc.startsWith('/uploads/')) {
-        try {
-          finalSrc = getApiAsset(rawSrc) || finalSrc;
-        } catch (e) {
-          finalSrc = '/img/erin-lindford.jpg';
-        }
-      } else if (rawSrc.startsWith('http')) {
-        finalSrc = rawSrc;
-      }
-    }
+    const UserInitials = () => {
+      if (avatarPreview) return false;
+
+      return Row({ class: 'w-70 h-70 overflow-hidden rounded-md bg-gray-100 flex items-center justify-center' }, [
+        Row({
+          class: `w-40 h-40 rounded-full bg-blue-600 text-white text-5xl font-semibold flex items-center justify-center select-none`,
+        }, getInitials(user.display_name))
+      ]);
+    } 
+
+
 
     return Row({ class: 'w-full flex flex-col items-center gap-2 mt-4' }, [
-      Row({
+      UserInitials(),
+      avatarPreview && Row({
         tagType: 'div',
         class: 'w-70 h-70 overflow-hidden rounded-md bg-gray-100 flex items-center justify-center',
         // attributes: { style: 'width:180px; height:180px;' }
@@ -179,7 +180,7 @@ function UserDetailsPanel(props) {
           tagType: 'img',
           class: 'w-full h-full object-cover',
           attributes: {
-            src: finalSrc,
+            src: avatarPreview,
             alt: user?.display_name || 'User Avatar',
             loading: 'lazy',
             decoding: 'async',
@@ -321,8 +322,9 @@ function PageControl(props)  {
         placeholder: 'Search', class: 'max-w-100', value: props.viewModel.getState('search-query'),
         onChange: handleSearch
        }),
-      Button({ variant: 'secondary', class: 'px-10 bg-gray-200 nowrap', onClick: handleExport }, [
-        IonIcon({ name: 'download-outline', class: 'mr-2 text-indigo-800 text-xl font-bold' }), 'Export to csv'
+      Button({ variant: 'secondary', class: 'px-10 bg-gray-200 flex-nowrap', onClick: handleExport }, [
+        IonIcon({ name: 'download-outline', class: 'mr-2 text-indigo-800 text-xl font-bold' }), 
+        Row({class: 'text-sm font-md text-indigo-800 text-nowrap'}, 'Export to csv')
       ]),
     ]),
     Row({class: 'inline-flex items-center gap-4'}, [

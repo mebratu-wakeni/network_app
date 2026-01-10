@@ -136,11 +136,30 @@ export class UsersController {
     }
   };
 
+  updateUserProfile = async (req, res, next) => {
+    try {
+      const userId = req.user.id; // self
+
+      const user = await this.service.updateUserProfile(userId, {...req.validBody, ...req.body})
+
+      res.json({ ok: true, user});
+
+    } catch (error) {
+      console.error('Error: updating user profile', error)
+      next(error);
+    }
+  }
+
   uploadAvatar = async (req, res, next) => {
     try {
       // Get user ID from route params (allows admin to update any user's avatar)
       const { id } = req.validParams || { id: Number(req.params.id) };
       const userId = id;
+      const userInfo = await this.service.getById(id);
+
+      const avatarKey = userInfo.avatar_key;
+
+      this.deleteAvatarFile(avatarKey);
 
       // Create multer instance
       const upload = multer({
@@ -242,21 +261,23 @@ export class UsersController {
       // Get avatar key and remove from database
       const result = await this.service.removeAvatar(userId);
 
-      // Delete the file from filesystem if it exists
-      if (result.avatarKey) {
-        const filePath = path.join('uploads', 'avatars', result.avatarKey);
-        try {
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-            // eslint-disable-next-line no-console
-          }
-        } catch (fileError) {
-          // Log error but don't fail the request if file deletion fails
-          // (file might have been manually deleted or doesn't exist)
-          // eslint-disable-next-line no-console
-          console.warn(`Warning: Could not delete avatar file ${filePath}:`, fileError.message);
-        }
-      }
+      // // Delete the file from filesystem if it exists
+      // if (result.avatarKey) {
+      //   const filePath = path.join('uploads', 'avatars', result.avatarKey);
+      //   try {
+      //     if (fs.existsSync(filePath)) {
+      //       fs.unlinkSync(filePath);
+      //       // eslint-disable-next-line no-console
+      //     }
+      //   } catch (fileError) {
+      //     // Log error but don't fail the request if file deletion fails
+      //     // (file might have been manually deleted or doesn't exist)
+      //     // eslint-disable-next-line no-console
+      //     console.warn(`Warning: Could not delete avatar file ${filePath}:`, fileError.message);
+      //   }
+      // }
+
+      this.deleteAvatarFile(result.avatarKey)
 
       res.json({ ok: true, user: result.user });
     } catch (error) {
@@ -265,6 +286,24 @@ export class UsersController {
       next(error);
     }
   };
+
+  deleteAvatarFile(avatarKey) {
+    // Delete the file from filesystem if it exists
+    if (avatarKey) {
+      const filePath = path.join('uploads', 'avatars', avatarKey);
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          // eslint-disable-next-line no-console
+        }
+      } catch (fileError) {
+        // Log error but don't fail the request if file deletion fails
+        // (file might have been manually deleted or doesn't exist)
+        // eslint-disable-next-line no-console
+        console.warn(`Warning: Could not delete avatar file ${filePath}:`, fileError.message);
+      }
+    }
+  }
 
   /**
    * GET /api/users/:id/permissions

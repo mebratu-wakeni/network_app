@@ -247,6 +247,50 @@ class UsersManager {
     }
   }
 
+  async getProfileData(token) {
+    try {
+      const response = await this.apiRequest('/auth/me', {
+        method: 'GET',
+      }, token);
+
+      const userId = response.user.id;
+
+      const userRes = await this.getUserById(userId, token);
+
+      let user;
+
+      if (userRes.success) {
+        user = userRes.user;
+      } else {
+        return userRes;
+      }
+
+      const permissionsRes = await this.getUserPermissions(userId, token);
+
+      console.log('permission result: ', permissionsRes)
+
+      if(!permissionsRes.success) return permissionsRes;
+
+      return {
+        success: true,
+        user,
+        roles: permissionsRes.permissions.roles,
+        rules: permissionsRes.permissions.rules,
+      }
+
+
+    
+
+
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to fetch user profile.' 
+      }
+    }
+  }
+
   /**
    * Get user by ID
    */
@@ -310,7 +354,33 @@ class UsersManager {
       };
     }
   }
+  async updateProfile(userData, token) {
+    try {
+      const response = await this.apiRequest(`/auth/me`, {
+        method: 'GET',
+      }, token);
 
+      const userId = response.user.id;
+
+      const profileRes = await this.apiRequest(`/users/${userId}/profile`, {
+        method: 'PUT',
+        body: JSON.stringify(userData)
+      }, token);
+
+      console.log('profile res: ', profileRes)
+
+
+      return {
+        success: profileRes.ok,
+        user: profileRes.user
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to update profile'
+      };
+    }
+  }
   /**
    * Toggle user active status
    */
@@ -431,6 +501,45 @@ class UsersManager {
         success: false,
         error: error.message || 'Failed to remove role'
       };
+    }
+  }
+
+  async removeAvatar(userId, token) {
+    try {
+      const response = await this.apiRequest(`/users/${userId}/avatar`, {
+        method: 'DELETE'
+      }, token);
+
+      console.log('remove avatar response: ', response)
+
+      return {
+        success: response.ok,
+        user: response.user,
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to remove avatar.'
+      }
+    }
+  }
+
+  async changePassword(passwordData, token) {
+    try {
+      const response = await this.apiRequest(`/users/change-password`, {
+        method: 'POST',
+        body: JSON.stringify(passwordData)
+      }, token)
+
+      return {
+        success: response.ok,
+        message: response.message
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Failed to update password'
+      }
     }
   }
 

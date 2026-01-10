@@ -73,6 +73,13 @@ router.put(
   usersController.updateProfile
 )
 
+router.put(
+  '/:id/profile',
+  validateParams(idParamSchema),
+  validate(updateUserProfileSchema),
+  usersController.updateUserProfile
+)
+
 // Assign role to user (admin only)
 router.post(
   '/:id/roles',

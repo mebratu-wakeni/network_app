@@ -25,6 +25,15 @@ export const updateUserSchema = z.object({
   { message: 'At least one field must be provided for update' }
 )
 
+// export const updateUserProfileSchema = z.object({
+//   display_name: z.string().min(1, 'Display name cannot be empty').trim().optional(),
+//   // email: z.string().email('Invalid email').optional(),
+//   is_active: z.boolean().optional()
+// }).refine(
+//   (data) => Object.keys(data).length > 0,
+//   { message: 'At least one field must be provided for update' }
+// )
+
 /**
  * Schema for id parameter
  */
@@ -124,7 +133,7 @@ export const searchUsersSchema = z.object({
 
 // Update profile schema
 export const updateUserProfileSchema = z.object({
-  username: z.string().min(3).max(30).optional(),
+  // username: z.string().min(3).max(30).optional(),
   // email: z.string().email().optional(),
   display_name: z.string().min(1).max(100).optional(),
   // Add other profile fields as needed
@@ -135,9 +144,11 @@ export const changePasswordSchema = z.object({
   currentPassword: z.string().min(6),
   newPassword: z.string().min(8),
   confirmPassword: z.string().min(8)
-}).refine((data) => data.newPassword === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ["confirmPassword"]
+}).refine((data) => {
+  return data.newPassword === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ["confirmPassword"]
+  }
 });
 
 

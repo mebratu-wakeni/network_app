@@ -1,4 +1,5 @@
 const { Row } = Liteframe;
+import { twMerge } from "tailwind-merge";
 
 /**
  * Tabs Component
@@ -9,13 +10,19 @@ const { Row } = Liteframe;
  * - onChange: (key) => void
  */
 export function Tabs(props) {
-  const { tabs, activeKey, onChange } = props;
+  const { tabs, activeKey, onChange, class: className = '' } = props;
+
+  const baseTabClasses = (tab) =>  `relative pb-3 text-sm transition-colors ${tab.key === activeKey
+    ? 'text-indigo-600 font-medium'
+    : 'text-gray-600 hover:text-gray-800'}`;
+
+  // const fullTabClasses = twMerge(baseTabClasses, className);/
 
 
   return Row(
     {
       class: `
-        flex items-center gap-6
+        flex items-center gap-1
         border-b border-gray-200
       `
     },
@@ -23,16 +30,7 @@ export function Tabs(props) {
       Row(
         {
           tagType: 'button',
-          class: `
-            relative
-            pb-3
-            text-sm
-            transition-colors
-            ${tab.key === activeKey
-              ? 'text-indigo-600 font-medium'
-              : 'text-gray-600 hover:text-gray-800'
-            }
-          `,
+          class: twMerge(baseTabClasses(tab), className),
           events: {
             'click': () => onChange(tab.key)
           }

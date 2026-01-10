@@ -1,4 +1,5 @@
 const { Row, StatefulRow } = Liteframe;
+import { Inventory } from "../modules/inventory/Inventory.js";
 import ServerManagerUI from "../serverManager/ServerManagerUI.js";
 import { cleanupServerManager } from "../serverManager/ServerManagerVM.js";
 import UserProfile from "../users/profile/profile.js";
@@ -31,9 +32,7 @@ export default function  NavigationUI(props) {
         return ServerManagerUI();
       }
       if (option.route === '/') return ExampleCard();
-      if (option.route === '/inventory') return Card({}, [
-        ProductsTable()
-      ])
+      if (option.route === '/inventory') return Inventory();
       if (option.route === '/users') return UsersTable();
 
       if (option.route === '/user-profile') return UserProfile();

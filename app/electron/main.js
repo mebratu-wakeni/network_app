@@ -7,6 +7,8 @@ import UsersManager from './users/users.js'
 
 import fs from "fs";
 import FormData from "form-data"; // Node FormData
+import { UserIpcHandlers } from './users/ipcHandlers.js'
+import { setToken } from './config/authManager.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -33,7 +35,7 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
-let win;
+let win; let token;
 const serverManager = new ServerManager()
 const usersManager = new UsersManager()
 
@@ -101,94 +103,22 @@ ipcMain.handle('server:check-dev-status', async () => {
   return await serverManager.checkDevServerStatus()
 })
 
-// IPC Handlers for user management
+
 ipcMain.handle('auth:login', async (event, credentials) => {
-  return await usersManager.authenticate(credentials)
-})
-ipcMain.handle('users:search', async (event, searchParams, token) => {
-  return await usersManager.searchUsers(searchParams, token)
-})
+  const result = await usersManager.authenticate(credentials);
 
-ipcMain.handle('users:create', async (event, userForm, token) => {
-  return await usersManager.createUser(userForm, token);
-})
+  if (result.success) setToken(result.token);
 
-
-ipcMain.handle('users:get-by-id', async (event, userId, token) => {
-  return await usersManager.getUserById(userId, token)
-})
-
-ipcMain.handle('users:update', async (event, userId, userData, token) => {
-  return await usersManager.updateUser(userId, userData, token)
-})
-
-ipcMain.handle('users:toggle-status', async (event, userId, token) => {
-  return await usersManager.toggleUserStatus(userId, token)
-})
-
-ipcMain.handle('users:get-permissions', async (event, userId, token) => {
-  return await usersManager.getUserPermissions(userId, token)
-})
-
-ipcMain.handle('users:export-csv', async (event, token) => {
-  const response = await usersManager.exportToCsv(token);
-
-  return response;
+  return {
+    success: result.success,
+    user: result.user,
+    error: result?.error
+  };
 })
 
 
-ipcMain.handle("users:update-avatar", async (event, payload, token) => {
-  try {
-    // Convert array of numbers back to Buffer for Node.js FormData
-    // payload.buffer is an array of numbers from Uint8Array conversion
-    if (!Array.isArray(payload.buffer)) {
-      console.error('Invalid payload.buffer type:', typeof payload.buffer, payload.buffer?.constructor?.name);
-      throw new Error(`Invalid buffer format: expected array, got ${typeof payload.buffer}`);
-    }
-    
-    const buffer = Buffer.from(payload.buffer);
-    console.log('Created buffer, length:', buffer.length, 'filename:', payload.filename, 'userId:', payload.userId);
-    
-    const formData = new FormData();
-    formData.append('avatar', buffer, {
-      filename: payload.filename,
-      contentType: payload.mimetype
-    });
+UserIpcHandlers();
 
-    return await usersManager.updateAvatar(payload.userId, formData, token);
-  } catch (error) {
-    console.error('Error in users:update-avatar handler:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to update avatar'
-    };
-  }
-});
-
-
-ipcMain.handle('users:remove-avatar', async (event, userId, token) => {
-  return await usersManager.removeAvatar(userId, token)
-})
-
-ipcMain.handle('users:delete-user', async (event, userId, token) => {
-  return await usersManager.deleteUser(userId, token)
-})
-
-ipcMain.handle('users:assign-role', async (event, userId, roleData, token) => {
-  return await usersManager.assignRole(userId, roleData, token)
-})
-
-ipcMain.handle('users:remove-role', async (event, userId, roleData, token) => {
-  return await usersManager.removeRole(userId, roleData, token)
-})
-
-ipcMain.handle('users:assign-rule', async (event, userId, ruleData, token) => {
-  return await usersManager.assignRule(userId, ruleData, token)
-})
-
-ipcMain.handle('users:remove-rule', async (event, userId, ruleData, token) => {
-  return await usersManager.removeRule(userId, ruleData, token);
-})
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

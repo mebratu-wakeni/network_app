@@ -1,17 +1,23 @@
 import { formatUTCDate } from "../../shared/TimeConverters";
-import { Button } from "../../utils/Button";
+import { Button, Spinner } from "../../utils/Button";
 import { CardBody, CardHeader } from "../../utils/Card";
 import UserGeneralTab from "./tabs/General";
 import { Tabs } from "../../utils/Tabs";
 import { UserSecurity } from "./tabs/Security";
 import { TestPermissions, UserAccess } from "./tabs/access";
 import { IonIcon } from "../../utils/Icon";
+import Badge from "../../utils/Badge";
+import { getInitials } from "../../utils/Avatar";
 
 const { Row } = Liteframe;
 
 export function UserDetails(props) {
 
-  const roles = TestPermissions().roles;
+  const user = props.viewModel.getState('user');
+
+  const loading = props.viewModel.getState('loading');
+
+  const roles = props.viewModel.getState('user-roles').filter(rt => rt.isAssigned).map(rt => rt.role);
 
   return Row({ class: 'w-full h-full flex flex-col' }, [
 
@@ -19,17 +25,11 @@ export function UserDetails(props) {
       Row({ class: 'text-md font-semibold' }, "User Profile"),
     ]),
 
-    CardBody({ class: 'flex-1 flex flex-col gap-10 px-6 overflow-y-auto' }, [
+    CardBody({ class: 'flex-1 flex flex-col gap-6 px-6 overflow-y-auto' }, [
 
       /* PROFILE HEADER CARD */
       Row({
-        class: `
-          flex gap-6
-          p-6
-          rounded-lg
-          border border-gray-200
-          bg-gray-50
-        `
+        class: `flex gap-10 p-6 rounded-lg border border-gray-200 bg-gray-50`
       }, [
         UserAvatar(props),
 
@@ -39,8 +39,8 @@ export function UserDetails(props) {
           /* Name + Action */
           Row({ class: 'flex items-start justify-between' }, [
             Row({ class: 'flex flex-col gap-1' }, [
-              Row({ class: 'text-lg font-semibold text-gray-900' }, 'Mebratu Fenta Wakeni'),
-              Row({ class: 'text-sm text-indigo-600' }, '@mebratu'),
+              Row({ class: 'text-lg font-semibold text-gray-900' }, user.display_name),
+              Row({ class: 'text-sm text-indigo-600' }, `@${user.username}`),
             ]),
 
             // Button(
@@ -65,15 +65,12 @@ export function UserDetails(props) {
           }, [
             Row({ class: 'flex items-center gap-3' }, [
               Row({ class: 'text-sm text-gray-600' }, 'Status:'),
-              Row({
-                tagType: 'span',
-                class: 'px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-md'
-              }, 'Active'),
+              Badge({ label: `${user.is_active ? 'Active' : 'Not Active'}`, tone: `${user.is_active ? 'success' : 'danger'}` }),
             ]),
 
             Row({ class: 'flex items-center gap-3' }, [
               Row({ class: 'text-sm text-gray-600' }, 'Last Login:'),
-              Row({ class: 'text-sm text-gray-500' }, formatUTCDate(new Date()))
+              Row({ class: 'text-sm text-gray-500' }, formatUTCDate(user.last_login_at))
             ])
           ])
         ])
@@ -81,7 +78,7 @@ export function UserDetails(props) {
 
       Row({ class: 'flex flex-col gap-6' }, [
         Row({
-          class: `
+          class: ` h-180
     bg-white
     border border-gray-200
     rounded-lg
@@ -90,12 +87,7 @@ export function UserDetails(props) {
         }, [
           /* Tabs bar */
           Row({
-            class: `
-      px-6
-      pt-4
-      border-b border-gray-200
-      bg-gray-50
-    `
+            class: `px-6 pt-4 border-b border-gray-200 bg-gray-50`
           }, UserProfileTabs(props)),
 
           /* Tab content */
@@ -108,16 +100,74 @@ export function UserDetails(props) {
 }
 
 export function UserAvatar(props) {
+
   const finalSrc = '/img/erin-lindford.jpg';
 
+  const user = props.viewModel.getState('user');
+
+  const avatarPreview = props.viewModel.getState('avatar-preview');
+
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      return;
+    }
+
+    // Generate preview immediately (UX-first)
+    const reader = new FileReader();
+    reader.onload = () => {
+      props.viewModel.updateState('avatar-preview', reader.result);
+      // props.viewModel.updateState('loading', true);
+    };
+    reader.readAsDataURL(file);
+
+    try {
+      // Pass file directly to VM (do NOT store in state)
+      await props.viewModel.updateAvatar(file);
+    } catch (error) {
+      console.error('Avatar upload failed:', error);
+    }
+  };
+
+  const fileInput = Row({ tagType: 'input', attributes: { type: 'file', accept: 'image/*', class: 'sr-only' }, events: { 'change': handleFileChange } });
+
+
+  const handleClick = () => {
+    fileInput.click();
+  };
+
+  const loading = props.viewModel.getState('loading');
+
+  console.log('[avatar] loading: ', loading);
+
+  const UserInitials = () => {
+    if(avatarPreview) return false;
+
+    return Row({ class: 'w-full h-70 overflow-hidden rounded-md bg-gray-100 flex items-center justify-center'}, [
+      Row({
+        class: `w-30 h-30 rounded-full bg-blue-600 text-white text-5xl font-semibold flex items-center justify-center select-none`,
+      }, getInitials(user.display_name))
+    ]);
+  } 
+
+
+
+
+
+
   return Row({ class: 'flex flex-col items-center gap-4 w-70' }, [
-    Row({ class: 'w-full h-70 overflow-hidden rounded-md bg-gray-100 flex items-center justify-center' }, [
+    UserInitials(),
+   avatarPreview && Row({ class: 'w-full h-70 overflow-hidden rounded-md bg-gray-100 flex items-center justify-center' }, [
       Row({
         tagType: 'img',
         class: 'w-full h-full object-cover',
         attributes: {
-          src: finalSrc,
-          alt: 'User Avatar',
+          src: avatarPreview,
+          alt: user.display_name,
           loading: 'lazy',
           decoding: 'async',
           onerror: "this.onerror=null;this.src='/erin-lindford.jpg';"
@@ -125,10 +175,11 @@ export function UserAvatar(props) {
       })
     ]),
     Row({ class: 'w-full flex items-center justify-between gap-6' }, [
-      Button({ variant: 'secondary', class: 'w-32' }, 'Remove'),
-      Button({ variant: 'primary', class: 'w-32' }, 'Upload')
+      Button({ variant: 'secondary', class: 'w-32', disabled: loading, onClick: () => props.viewModel.removeAvatar() }, loading ? [Spinner(), 'Remove'] : 'Remove'),
+      Button({ variant: 'primary', class: 'w-32', disabled: loading, onClick: handleClick }, loading ? [Spinner(), 'Upload'] : 'Upload')
     ]
-    )
+    ),
+    fileInput,
   ])
 }
 
@@ -172,6 +223,7 @@ export function UserProfileTabs(props) {
       // { key: 'activity', label: 'Activity' }
     ],
     activeKey: activeTab,
-    onChange: handleTabChange
+    onChange: handleTabChange,
+    class: 'p-6'
   });
 }

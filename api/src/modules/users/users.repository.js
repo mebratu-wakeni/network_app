@@ -286,6 +286,31 @@ export class UsersRepository {
     return updatedUser
   }
 
+  async updateUserProfile(userId, profileData) {
+    // Map camelCase to snake_case for database
+    console.log('in repo updating user id: ', userId, ' with userData: ', profileData)
+
+    const updateData = {}
+    if (profileData.email !== undefined) updateData.email = profileData.email
+    if (profileData.display_name !== undefined) updateData.display_name = profileData.display_name
+    if (profileData.phone !== undefined) updateData.phone = profileData.phone
+
+    const [updatedUser] = await this.knex('users')
+      .where('id', userId)
+      .update({
+        ...updateData,
+        updated_at: this.knex.fn.now()
+      })
+      .returning([
+        'id', 'username', 'email', 'display_name',
+        'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
+        'avatar_width', 'avatar_height', 'avatar_updated_at',
+        'created_at', 'updated_at', 'last_login_at'
+      ]);
+
+    return updatedUser
+  }
+
   async updateAvatar(userId, avatarData) {
     const [updatedUser] = await this.knex('users')
       .where('id', userId)
@@ -321,7 +346,7 @@ export class UsersRepository {
         updated_at: this.knex.fn.now()
       })
       .returning([
-        'id', 'username', 'email', 'display_name',
+        'id', 'username', 'email', 'display_name', 'is_active',
         'avatar_key', 'avatar_url', 'avatar_mime', 'avatar_bytes',
         'avatar_width', 'avatar_height', 'avatar_updated_at',
         'created_at', 'updated_at', 'last_login_at'
@@ -335,7 +360,8 @@ export class UsersRepository {
       .where('id', userId)
       .update({
         password_hash: hashedPassword,
-        updated_at: this.knex.fn.now()
+        updated_at: this.knex.fn.now(),
+        last_password_changed_at: this.knex.fn.now()
       })
 
     return { message: 'Password updated successfully' }

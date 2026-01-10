@@ -1,4 +1,4 @@
-import { app, nativeImage, ipcMain, BrowserWindow } from "electron";
+import { app, ipcMain, nativeImage, BrowserWindow } from "electron";
 import { createRequire } from "node:module";
 import { fileURLToPath as fileURLToPath$1 } from "node:url";
 import path$2 from "node:path";
@@ -11484,7 +11484,14 @@ var _eval = EvalError;
 var range = RangeError;
 var ref = ReferenceError;
 var syntax = SyntaxError;
-var type = TypeError;
+var type;
+var hasRequiredType;
+function requireType() {
+  if (hasRequiredType) return type;
+  hasRequiredType = 1;
+  type = TypeError;
+  return type;
+}
 var uri = URIError;
 var abs$1 = Math.abs;
 var floor$1 = Math.floor;
@@ -11730,7 +11737,7 @@ function requireCallBindApplyHelpers() {
   if (hasRequiredCallBindApplyHelpers) return callBindApplyHelpers;
   hasRequiredCallBindApplyHelpers = 1;
   var bind3 = functionBind;
-  var $TypeError2 = type;
+  var $TypeError2 = requireType();
   var $call2 = requireFunctionCall();
   var $actualApply = requireActualApply();
   callBindApplyHelpers = function callBindBasic(args) {
@@ -11803,7 +11810,7 @@ var $EvalError = _eval;
 var $RangeError = range;
 var $ReferenceError = ref;
 var $SyntaxError = syntax;
-var $TypeError$1 = type;
+var $TypeError$1 = requireType();
 var $URIError = uri;
 var abs = abs$1;
 var floor = floor$1;
@@ -12134,7 +12141,7 @@ var GetIntrinsic2 = getIntrinsic;
 var $defineProperty = GetIntrinsic2("%Object.defineProperty%", true);
 var hasToStringTag = requireShams()();
 var hasOwn$1 = hasown;
-var $TypeError = type;
+var $TypeError = requireType();
 var toStringTag = hasToStringTag ? Symbol.toStringTag : null;
 var esSetTostringtag = function setToStringTag(object, value) {
   var overrideIfSet = arguments.length > 2 && !!arguments[2] && arguments[2].force;
@@ -13559,6 +13566,35 @@ class UsersManager {
       };
     }
   }
+  async getProfileData(token) {
+    try {
+      const response = await this.apiRequest("/auth/me", {
+        method: "GET"
+      }, token);
+      const userId = response.user.id;
+      const userRes = await this.getUserById(userId, token);
+      let user;
+      if (userRes.success) {
+        user = userRes.user;
+      } else {
+        return userRes;
+      }
+      const permissionsRes = await this.getUserPermissions(userId, token);
+      console.log("permission result: ", permissionsRes);
+      if (!permissionsRes.success) return permissionsRes;
+      return {
+        success: true,
+        user,
+        roles: permissionsRes.permissions.roles,
+        rules: permissionsRes.permissions.rules
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to fetch user profile."
+      };
+    }
+  }
   /**
    * Get user by ID
    */
@@ -13613,6 +13649,28 @@ class UsersManager {
       return {
         success: false,
         error: error.message || "Failed to update user"
+      };
+    }
+  }
+  async updateProfile(userData, token) {
+    try {
+      const response = await this.apiRequest(`/auth/me`, {
+        method: "GET"
+      }, token);
+      const userId = response.user.id;
+      const profileRes = await this.apiRequest(`/users/${userId}/profile`, {
+        method: "PUT",
+        body: JSON.stringify(userData)
+      }, token);
+      console.log("profile res: ", profileRes);
+      return {
+        success: profileRes.ok,
+        user: profileRes.user
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to update profile"
       };
     }
   }
@@ -13725,6 +13783,40 @@ class UsersManager {
       };
     }
   }
+  async removeAvatar(userId, token) {
+    try {
+      const response = await this.apiRequest(`/users/${userId}/avatar`, {
+        method: "DELETE"
+      }, token);
+      console.log("remove avatar response: ", response);
+      return {
+        success: response.ok,
+        user: response.user
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to remove avatar."
+      };
+    }
+  }
+  async changePassword(passwordData, token) {
+    try {
+      const response = await this.apiRequest(`/users/change-password`, {
+        method: "POST",
+        body: JSON.stringify(passwordData)
+      }, token);
+      return {
+        success: response.ok,
+        message: response.message
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Failed to update password"
+      };
+    }
+  }
   async removeRule(userId, ruleData, token) {
     try {
       const response = await this.apiRequest(`/users/${userId}/rules`, {
@@ -13762,6 +13854,88 @@ class UsersManager {
       };
     }
   }
+}
+let accessToken = null;
+function setToken(token) {
+  accessToken = token;
+}
+function getToken() {
+  return accessToken;
+}
+const usersManager$1 = new UsersManager();
+function UserIpcHandlers() {
+  ipcMain.handle("users:search", async (event, searchParams) => {
+    return await usersManager$1.searchUsers(searchParams, getToken());
+  });
+  ipcMain.handle("users:create", async (event, userForm) => {
+    return await usersManager$1.createUser(userForm, getToken());
+  });
+  ipcMain.handle("users:change-password", async (event, passwordData) => {
+    return await usersManager$1.changePassword(passwordData, getToken());
+  });
+  ipcMain.handle("users:get-by-id", async (event, userId) => {
+    return await usersManager$1.getUserById(userId, getToken());
+  });
+  ipcMain.handle("users:update", async (event, userId, userData) => {
+    return await usersManager$1.updateUser(userId, userData, getToken());
+  });
+  ipcMain.handle("users:update-profile", async (event, userData) => {
+    return await usersManager$1.updateProfile(userData, getToken());
+  });
+  ipcMain.handle("users:toggle-status", async (event, userId) => {
+    return await usersManager$1.toggleUserStatus(userId, getToken());
+  });
+  ipcMain.handle("users:get-permissions", async (event, userId) => {
+    return await usersManager$1.getUserPermissions(userId, getToken());
+  });
+  ipcMain.handle("users:export-csv", async (event) => {
+    const response = await usersManager$1.exportToCsv(getToken());
+    return response;
+  });
+  ipcMain.handle("users:get-profile", async (event) => {
+    return await usersManager$1.getProfileData(getToken());
+  });
+  ipcMain.handle("users:update-avatar", async (event, payload) => {
+    var _a, _b;
+    try {
+      if (!Array.isArray(payload.buffer)) {
+        console.error("Invalid payload.buffer type:", typeof payload.buffer, (_b = (_a = payload.buffer) == null ? void 0 : _a.constructor) == null ? void 0 : _b.name);
+        throw new Error(`Invalid buffer format: expected array, got ${typeof payload.buffer}`);
+      }
+      const buffer = Buffer.from(payload.buffer);
+      console.log("Created buffer, length:", buffer.length, "filename:", payload.filename, "userId:", payload.userId);
+      const formData = new FormData$1();
+      formData.append("avatar", buffer, {
+        filename: payload.filename,
+        contentType: payload.mimetype
+      });
+      return await usersManager$1.updateAvatar(payload.userId, formData, getToken());
+    } catch (error) {
+      console.error("Error in users:update-avatar handler:", error);
+      return {
+        success: false,
+        error: error.message || "Failed to update avatar"
+      };
+    }
+  });
+  ipcMain.handle("users:remove-avatar", async (event, userId) => {
+    return await usersManager$1.removeAvatar(userId, getToken());
+  });
+  ipcMain.handle("users:delete-user", async (event, userId) => {
+    return await usersManager$1.deleteUser(userId, getToken());
+  });
+  ipcMain.handle("users:assign-role", async (event, userId, roleData) => {
+    return await usersManager$1.assignRole(userId, roleData, getToken());
+  });
+  ipcMain.handle("users:remove-role", async (event, userId, roleData) => {
+    return await usersManager$1.removeRole(userId, roleData, getToken());
+  });
+  ipcMain.handle("users:assign-rule", async (event, userId, ruleData) => {
+    return await usersManager$1.assignRule(userId, ruleData, getToken());
+  });
+  ipcMain.handle("users:remove-rule", async (event, userId, ruleData) => {
+    return await usersManager$1.removeRule(userId, ruleData, getToken());
+  });
 }
 createRequire(import.meta.url);
 const __dirname = path$2.dirname(fileURLToPath$1(import.meta.url));
@@ -13822,71 +13996,15 @@ ipcMain.handle("server:check-dev-status", async () => {
   return await serverManager.checkDevServerStatus();
 });
 ipcMain.handle("auth:login", async (event, credentials) => {
-  return await usersManager.authenticate(credentials);
+  const result = await usersManager.authenticate(credentials);
+  if (result.success) setToken(result.token);
+  return {
+    success: result.success,
+    user: result.user,
+    error: result == null ? void 0 : result.error
+  };
 });
-ipcMain.handle("users:search", async (event, searchParams, token) => {
-  return await usersManager.searchUsers(searchParams, token);
-});
-ipcMain.handle("users:create", async (event, userForm, token) => {
-  return await usersManager.createUser(userForm, token);
-});
-ipcMain.handle("users:get-by-id", async (event, userId, token) => {
-  return await usersManager.getUserById(userId, token);
-});
-ipcMain.handle("users:update", async (event, userId, userData, token) => {
-  return await usersManager.updateUser(userId, userData, token);
-});
-ipcMain.handle("users:toggle-status", async (event, userId, token) => {
-  return await usersManager.toggleUserStatus(userId, token);
-});
-ipcMain.handle("users:get-permissions", async (event, userId, token) => {
-  return await usersManager.getUserPermissions(userId, token);
-});
-ipcMain.handle("users:export-csv", async (event, token) => {
-  const response = await usersManager.exportToCsv(token);
-  return response;
-});
-ipcMain.handle("users:update-avatar", async (event, payload, token) => {
-  var _a, _b;
-  try {
-    if (!Array.isArray(payload.buffer)) {
-      console.error("Invalid payload.buffer type:", typeof payload.buffer, (_b = (_a = payload.buffer) == null ? void 0 : _a.constructor) == null ? void 0 : _b.name);
-      throw new Error(`Invalid buffer format: expected array, got ${typeof payload.buffer}`);
-    }
-    const buffer = Buffer.from(payload.buffer);
-    console.log("Created buffer, length:", buffer.length, "filename:", payload.filename, "userId:", payload.userId);
-    const formData = new FormData$1();
-    formData.append("avatar", buffer, {
-      filename: payload.filename,
-      contentType: payload.mimetype
-    });
-    return await usersManager.updateAvatar(payload.userId, formData, token);
-  } catch (error) {
-    console.error("Error in users:update-avatar handler:", error);
-    return {
-      success: false,
-      error: error.message || "Failed to update avatar"
-    };
-  }
-});
-ipcMain.handle("users:remove-avatar", async (event, userId, token) => {
-  return await usersManager.removeAvatar(userId, token);
-});
-ipcMain.handle("users:delete-user", async (event, userId, token) => {
-  return await usersManager.deleteUser(userId, token);
-});
-ipcMain.handle("users:assign-role", async (event, userId, roleData, token) => {
-  return await usersManager.assignRole(userId, roleData, token);
-});
-ipcMain.handle("users:remove-role", async (event, userId, roleData, token) => {
-  return await usersManager.removeRole(userId, roleData, token);
-});
-ipcMain.handle("users:assign-rule", async (event, userId, ruleData, token) => {
-  return await usersManager.assignRule(userId, ruleData, token);
-});
-ipcMain.handle("users:remove-rule", async (event, userId, ruleData, token) => {
-  return await usersManager.removeRule(userId, ruleData, token);
-});
+UserIpcHandlers();
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();

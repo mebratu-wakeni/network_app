@@ -18,7 +18,7 @@ const Input = (props) => {
     name,
     value,
     onChange,
-    onInput = () => {},
+    onInput,
     placeholder = '',
     required = false,
     isError = false,
@@ -38,6 +38,11 @@ const Input = (props) => {
   // 3. Final Input Classes
   const finalInputClasses = twMerge(combinedClasses, className);
 
+  const events = {};
+  
+  if(onChange) events['change'] = onChange;
+  if(onInput) events['input'] = onInput;
+
   return Row({
     tagType: 'input',
     class: finalInputClasses,
@@ -50,10 +55,7 @@ const Input = (props) => {
       'aria-invalid': isError ? "true" : "false",
       required,
     },
-    events: { 
-      'change': onChange,
-      'input': onInput 
-    },
+    events,
   
     delegator,
   });

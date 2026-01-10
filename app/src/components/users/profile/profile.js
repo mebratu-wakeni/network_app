@@ -9,10 +9,6 @@ export default function UserProfile() {
   const viewModel = new UsersProfileVM();
 
 
-  // viewModel.updateState('error', { message: 'Unable to update profile.' })
-  viewModel.updateState('success', {message: 'Profile updated successfully.'})
-
-
   const render = (props) => {
     return Row({ class: 'w-full h-full flex-col' }, [
       ErrorToast(props),
@@ -21,13 +17,14 @@ export default function UserProfile() {
     ]);
   }
 
-  return StatefulRow({class: 'w-full h-full',  viewModel, stateKeys: ['error', 'success', 'profileTab']}, render)
+  return StatefulRow({class: 'w-full h-full',  viewModel, stateKeys: ['loading', 'profileTab']}, render)
   
 }
 
 function ErrorToast(props) {
   const error = props.viewModel.getState('error');
   if (!error) return false;
+  closeToast('error', props);
 
   const message =
     typeof error === 'string'
@@ -36,6 +33,7 @@ function ErrorToast(props) {
 
   const handleClose = () => {
     props.viewModel.updateState('error', null);
+    props.viewModel.updateState('loading', false);
   };
 
   return Row(
@@ -91,6 +89,7 @@ function SuccessToast(props) {
   const handleClose = async () => {
     await props.viewModel.sleep(300)
     props.viewModel.updateState('success', null);
+    props.viewModel.updateState('loading', false);
 
 
   };

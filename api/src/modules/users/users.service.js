@@ -434,6 +434,10 @@ export class UsersService {
     return await this.repository.updateProfile(userId, profileData)
   }
 
+  async updateUserProfile(userId, userData) {
+    return await this.repository.updateUserProfile(userId, userData);
+  }
+
   async updateAvatar(userId, avatarData) {
     return await this.repository.updateAvatar(userId, avatarData)
   }

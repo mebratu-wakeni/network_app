@@ -8,17 +8,11 @@ export default function UserGeneralTab(props) {
   const { viewModel } = props;
 
   const user = viewModel.getState('user'); // assumed loaded entity
-  const form = viewModel.getState('generalForm') || {};
+  const form = viewModel.getState('general-form') || {};
 
-  const update = (key, value) => {
-    viewModel.updateState('generalForm', {
-      ...form,
-      [key]: value
-    });
-  };
 
-  const handleSave = () => {
-    viewModel.dispatch('saveGeneralDetails');
+  const handleSave = async () => {
+    viewModel.updateUserProfile();
   };
 
   return Row({ class: 'flex gap-8' }, [
@@ -61,16 +55,16 @@ export default function UserGeneralTab(props) {
       Row({ class: 'border-t border-gray-200' }),
       FieldRow(
         'Display Name:',
-        Input({ name: 'name', placeholder: 'Name', value: form.display_name || user.display_name || '', onInput: e => update('display_name', e.target.value) })
+        Input({ placeholder: 'Name', value: form.display_name || user.display_name || '', onInput: (e) => viewModel.updateGeneralForm('display_name', e.target.value.trim()) })
       ),
 
       FieldRow(
         'Phone Number:',
-        Input({ name: 'phone', placeholder: '+252 ...', value: form.phone || user.phone || '', onInput: e => update('phone', e.target.value) })
+        Input({ placeholder: '+251 ...', value: form.phone || user.phone || '', onInput: e => viewModel.updateGeneralForm('phone', e.target.value) })
       ),
       FieldRow(
         'Email:',
-        Input({ name: 'email', placeholder: 'johndoe@example.com', value: form.email || user.email || '', onInput: e => update('phone', e.target.value) })
+        Input({ placeholder: 'johndoe@example.com', value: form.email || user.email || '', onInput: e => viewModel.updateGeneralForm('email', e.target.value) })
       ),
       FormActions(Button({ variant: 'primary', onClick: handleSave }, 'Save Changes'))
     ])

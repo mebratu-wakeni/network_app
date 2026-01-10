@@ -1,6 +1,6 @@
 const { Row } = Liteframe;
 
-function getInitials(source = '') {
+export function getInitials(source = '') {
   const trimmed = (source || '').trim();
   if (!trimmed) return 'NA';
   const parts = trimmed.split(/\s+/);

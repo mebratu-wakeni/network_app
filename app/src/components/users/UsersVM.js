@@ -49,29 +49,6 @@ export default class UsersVM extends ViewModel {
     this.updateState('loading', false);
   }
 
- 
-  
-
-
-  /**
-   * Get auth token from storage
-   * TODO: Replace with actual token storage mechanism
-   */
-  getAuthToken() {
-    // Prefer token kept in-memory by NavigationVM, fall back to localStorage.
-    try {
-      const navAuth = navigationVM.getState('auth') || {};
-      if (navAuth && navAuth.token) return navAuth.token;
-    } catch (e) {
-      // ignore - fallback to localStorage
-    }
-    try {
-      return localStorage.getItem('authToken') || null;
-    } catch (e) {
-      return null;
-    }
-  }
-
   updateAvatarPreview(path) {
     if(path === '') return;
     this.updateState('avatar-preview', getApiAsset(path));
@@ -96,7 +73,6 @@ export default class UsersVM extends ViewModel {
     this.updateState('error', null);
     const searchQuery = this.getState('search-query');
     const tableConfig = this.getState('table-config');
-    const token = this.getAuthToken();
 
 
     try {
@@ -108,7 +84,7 @@ export default class UsersVM extends ViewModel {
           sortBy: tableConfig.sortBy,
           orderBy: tableConfig.orderBy,
         }
-      }, token);
+      });
 
       if (result.success) {
         this.updateState('user-list', result.users);
@@ -131,10 +107,9 @@ export default class UsersVM extends ViewModel {
     this.updateState('loading', true);
     this.updateState('error', null);
 
-    const token = this.getAuthToken();
 
     try {
-      const result = await window.ipcRenderer.invoke('users:export-csv', token);
+      const result = await window.ipcRenderer.invoke('users:export-csv');
 
       if( result.success ) {
         return result.filePath
@@ -154,7 +129,6 @@ export default class UsersVM extends ViewModel {
     this.updateState('error', null);
 
     const selectedUser = this.getState('selected-user');
-    const token = this.getAuthToken();
 
     if (!file) {
       this.updateState('error', 'No file selected');
@@ -183,8 +157,7 @@ export default class UsersVM extends ViewModel {
 
       const result = await window.ipcRenderer.invoke(
         'users:update-avatar',
-        payload,
-        token
+        payload
       );
 
 
@@ -209,11 +182,10 @@ export default class UsersVM extends ViewModel {
     this.updateState('loading', true);
     this.updateState('error', null);
     const selectedUser = this.getState('selected-user');
-    const token = this.getAuthToken();
     
     
     try {
-      const result = await window.ipcRenderer.invoke('users:remove-avatar', selectedUser.id, token); 
+      const result = await window.ipcRenderer.invoke('users:remove-avatar', selectedUser.id); 
       
       if (result.success) {
         // Refresh the user details to show updated avatar
@@ -238,12 +210,11 @@ export default class UsersVM extends ViewModel {
     this.updateState('creating', true);
     this.updateState('error', null);
     const userForm = this.getState('user-form');
-    const token = this.getAuthToken();
     userForm.password = 'user1234';
     
     
     try {
-      const result = await window.ipcRenderer.invoke('users:create', userForm, token); 
+      const result = await window.ipcRenderer.invoke('users:create', userForm); 
       
       if (result.success) {
         await this.loadUsers();
@@ -268,14 +239,13 @@ export default class UsersVM extends ViewModel {
   }
 
   async fetchUserById(userId, { useDetailsLoader = false } = {}) {
-    const token = this.getAuthToken();
     const loadingKey = useDetailsLoader ? 'details-loading' : 'loading';
     this.updateState(loadingKey, true);
 
     this.updateState('error', null);
 
     try {
-      const result = await window.ipcRenderer.invoke('users:get-by-id', userId, token);
+      const result = await window.ipcRenderer.invoke('users:get-by-id', userId);
 
       if (result.success) {
         return result.user || null;
@@ -294,12 +264,11 @@ export default class UsersVM extends ViewModel {
    * Fetch user permissions (roles and directly assigned rules) via main process
    */
   async fetchUserPermissions(userId) {
-    const token = this.getAuthToken();
     this.updateState('permissions-loading', true);
     this.updateState('error', null);
 
     try {
-      const result = await window.ipcRenderer.invoke('users:get-permissions', userId, token);
+      const result = await window.ipcRenderer.invoke('users:get-permissions', userId);
       if (result.success) {
         const permissions = result.permissions || {};
         // API returns { roles: { roleName: [ruleKeys] }, directlyAssignedRules: [] }
@@ -330,7 +299,7 @@ export default class UsersVM extends ViewModel {
         display_name: user.display_name || '',
         email: user.email,
         password: '',
-        status: user.is_active,
+        is_active: user.is_active,
         registered_at: user.created_at,
         last_updated: user.updated_at,
       });
@@ -355,9 +324,8 @@ export default class UsersVM extends ViewModel {
   }
 
   async deleteUser(userId) {
-    const token = this.getAuthToken();
     try {
-      const result = await window.ipcRenderer.invoke('users:delete-user', userId, token);
+      const result = await window.ipcRenderer.invoke('users:delete-user', userId);
       console.log('deleting user result: ', result)
 
       if ( result.success ) {
@@ -378,11 +346,10 @@ export default class UsersVM extends ViewModel {
   async updateUser(userId, userData) {
     this.updateState('loading', true);
     this.updateState('error', null);
-    const token = this.getAuthToken();
 
 
     try {
-      const result = await window.ipcRenderer.invoke('users:update', userId, userData, token);
+      const result = await window.ipcRenderer.invoke('users:update', userId, userData);
 
 
       if (result.success) {
@@ -407,10 +374,9 @@ export default class UsersVM extends ViewModel {
   async toggleUserStatus(userId) {
     this.updateState('loading', true);
     this.updateState('error', null);
-    const token = this.getAuthToken();
 
     try {
-      const result = await window.ipcRenderer.invoke('users:toggle-status', userId, token);
+      const result = await window.ipcRenderer.invoke('users:toggle-status', userId);
 
       if (result.success) {
         // Refresh the user list
@@ -506,10 +472,9 @@ export default class UsersVM extends ViewModel {
   async assignRole(userId, roleData) {
     this.updateState('loading', true);
     this.updateState('error', null);
-    const token = this.getAuthToken();
 
     try {
-      const result = await window.ipcRenderer.invoke('users:assign-role', userId, roleData, token);
+      const result = await window.ipcRenderer.invoke('users:assign-role', userId, roleData);
 
       if (result.success) {
         // Refresh the user list to show updated data
@@ -531,10 +496,9 @@ export default class UsersVM extends ViewModel {
     this.updateState('loading', true);
     this.updateState('error', null);
 
-    const token = this.getAuthToken();
 
     try {
-      const result = await window.ipcRenderer.invoke('users:assign-rule', userId, ruleData, token)
+      const result = await window.ipcRenderer.invoke('users:assign-rule', userId, ruleData)
 
       if( result.success ) {
         await this.fetchUserPermissions(userId);
@@ -554,10 +518,9 @@ export default class UsersVM extends ViewModel {
   async removeRole(userId, roleData) {
     this.updateState('loading', true);
     this.updateState('error', null);
-    const token = this.getAuthToken();
 
     try {
-      const result = await window.ipcRenderer.invoke('users:remove-role', userId, roleData, token);
+      const result = await window.ipcRenderer.invoke('users:remove-role', userId, roleData);
 
       if (result.success) {
         // Refresh the user list to show updated data
@@ -578,10 +541,9 @@ export default class UsersVM extends ViewModel {
   async removeRule(userId, ruleData) {
     this.updateState('loading', true);
     this.updateState('error', null);
-    const token = this.getAuthToken();
 
     try {
-      const response = await window.ipcRenderer.invoke('users:remove-rule', userId, ruleData, token);
+      const response = await window.ipcRenderer.invoke('users:remove-rule', userId, ruleData);
 
       if( response.success ) {
         await this.fetchUserPermissions(userId);

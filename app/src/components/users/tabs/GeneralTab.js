@@ -6,6 +6,7 @@ import { getApiAsset } from "../../../../electron/config/apiConfig.js";
 import { formatUTCDate } from "../../shared/TimeConverters.js";
 import RuleRow from "../../shared/RuleRow.js";
 import Modal from "../../shared/Modal.js";
+import { getInitials } from "../../utils/Avatar.js";
 
 const { Row } = Liteframe;
 
@@ -16,6 +17,8 @@ export default function GeneralTabContent(props) {
   const userForm = props.viewModel.getState('user-form');
   // props.ensureLocalStateKey('isActive', user?.is_active || false);
   const isActive = userForm.is_active;
+
+
 
   const loading  = props.viewModel.getState('loading');
 
@@ -83,10 +86,21 @@ export default function GeneralTabContent(props) {
       }
     };
 
+    const UserInitials = () => {
+      if (avatarPreview) return false;
+
+      return Row({ class: 'w-40 h-40 overflow-hidden rounded-md bg-gray-100 flex items-center justify-center' }, [
+        Row({
+          class: `w-20 h-20 rounded-full bg-blue-600 text-white text-3xl font-semibold flex items-center justify-center select-none`,
+        }, getInitials(user.display_name))
+      ]);
+    } 
+
   
   
     return Row({ class: 'flex gap-4' }, [
-      Row({
+      UserInitials(userForm.display_name || user.display_name),
+      avatarPreview && Row({
         tagType: 'div',
         class: 'h-40 w-40 overflow-hidden rounded-md bg-gray-100 flex items-center justify-center',
       }, [
@@ -121,7 +135,7 @@ export default function GeneralTabContent(props) {
   };
 
   const handleStatusChange = () => {
-    props.viewModel.updateUserForm('is_active', !props.viewModel.getState('user-form').is_active);
+    props.viewModel.updateUserForm('is_active', !(props.viewModel.getState('user-form').is_active));
     props.viewModel.updateState('loading', false);
   }
 
