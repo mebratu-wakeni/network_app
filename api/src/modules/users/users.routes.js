@@ -68,6 +68,7 @@ router.get(
 // Update user profile by ID (requires users.write rule or own profile)
 router.put(
   '/:id',
+  requireRules(['CanEditUsers']),
   validateParams(idParamSchema),
   validate(updateUserSchema),
   usersController.updateProfile

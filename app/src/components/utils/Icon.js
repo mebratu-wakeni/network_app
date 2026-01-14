@@ -59,7 +59,7 @@ const IconButton = (props, children) => {
   const {
     onClick,
     disabled = false,
-    className = '',
+    class: className = '',
     size = 'medium'
   } = props;
 

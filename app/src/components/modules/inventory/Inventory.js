@@ -1,61 +1,62 @@
-const { Row, StatefulRow } = Liteframe;
+import { CardBody, CardHeader } from "../../utils/Card";
 import { Tabs } from "../../utils/Tabs";
 import { InventoryVM } from "./InventoryVM";
-import { CardBody, CardHeader } from "../../utils/Card";
+import { Products } from "./tabs/Products";
+import { Stock } from "./tabs/Stock";
 
-export function Inventory() {
+const { Row, StatefulRow } = Liteframe;
+
+
+export function InventoryUI() {
   const viewModel = new InventoryVM();
 
   const render = (props) => {
-    const activeTab = props.viewModel.getState('inventory-tab');
-    return Row({ class: 'w-full h-full flex flex-col' }, [
-      CardHeader({ class: 'px-6 flex items-center h-12' }, [
-        Row({ class: 'text-md font-semibold' }, "Inventory Management"),
-      ]),
-      CardBody({ class: 'flex-1 flex flex-col gap-6 px-6 overflow-y-auto'}, [
-        Row({ class: 'h-100 bg-white rounded-lg border border-gray-200 overflow-hidden' }, [
+    return Row({ class: 'w-full h-full flex flex-col overflow-hidden'}, [
+      CardHeader({ class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12' }, 'Inventory Management'),
+      CardBody({ class: 'flex-1 p-6 flex flex-col overflow-y-auto'}, [
+        Row({ class: 'bg-white border border-gray-200 rounded-lg h-full w-full flex flex-col' }, [
           InventoryTabs(props),
-          Row({ class: 'p-6' }, [
-            TabContents(props),
-          ])
+          InventoryTabContents(props)
         ])
-      ]),
-      
-      
-    ]);
-  }
+      ])
+    ])
+  } 
 
-  return StatefulRow({ class: 'h-full w-full', viewModel, stateKeys: ['loading'] }, render)
+  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading']}, render)
 }
 
 function InventoryTabs(props) {
-
-  return Row({ class: 'px-6 pt-4 border-b border-gray-200 bg-gray-50' }, [
+  return Row({ class: 'mb-6'}, [
     Tabs({
       tabs: [
-        { key: 'products', label: 'Products' },
-        { key: 'stock', label: 'Stock' }
+        { key: 'products', label: 'Products'},
+        { key: 'stock', label: 'Stock'}
       ],
       activeKey: props.viewModel.getActiveTab(),
       onChange: (key) => props.viewModel.updateTab(key),
-      class: 'w-20'
+      class: 'w-20 px-1'
     })
   ])
 }
 
+function InventoryTabContents(props) {
 
-function TabContents(props) {
-  const { viewModel } = props;
-  const activeTab = viewModel.getActiveTab() || 'stock';
+  const activeTab = props.viewModel.getActiveTab();
 
-  switch (activeTab) {
-    case 'products':
-      return Row({ class: 'text-3xl font-bold text-gray-500' }, 'Products');
+  const tabContent = () => {
+    switch(activeTab) {
+      case 'products':
+        return Products(props);
+      case 'stock':
+        return Stock(props);
+      default:
+        return false;
+    }
 
-    case 'stock':
-      return Row({ class: 'text-3xl font-bold text-gray-500' }, 'Stock');
-
-    default:
-      return false;
   }
+
+
+  return Row({ class: 'flex-1 flex flex-col'}, [
+    tabContent()
+  ])
 }

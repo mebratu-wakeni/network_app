@@ -1,11 +1,13 @@
+import { ManageOutsideClick } from "./OutsideClick";
 const { Row } = Liteframe;
 
 /**
  * The main container for the Table component.
  * IMPROVEMENT: Adds max-height and overflow-y for fixed header functionality.
  */
+let cleanupOutsideClick;
 const Table = (props, children) => {
-  const { class: className = '' } = props;
+  const { class: className = '', getOpenActionState,  setOpenActionState} = props;
 
   // Added 'relative' to the wrapper for positioning context.
   const baseClasses = 'min-w-full divide-y divide-gray-200 sm:rounded-lg relative';
@@ -17,7 +19,7 @@ const Table = (props, children) => {
   // Ensure the outer wrapper cannot become the scroll container by forcing `overflow-hidden`.
   // The inner scrollable div (`overflow-y-auto`) is the single vertical scroller that
   // `position: sticky` on table headers will use.
-  return Row({
+  const container = Row({
     tagType: 'div',
     class: `overflow-hidden ${baseClasses} ${className} flex flex-col flex-1 min-h-0`
   }, [
@@ -28,6 +30,17 @@ const Table = (props, children) => {
       tableElement
     ])
   ]);
+
+  // Register once
+  if (!cleanupOutsideClick && getOpenActionState && setOpenActionState) {
+    cleanupOutsideClick = ManageOutsideClick({
+      containerEl: container,
+      handleGetState: getOpenActionState,
+      handleSetState: setOpenActionState,
+    });
+  }
+
+  return container;
 };
 
 /**

@@ -19,6 +19,7 @@ const Input = (props) => {
     value,
     onChange,
     onInput,
+    focusIn,
     placeholder = '',
     required = false,
     isError = false,
@@ -42,6 +43,7 @@ const Input = (props) => {
   
   if(onChange) events['change'] = onChange;
   if(onInput) events['input'] = onInput;
+  if(focusIn) events['focusin'] = focusIn;
 
   return Row({
     tagType: 'input',

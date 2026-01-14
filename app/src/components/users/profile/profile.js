@@ -10,7 +10,7 @@ export default function UserProfile() {
 
 
   const render = (props) => {
-    return Row({ class: 'w-full h-full flex-col' }, [
+    return Row({ class: 'w-full h-full flex flex-col' }, [
       ErrorToast(props),
       SuccessToast(props),
       UserDetails(props),

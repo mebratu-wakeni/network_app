@@ -87,7 +87,7 @@ export function UserDetails(props) {
         }, [
           /* Tabs bar */
           Row({
-            class: `px-6 pt-4 border-b border-gray-200 bg-gray-50`
+            class: ``
           }, UserProfileTabs(props)),
 
           /* Tab content */
@@ -224,6 +224,6 @@ export function UserProfileTabs(props) {
     ],
     activeKey: activeTab,
     onChange: handleTabChange,
-    class: 'p-6'
+    class: 'px-6'
   });
 }
