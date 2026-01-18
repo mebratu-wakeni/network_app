@@ -12,9 +12,9 @@ export function InventoryUI() {
 
   const render = (props) => {
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden'}, [
-      CardHeader({ class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12' }, 'Inventory Management'),
-      CardBody({ class: 'flex-1 p-6 flex flex-col overflow-y-auto'}, [
-        Row({ class: 'bg-white border border-gray-200 rounded-lg h-full w-full flex flex-col' }, [
+      CardHeader({ class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0' }, 'Inventory Management'),
+      CardBody({ class: 'p-6 flex flex-col overflow-hidden flex-1 min-h-0'}, [
+        Row({ class: 'bg-white border border-gray-200 rounded-lg flex-1 w-full flex flex-col min-h-0 overflow-hidden' }, [
           InventoryTabs(props),
           InventoryTabContents(props)
         ])
@@ -22,7 +22,7 @@ export function InventoryUI() {
     ])
   } 
 
-  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading']}, render)
+  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading', 'inventory-tab', 'partner-list']}, render)
 }
 
 function InventoryTabs(props) {
@@ -56,7 +56,7 @@ function InventoryTabContents(props) {
   }
 
 
-  return Row({ class: 'flex-1 flex flex-col'}, [
+  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden'}, [
     tabContent()
   ])
 }
