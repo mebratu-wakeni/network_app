@@ -60,7 +60,8 @@ const IconButton = (props, children) => {
     onClick,
     disabled = false,
     class: className = '',
-    size = 'medium'
+    size = 'medium',
+    delegator
   } = props;
 
   // --- 1. Base Styling for the <button> element ---
@@ -91,7 +92,10 @@ const IconButton = (props, children) => {
   }
 
   // --- 4. Final Classes ---
-  const finalClasses = `${baseClasses} ${sizeClasses} ${hoverClasses} ${className}`;
+  // const finalClasses = `${baseClasses} ${sizeClasses} ${hoverClasses} ${className}`;
+  const finalClasses = twMerge(baseClasses, sizeClasses, hoverClasses, className);
+
+
 
   return Row({
     tagType: 'button',
@@ -100,6 +104,7 @@ const IconButton = (props, children) => {
       type: 'button',
       disabled: disabled ? 'disabled' : null,
     },
+    delegator,
     // We only attach the click handler if the button is not disabled
     events: disabled ? {} : { 'click': onClick }
   }, children);

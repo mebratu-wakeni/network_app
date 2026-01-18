@@ -59,7 +59,7 @@ export default function RulesTab(props) {
     const query = e.target.value.trim().toLowerCase();
     props.setLocalState('rule-search', query)
   }
-  return Row({}, [
+  return Row({ class: 'h-full flex flex-col min-h-0 overflow-hidden' }, [
     Row({ class: 'text-gray-900 font-medium px-4 mt-8 mb-4'}, user.display_name),
     Row({ class: 'flex justify-between items-center px-4 '}, [
       Row({ class: 'flex flex-col gap-2'}, [
@@ -79,14 +79,14 @@ export default function RulesTab(props) {
       Input({ class: 'w-full bg-gray-50', placeholder: 'Search', value: rSearch, onInput: handleSearch })
     ]),
     // display all the assigned directly rules
-    !isRuleModifying && isDirectlyAssigned && Row({class: 'bg-gray-100'}, [
+    !isRuleModifying && isDirectlyAssigned && Row({class: 'bg-gray-100 flex-1 min-h-0 overflow-y-auto'}, [
       ...assignedRules.map(rt => Row({class: 'flex flex-col border-b border-gray-200 px-4 py-2' }, [
         Row({ class: 'text-gray-700 font-medium'}, rt.rule.key),
         Row({ class: 'text-gray-500 text-sm'}, rt.rule.description),
       ]))
     ]),
     // lets to assign rules 
-    isRuleModifying && isDirectlyAssigned && Row({ class: 'bg-gray-100' }, [
+    isRuleModifying && isDirectlyAssigned && Row({ class: 'bg-gray-100 flex-1 min-h-0 overflow-y-auto' }, [
       ...allRules.map((rt, idx) => Row({ class: 'flex items-center gap-4 border-b border-gray-200 px-4 py-2' }, [
         Row({ class: 'inline-block', events: { 'click': () => handleRuleClick(rt, idx) } }, [
           IonIcon({ 
@@ -100,7 +100,7 @@ export default function RulesTab(props) {
         
       ]))
     ]),
-    !isRuleModifying && !isDirectlyAssigned && Row({ class: 'bg-gray-100' }, [
+    !isRuleModifying && !isDirectlyAssigned && Row({ class: 'bg-gray-100 flex-1 min-h-0 overflow-y-auto' }, [
       ...allAssignment.map(rt => Row({ class: 'flex flex-col border-b border-gray-200 px-4 py-2 gap-2' }, [
         Row({class: 'flex items-center gap-2'}, [
           Row({ class: 'text-gray-700 font-medium' }, `${rt.rule.key}:`),

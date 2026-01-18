@@ -24,7 +24,7 @@ export class InventoryVM extends ViewModel {
     this.setState('product-list', []);
     this.setState('product-total-count', 0);
     this.setState('product-table-config', {
-      limit: 25,
+      limit: 10,
       offset: 0,
       sortBy: 'id',
       orderBy: 'desc'
@@ -44,7 +44,7 @@ export class InventoryVM extends ViewModel {
     this.setState('stock-list', []);
     this.setState('stock-total-count', 0);
     this.setState('stock-table-config', {
-      limit: 25,
+      limit: 10,
       offset: 0,
       sortBy: 'id',
       orderBy: 'desc'
@@ -333,11 +333,13 @@ export class InventoryVM extends ViewModel {
 
   setProductLimit(limit) {
     const tableConfig = this.getState('product-table-config');
+    console.log('setProductLimit called:', limit, 'current config:', tableConfig);
     this.updateState('product-table-config', {
       ...tableConfig,
       limit: parseInt(limit),
       offset: 0 // Reset to first page
     });
+    console.log('Updated config:', this.getState('product-table-config'));
   }
 
   nextProductPage() {

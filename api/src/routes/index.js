@@ -2,6 +2,7 @@ import { Router } from 'express'
 import testItems from '../modules/testItems/testItems.routes.js'
 import auth from '../modules/auth/auth.routes.js'
 import users from '../modules/users/users.routes.js'
+import products from '../modules/inventory/products.routes.js'
 
 const router = Router()
 
@@ -19,6 +20,7 @@ router.use('/auth', auth)
 // Protected routes
 router.use('/test-items', testItems)
 router.use('/users', users)
+router.use('/products', products)
 
 export default router
 

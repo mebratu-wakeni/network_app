@@ -8,11 +8,11 @@ import UsersManager from './users/users.js'
 import fs from "fs";
 import FormData from "form-data"; // Node FormData
 import { UserIpcHandlers } from './users/ipcHandlers.js'
+import { InventoryIpcHandlers } from './inventory/ipcHandlers.js'
 import { setToken } from './config/authManager.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
 
 
 
@@ -118,6 +118,7 @@ ipcMain.handle('auth:login', async (event, credentials) => {
 
 
 UserIpcHandlers();
+InventoryIpcHandlers();
 
 
 // Quit when all windows are closed, except on macOS. There, it's common

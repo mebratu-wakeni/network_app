@@ -21,6 +21,7 @@ function DropdownSearch(props, children) {
     menuClass = '',
     getOpenState = () => {},
     setOpenState = () => {},
+    delegator,
   } = props;
 
   const rootClass = twMerge(
@@ -53,6 +54,7 @@ function DropdownSearch(props, children) {
     attributes: { 'data-dropdown-search': 'root' }
   }, [
     Input({
+      delegator,
       class: inputClass, value, placeholder, 
       onInput: (e) => onInput(e.target.value),
       focusIn: (e) => {
@@ -80,7 +82,8 @@ function DropdownSearch(props, children) {
 function DropdownSearchItem(props, children) {
   const {
     onSelect = () => { },
-    class: className = ''
+    class: className = '',
+    delegator,
   } = props;
 
   const itemClass = twMerge(
@@ -99,7 +102,8 @@ function DropdownSearchItem(props, children) {
         e.stopPropagation();
         onSelect();
       }
-    }
+    },
+    delegator,
   }, children);
 }
 

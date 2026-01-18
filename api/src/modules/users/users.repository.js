@@ -234,7 +234,7 @@ export class UsersRepository {
     if (searchQuery && searchQuery.trim()) {
       const search = `%${searchQuery.toLowerCase().trim()}%`
       query.where(function() {
-        this.whereRaw('LOWER(users.display_name) LIKE ?', [search])
+        this.whereRaw('LOWER(users.display_name) LIKE ?', [search])              
           .orWhereRaw('LOWER(users.email) LIKE ?', [search])
           .orWhereRaw('LOWER(users.username) LIKE ?', [search])
       })

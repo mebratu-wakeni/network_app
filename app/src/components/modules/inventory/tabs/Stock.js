@@ -502,7 +502,6 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
         value: paginationLimit 
       },
         SelectOptions({ 
-          name: 'limit', 
           options: ['10', '25', '50', '100'], 
           selectedOption: paginationLimit + '' 
         })),
@@ -1031,7 +1030,6 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
             },
             delegator: props.delegator
           }, SelectOptions({ 
-            name: 'adjust-reason',
             options: reasonOptions,
             selectedOption: adjustReason
           }))
@@ -1205,7 +1203,6 @@ function TransferStockDrawer({ stockItem, showSlide, onClose, ...props }) {
             onChange: (e) => props.viewModel.updateTransferStockForm('fromLocation', e.target.value),
             delegator: props.delegator
           }, SelectOptions({ 
-            name: 'transfer-from-location',
             options: locations,
             selectedOption: transferFromLocation
           }))
@@ -1220,7 +1217,6 @@ function TransferStockDrawer({ stockItem, showSlide, onClose, ...props }) {
             onChange: (e) => props.viewModel.updateTransferStockForm('toLocation', e.target.value),
             delegator: props.delegator
           }, SelectOptions({ 
-            name: 'transfer-to-location',
             options: locations.filter(loc => loc !== transferFromLocation),
             selectedOption: transferToLocation
           }))

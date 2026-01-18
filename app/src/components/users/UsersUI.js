@@ -330,7 +330,7 @@ function PageControl(props)  {
     Row({class: 'inline-flex items-center gap-4'}, [
       Row({tagType: 'p', class: 'font-sm text-gray-400'}, "Rows per page"),
       SelectRelative({name: 'limit', onChange: (e) => props.viewModel.setLimit(parseInt(e.target.value)), value: tableConfig.limit}, 
-      SelectOptions({name: 'limit', options: ['10', '25', '50', '100'], selectedOption: tableConfig.limit + ''})),
+        SelectOptions({options: ['10', '25', '50', '100'], selectedOption: tableConfig.limit + ''})),
       Row({tagType: 'p', }, "|"),
       Row({class: 'inline-flex items-center gap-1'}, [
         Row({tagType: 'p', class: 'font-sm text-gray-400'}, `${initRow}-${endRow} of ${totalRow}`),
@@ -431,7 +431,7 @@ function UserEditTabs(props, children) {
         IonIcon({ name: 'close-outline', class: 'text-xl' })
       ]),
     ]),
-    Row({class: 'flex-1'}, [
+    Row({class: 'flex-1 min-h-0 overflow-hidden'}, [
       generalTab && children[0],
       rolesTab && children[1],
       rulesTab && children[2],
