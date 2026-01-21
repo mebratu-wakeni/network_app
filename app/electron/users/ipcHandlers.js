@@ -56,6 +56,9 @@ export function UserIpcHandlers() {
     return await usersManager.getProfileData(getToken())
   })
 
+  ipcMain.handle('users:get-current-user', async (event) => {
+    return await usersManager.getCurrentUser(getToken())
+  })
 
   ipcMain.handle("users:update-avatar", async (event, payload) => {
     try {

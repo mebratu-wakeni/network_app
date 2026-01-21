@@ -12,6 +12,34 @@ export class UsersController {
   }
 
   /**
+   * GET /api/users/me
+   * Get current authenticated user with permissions
+   */
+  getCurrentUser = async (req, res, next) => {
+    try {
+      if (!req.user) {
+        const error = new Error('Authentication required')
+        error.status = 401
+        return next(error)
+      }
+
+      // Return current user with their rules
+      res.json({
+        ok: true,
+        user: {
+          id: req.user.id,
+          email: req.user.email,
+          display_name: req.user.display_name,
+          is_active: req.user.is_active,
+          rules: req.user.rules || []
+        }
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  /**
    * GET /api/users/:id
    * Get user profile (excluding password)
    */

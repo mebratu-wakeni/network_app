@@ -4,6 +4,7 @@ import { IconButton, IonIcon } from "../../utils/Icon";
 import { Input } from "../../utils/Input";
 import Label from "../../utils/Label";
 import { SelectFluid, SelectOptions } from "../../utils/Select";
+import { permissionChecker } from "../../utils/PermissionChecker";
 
 const { Row, StatefulRow } = Liteframe;
 
@@ -24,6 +25,18 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     const loading = props.viewModel.getState('loading');
     const productForm = props.viewModel.getState('product-form') || {};
     
+    // Get categories and units from ViewModel
+    const categories = props.viewModel.getCategoryList();
+    const units = props.viewModel.getUnitList();
+    
+    // Load categories and units if not already loaded
+    if (categories.length === 0) {
+      props.viewModel.loadCategories();
+    }
+    if (units.length === 0) {
+      props.viewModel.loadUnits();
+    }
+    
     const showNewCategoryForm = props.getLocalState('show-new-category-form');
     const newCategoryName = props.getLocalState('new-category-name');
     const newCategoryDescription = props.getLocalState('new-category-description');
@@ -32,17 +45,29 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     const newUnitAbbreviation = props.getLocalState('new-unit-abbreviation');
     const newUnitDescription = props.getLocalState('new-unit-description');
 
-    const handleSaveNewCategory = () => {
-      // Handle saving new category
-      console.log('Saving new category:', {
-        name: newCategoryName,
-        description: newCategoryDescription
+    const handleSaveNewCategory = async () => {
+      const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
+        actionName: 'create categories'
       });
-      // Add to category options and select it
-      props.viewModel.updateProductForm('category', newCategoryName);
-      props.setLocalState('show-new-category-form', false);
-      props.setLocalState('new-category-name', '');
-      props.setLocalState('new-category-description', '');
+      if (!hasPermission) {
+        return;
+      }
+
+      try {
+        const category = await props.viewModel.createCategory({
+          name: newCategoryName,
+          description: newCategoryDescription
+        });
+        // Add to category options and select it
+        props.viewModel.updateProductForm('category', category.name);
+        props.viewModel.updateProductForm('category_id', category.id);
+        props.setLocalState('show-new-category-form', false);
+        props.setLocalState('new-category-name', '');
+        props.setLocalState('new-category-description', '');
+      } catch (error) {
+        // Error is handled by viewModel and displayed via error state
+        console.error('Error creating category:', error);
+      }
     };
 
     const handleCancelNewCategory = () => {
@@ -51,19 +76,30 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       props.setLocalState('new-category-description', '');
     };
 
-    const handleSaveNewUnit = () => {
-      // Handle saving new unit
-      console.log('Saving new unit:', {
-        name: newUnitName,
-        abbreviation: newUnitAbbreviation,
-        description: newUnitDescription
+    const handleSaveNewUnit = async () => {
+      const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
+        actionName: 'create units'
       });
-      // Add to unit options and select it
-      props.viewModel.updateProductForm('unit', newUnitName);
-      props.setLocalState('show-new-unit-form', false);
-      props.setLocalState('new-unit-name', '');
-      props.setLocalState('new-unit-abbreviation', '');
-      props.setLocalState('new-unit-description', '');
+      if (!hasPermission) {
+        return;
+      }
+
+      try {
+        const unit = await props.viewModel.createUnit({
+          name: newUnitName,
+          abbreviation: newUnitAbbreviation
+        });
+        // Add to unit options and select it
+        props.viewModel.updateProductForm('unit', unit.name);
+        props.viewModel.updateProductForm('unit_id', unit.id);
+        props.setLocalState('show-new-unit-form', false);
+        props.setLocalState('new-unit-name', '');
+        props.setLocalState('new-unit-abbreviation', '');
+        props.setLocalState('new-unit-description', '');
+      } catch (error) {
+        // Error is handled by viewModel and displayed via error state
+        console.error('Error creating unit:', error);
+      }
     };
 
     const handleCancelNewUnit = () => {
@@ -74,6 +110,13 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     };
 
     const handleSave = async () => {
+      const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
+        actionName: 'create products'
+      });
+      if (!hasPermission) {
+        return;
+      }
+
       try {
         await props.viewModel.createProduct(productForm);
         props.viewModel.resetProductForm();
@@ -84,8 +127,11 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       }
     };
 
-    const canSave = productForm.name && productForm.name.trim() !== '' && 
-                    productForm.category && productForm.unit;
+    // Validation: check if all required fields are filled
+    const hasName = productForm.name && productForm.name.trim() !== '';
+    const hasCategory = productForm.category_id && productForm.category_id > 0;
+    const hasUnit = productForm.unit_id && productForm.unit_id > 0;
+    const canSave = hasName && hasCategory && hasUnit;
 
     return Card({
       class: 'bg-white rounded-lg shadow-2xl w-full max-w-lg transform transition-all max-h-[90vh] overflow-hidden flex flex-col'
@@ -135,13 +181,33 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               SelectFluid({ 
                 name: 'product-category', 
                 containerClass: 'flex-1', 
-                value: productForm.category || '',
-                onChange: (e) => props.viewModel.updateProductForm('category', e.target.value),
+                value: productForm.category_id ? String(productForm.category_id) : '',
+                onChange: (e) => {
+                  const categoryId = e.target.value;
+                  if (categoryId !== '') {
+                    const selectedCategory = categories.find(c => String(c.id) === categoryId);
+                    if (selectedCategory) {
+                      props.viewModel.updateProductForm('category', selectedCategory.name);
+                      props.viewModel.updateProductForm('category_id', selectedCategory.id);
+                    }
+                  } else {
+                    props.viewModel.updateProductForm('category', '');
+                    props.viewModel.updateProductForm('category_id', null);
+                  }
+                },
                 delegator
-              }, SelectOptions({ 
-                options: ['Regent', 'Supplies'], 
-                selectedOption: productForm.category || ''
-              })),
+              }, [
+                Row({ tagType: 'option', attributes: { value: '', selected: !productForm.category_id } }, 'Select Category'),
+                ...categories.map(c => 
+                  Row({ 
+                    tagType: 'option', 
+                    attributes: { 
+                      value: String(c.id), 
+                      selected: productForm.category_id === c.id 
+                    } 
+                  }, c.name)
+                )
+              ]),
               Button({ 
                 variant: 'outline', 
                 class: 'w-20 text-nowrap text-xs',
@@ -167,13 +233,33 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               SelectFluid({ 
                 name: 'product-unit', 
                 containerClass: 'flex-1', 
-                value: productForm.unit || '',
-                onChange: (e) => props.viewModel.updateProductForm('unit', e.target.value),
+                value: productForm.unit_id ? String(productForm.unit_id) : '',
+                onChange: (e) => {
+                  const unitId = e.target.value;
+                  if (unitId !== '') {
+                    const selectedUnit = units.find(u => String(u.id) === unitId);
+                    if (selectedUnit) {
+                      props.viewModel.updateProductForm('unit', selectedUnit.name);
+                      props.viewModel.updateProductForm('unit_id', selectedUnit.id);
+                    }
+                  } else {
+                    props.viewModel.updateProductForm('unit', '');
+                    props.viewModel.updateProductForm('unit_id', null);
+                  }
+                },
                 delegator
-              }, SelectOptions({ 
-                options: ['Bottle', 'PK', 'Kit', 'Box', 'Unit'], 
-                selectedOption: productForm.unit || ''
-              })),
+              }, [
+                Row({ tagType: 'option', attributes: { value: '', selected: !productForm.unit_id } }, 'Select Unit'),
+                ...units.map(u => 
+                  Row({ 
+                    tagType: 'option', 
+                    attributes: { 
+                      value: String(u.id), 
+                      selected: productForm.unit_id === u.id 
+                    } 
+                  }, u.name)
+                )
+              ]),
               Button({ 
                 variant: 'outline', 
                 class: 'w-20 text-nowrap text-xs',
@@ -193,6 +279,21 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               delegator
             })
           ])
+        ]),
+        // Expiry Threshold Field
+        Row({ class: 'flex flex-col gap-2' }, [
+          Label({ for: 'expiry-threshold' }, 'Expiry Threshold (Days)'),
+          Input({
+            type: 'number',
+            min: 1,
+            value: productForm.expiry_threshold || 30,
+            onChange: (e) => props.viewModel.updateProductForm('expiry_threshold', parseInt(e.target.value) || 30),
+            name: 'expiry-threshold',
+            placeholder: 'Enter number of days (default: 30)',
+            class: 'w-full',
+            delegator
+          }),
+          Row({ class: 'text-xs text-gray-500' }, 'Number of days before expiry to consider as "expiring soon"')
         ])
       ]),
 
@@ -208,7 +309,11 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     ]);
   }
   
-  return StatefulRow({ class: 'fixed inset-0 bg-gray-800/0 flex items-center justify-center', viewModel }, render) 
+  return StatefulRow({ 
+    class: 'fixed inset-0 bg-gray-800/0 flex items-center justify-center', 
+    viewModel, 
+    stateKeys: ['loading', 'product-form', 'category-list', 'unit-list'] 
+  }, render) 
 };
 
 // New Category Inline Form (for modal)

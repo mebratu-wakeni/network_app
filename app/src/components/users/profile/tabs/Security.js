@@ -32,21 +32,18 @@ export function UserSecurity(props) {
     await props.viewModel.changePassword();
   }
   return Row({ class: 'flex gap-8'}, [
-    Row({class: 'flex-1 flex flex-col bg-gray-50 border border-gray-200 rounded-lg p-6 gap-6'}, [
-      Row({ class: 'text-sm font-medium text-gray-800 -mb-4' }, 'Authentication'),
-      Row({ class: 'border-t border-gray-200' }),
-      Row({ class: 'text-md font-semibold text-gray-900' }, 'Mebratu Fenta Wakeni'),
-      Row({ class: 'flex items-center gap-6'}, [
-        Row({ class: 'text-md text-gray-600'}, 'Password Last Changed:'),
-        Row({ class: 'text-md text-gray-500'}, formatUTCDate(user.last_password_changed_at))
+    Row({class: 'flex-1 flex flex-col bg-white border border-gray-300 rounded-xl shadow-sm p-8'}, [
+      Row({ class: 'text-base font-semibold text-gray-900 mb-2' }, 'Authentication'),
+      Row({ class: 'border-t border-gray-200 -mx-8 px-8 pt-4'}),
+      Row({ class: 'text-sm font-medium text-gray-700 mt-4'}, [
+        Row({ tagType: 'span' }, 'Password Last Changed: '),
+        Row({ tagType: 'span', class: 'text-gray-600'}, formatUTCDate(user.last_password_changed_at))
       ]),
-      !showPasswordForm && Button({ variant: 'outline', class: 'w-50', onClick: handleFormShow}, 'Change Password'),
+      !showPasswordForm && Row({ class: 'mt-4' }, Button({ variant: 'outline', class: 'w-48', onClick: handleFormShow}, 'Change Password')),
       showPasswordForm && Row({
-          class: `flex flex-col gap-6
-        
-        ` }, [
-          Row({ class: 'text-sm font-medium text-gray-800 -mb-4' }, 'Change Password'),
-          Row({ class: 'border-t border-gray-200' }),
+          class: `flex flex-col gap-4 mt-6 border-t border-gray-200 pt-4` }, [
+          Row({ class: 'text-base font-semibold text-gray-900 mb-2' }, 'Change Password'),
+          Row({ class: 'border-t border-gray-200 -mx-8 px-8 pt-4' }),
           FieldRow(
             'Current Password:',
             Input({ type: 'password', onInput: e => handleFormUpdate('currentPassword', e.target.value) })
@@ -72,12 +69,12 @@ export function UserSecurity(props) {
 
       
     ]),
-    Row({ class: 'flex-1 flex flex-col gap-6 bg-gray-50 border border-gray-200 rounded-lg p-6'}, [
-      Row({ class: 'text-sm font-medium text-gray-800 -mb-4' }, 'Sessions'),
-      Row({ class: 'border-t border-gray-200' }),
+    Row({ class: 'flex-1 flex flex-col bg-white border border-gray-300 rounded-xl shadow-sm p-8'}, [
+      Row({ class: 'text-base font-semibold text-gray-900 mb-2' }, 'Sessions'),
+      Row({ class: 'border-t border-gray-200 -mx-8 px-8 pt-4'}),
       Row({ class: 'flex items-center gap-6'}, [
-        Row({ class: 'text-md text-gray-600'}, 'Logged in at:'),
-        Row({ class: 'text-md text-gray-500' }, formatUTCDate(user.last_login_at))
+        Row({ class: 'text-sm font-medium text-gray-700'}, 'Logged in at:'),
+        Row({ class: 'text-sm text-gray-600' }, formatUTCDate(user.last_login_at))
       ])
     ])
   ])

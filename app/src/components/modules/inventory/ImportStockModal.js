@@ -5,6 +5,8 @@ import { Input } from "../../utils/Input";
 import { SelectFluid, SelectOptions } from "../../utils/Select";
 import Label from "../../utils/Label";
 import { Table, TableBody, TableHeader, TableHCell, TableRow, TableDCell } from "../../utils/Table";
+import { showAlert } from "../../utils/ModalHelpers";
+import { permissionChecker } from "../../utils/PermissionChecker";
 
 const { Row, StatefulRow } = Liteframe;
 
@@ -74,20 +76,22 @@ function validateStockRow(row, rowIndex, existingProducts = [], existingLocation
   
   // Normalize field names (handle variations)
   const productCode = row['product code'] || row['product_code'] || row['productcode'] || row['code'] || '';
+  const productName = row['product name'] || row['product_name'] || row['productname'] || row['name'] || '';
   const location = row.location || row.loc || row['stock location'] || '';
   const quantity = row.quantity || row.qty || row['stock quantity'] || '';
   const unitCost = row['unit cost'] || row['unit_cost'] || row['unitcost'] || row['cost'] || '';
   const expiryDate = row['expiry date'] || row['expiry_date'] || row['expirydate'] || row['expiry'] || '';
+  const batchNumber = row['batch number'] || row['batch_number'] || row['batchnumber'] || row['batch'] || '';
+  const sellingPrice = row['selling price'] || row['selling_price'] || row['sellingprice'] || row['price'] || '';
   
   // Required fields
-  if (!productCode || productCode.trim() === '') {
-    errors.push('Product code is required');
-  } else if (existingProducts.length > 0 && !existingProducts.includes(productCode.trim())) {
-    errors.push(`Product code "${productCode}" does not exist`);
+  if (!productName || productName.trim() === '') {
+    errors.push('Product name is required');
   }
   
-  if (!location || location.trim() === '') {
-    errors.push('Location is required');
+  // Product code is optional, but if provided, validate it exists
+  if (productCode && productCode.trim() !== '' && existingProducts.length > 0 && !existingProducts.includes(productCode.trim())) {
+    errors.push(`Product code "${productCode}" does not exist`);
   }
   
   if (!quantity || quantity.trim() === '') {
@@ -123,11 +127,14 @@ function validateStockRow(row, rowIndex, existingProducts = [], existingLocation
   
   // Ensure we always return a valid object structure
   const normalizedRow = {
-    productCode: (productCode || '').trim(),
-    location: (location || '').trim(),
+    productCode: (productCode || '').trim() || null,
+    productName: (productName || '').trim(),
+    location: (location || '').trim() || null,
     quantity: quantity ? parseFloat(quantity) : 0,
     unitCost: unitCost ? parseFloat(unitCost) : 0,
-    expiryDate: (expiryDate || '').trim() || null
+    expiryDate: (expiryDate || '').trim() || null,
+    batchNumber: (batchNumber || '').trim() || null,
+    sellingPrice: sellingPrice ? parseFloat(sellingPrice) : null
   };
   
   return {
@@ -176,21 +183,36 @@ const ModalContent = (viewModel, delegator, handleClose) => {
 
       // Validate file type
       if (!selectedFile.name.endsWith('.csv')) {
-        alert('Please select a CSV file (.csv extension required)');
+        showAlert({
+          title: 'Invalid File Type',
+          message: 'Please select a CSV file (.csv extension required)',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
         e.target.value = '';
         return;
       }
 
       // Validate file size (max 5MB)
       if (selectedFile.size > 5 * 1024 * 1024) {
-        alert('File size must be less than 5MB');
+        showAlert({
+          title: 'File Too Large',
+          message: 'File size must be less than 5MB',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
         e.target.value = '';
         return;
       }
 
       // Validate file is not empty
       if (selectedFile.size === 0) {
-        alert('The selected file is empty');
+        showAlert({
+          title: 'Empty File',
+          message: 'The selected file is empty',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
         e.target.value = '';
         return;
       }
@@ -249,19 +271,36 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           console.log('Set parsedData:', rows.length, 'rows');
         } catch (error) {
           console.error('Error parsing CSV:', error);
-          alert(`Error parsing CSV file: ${error.message}\n\nExpected format:\n- First row: Headers (Product Code, Location, Quantity, Unit Cost, Expiry Date)\n- Subsequent rows: Data values\n- Use commas to separate columns`);
+          showAlert({
+            title: 'Error Parsing CSV',
+            message: `Error parsing CSV file: ${error.message}\n\nExpected format:\n- First row: Headers (Product Code, Location, Quantity, Unit Cost, Expiry Date)\n- Subsequent rows: Data values\n- Use commas to separate columns`,
+            variant: 'error',
+            icon: 'alert-circle-outline'
+          });
           props.setLocalState('file', null);
           props.setLocalState('parsedData', []);
           props.setLocalState('validationResults', []);
         }
       };
       reader.onerror = () => {
-        alert('Error reading file');
+        showAlert({
+          title: 'File Read Error',
+          message: 'Error reading file',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
       };
       reader.readAsText(selectedFile);
     };
 
     const handleImport = async () => {
+      const hasPermission = await permissionChecker.checkPermission('CanImportStock', {
+        actionName: 'import stock'
+      });
+      if (!hasPermission) {
+        return;
+      }
+
       // Filter valid rows
       const validRows = validationResults
         .map((result, index) => ({ result, index }))
@@ -276,7 +315,12 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         .filter(row => row !== null);
 
       if (validRows.length === 0) {
-        alert('No valid rows to import. Please fix errors and try again.');
+        showAlert({
+          title: 'No Valid Rows',
+          message: 'No valid rows to import. Please fix errors and try again.',
+          variant: 'warning',
+          icon: 'warning-outline'
+        });
         return;
       }
 
@@ -285,7 +329,12 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       // Validate reason
       const finalReason = importReason === 'Other' ? customReason.trim() : importReason;
       if (!finalReason || finalReason === '') {
-        alert('Please specify the reason for importing stock');
+        showAlert({
+          title: 'Reason Required',
+          message: 'Please specify the reason for importing stock',
+          variant: 'warning',
+          icon: 'warning-outline'
+        });
         props.setLocalState('importing', false);
         return;
       }
@@ -304,7 +353,12 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         props.setLocalState('importing', false);
       } catch (error) {
         console.error('Import error:', error);
-        alert('Error importing stock. Please try again.');
+        showAlert({
+          title: 'Import Failed',
+          message: error.message || 'Error importing stock. Please try again.',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
         props.setLocalState('importing', false);
       }
     };
@@ -410,8 +464,8 @@ const ModalContent = (viewModel, delegator, handleClose) => {
             ]),
             Row({ class: 'text-xs text-gray-500 bg-blue-50 p-3 rounded border border-blue-200' }, [
               Row({ class: 'font-semibold text-blue-800 mb-1' }, 'CSV Format:'),
-              Row({}, 'Expected columns: Product Code, Location, Quantity, Unit Cost, Expiry Date'),
-              Row({ class: 'mt-1' }, 'First row should contain headers. Product Code, Location, Quantity, and Unit Cost are required. Expiry Date is optional.')
+              Row({}, 'Expected columns: Product Name (required), Product Code (optional), Location (optional), Quantity (required), Unit Cost (required), Expiry Date (optional), Batch Number (optional), Selling Price (optional)'),
+              Row({ class: 'mt-1' }, 'First row should contain headers. Product Name, Quantity, and Unit Cost are required. All other fields are optional.')
             ])
           ]),
 
@@ -434,11 +488,14 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               Table({ class: 'w-full flex flex-col' }, [
                   TableHeader({ class: 'sticky top-0 z-10 bg-white border-b border-gray-200' }, [
                     TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Row'),
+                    TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Product Name'),
                     TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Product Code'),
                     TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Location'),
                     TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase' }, 'Quantity'),
                     TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase' }, 'Unit Cost'),
                     TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Expiry Date'),
+                    TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Batch Number'),
+                    TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase' }, 'Selling Price'),
                     TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase' }, 'Status')
                   ]),
                   TableBody({ class: 'flex-1 overflow-y-auto' },
@@ -449,11 +506,14 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                           class: 'bg-red-50'
                         }, [
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, index + 1),
+                          TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row['product name'] || row['product_name'] || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row['product code'] || row['product_code'] || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.location || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, row.quantity || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, row['unit cost'] || row['unit_cost'] || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row['expiry date'] || row['expiry_date'] || '-'),
+                          TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row['batch number'] || row['batch_number'] || '-'),
+                          TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, row['selling price'] || row['selling_price'] || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-center text-red-700' }, 'Validation Error')
                         ]);
                       }
@@ -466,11 +526,14 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                           class: 'bg-red-50'
                         }, [
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, index + 1),
+                          TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row['product name'] || row['product_name'] || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row['product code'] || row['product_code'] || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.location || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, row.quantity || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, row['unit cost'] || row['unit_cost'] || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row['expiry date'] || row['expiry_date'] || '-'),
+                          TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row['batch number'] || row['batch_number'] || '-'),
+                          TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, row['selling price'] || row['selling_price'] || '-'),
                           TableDCell({ class: 'px-4 py-3 text-sm text-center text-red-700' }, 'Validation Error')
                         ]);
                       }
@@ -481,11 +544,14 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                         class: validation.isValid ? 'bg-green-50' : 'bg-red-50'
                       }, [
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, index + 1),
+                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.productName || '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.productCode || '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.location || '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.quantity?.toLocaleString() || '-'),
-                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.unitCost ? `$${normalizedRow.unitCost.toFixed(2)}` : '-'),
+                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.unitCost ? `ETB ${normalizedRow.unitCost.toFixed(2)}` : '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.expiryDate || '-'),
+                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.batchNumber || '-'),
+                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.sellingPrice ? `ETB ${normalizedRow.sellingPrice.toFixed(2)}` : '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-center' },
                           validation.isValid
                             ? Row({ class: 'flex items-center justify-center gap-1 text-green-700' }, [

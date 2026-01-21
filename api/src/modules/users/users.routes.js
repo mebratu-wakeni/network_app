@@ -22,6 +22,9 @@ const router = Router()
 // All routes require authentication
 router.use(authenticate)
 
+// Get current authenticated user with permissions (must come before /:id route)
+router.get('/me', usersController.getCurrentUser)
+
 // Search users (must come before /:id route)
 router.post(
   '/search',
@@ -129,7 +132,7 @@ router.delete(
 // Get user's roles and rules
 router.get(
   '/:id/permissions',
-  requireRules(['CanSeeUsers']),
+  // requireRules(['CanSeeUsers']),
   validateParams(idParamSchema),
   usersController.getPermissions
 )

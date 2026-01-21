@@ -23,6 +23,34 @@ export const bulkImportProductsSchema = z.object({
 })
 
 /**
+ * Schema for creating a new category
+ */
+export const createCategorySchema = z.object({
+  name: z.string().min(1, 'Category name is required').trim(),
+  description: z.string().trim().optional().nullable()
+})
+
+/**
+ * Schema for creating a new unit
+ */
+export const createUnitSchema = z.object({
+  name: z.string().min(1, 'Unit name is required').trim(),
+  abbreviation: z.string().trim().optional().nullable()
+})
+
+/**
+ * Schema for creating a new product
+ */
+export const createProductSchema = z.object({
+  name: z.string().min(1, 'Product name is required').trim(),
+  description: z.string().trim().optional().nullable(),
+  category_id: z.number().int().positive('Category ID is required'),
+  unit_id: z.number().int().positive('Unit ID is required'),
+  remark: z.string().trim().optional().nullable(),
+  expiry_threshold: z.number().int().positive('Expiry threshold must be a positive number').optional()
+})
+
+/**
  * Validation middleware factory
  * Creates middleware that validates req.body against a schema
  */

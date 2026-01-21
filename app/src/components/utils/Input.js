@@ -20,6 +20,7 @@ const Input = (props) => {
     onChange,
     onInput,
     focusIn,
+    focusOut,
     placeholder = '',
     required = false,
     isError = false,
@@ -44,6 +45,7 @@ const Input = (props) => {
   if(onChange) events['change'] = onChange;
   if(onInput) events['input'] = onInput;
   if(focusIn) events['focusin'] = focusIn;
+  if(focusOut) events['focusout'] = focusOut;
 
   return Row({
     tagType: 'input',

@@ -12,6 +12,9 @@ import Drawer from '../../../shared/ExampleDrawer';
 import Modal from '../../../shared/Modal';
 import ImportModalContent from '../ImportStockModal';
 import BorrowFromModalContent from '../BorrowFromModal';
+import { showAlert } from '../../../utils/ModalHelpers';
+import { permissionChecker } from '../../../utils/PermissionChecker';
+import { formatDateDDMMYYYY } from '../../../utils/DateUtils';
 
 const { Row } = Liteframe;
 
@@ -52,11 +55,53 @@ function StockUI(props) {
     props.viewModel.loadStock();
   }
 
+  // Local state for search input value and debouncing
+  props.ensureLocalStateKey('searchInputValue', '');
+  props.ensureLocalStateKey('searchTimeout', null);
+  props.ensureLocalStateKey('searchInputValueInitialized', false);
+  
+  const searchInputValue = props.getLocalState('searchInputValue') || '';
+  const searchInputValueInitialized = props.getLocalState('searchInputValueInitialized');
+
+  const handleSearchFocusIn = () => {
+    props.setLocalState('searchInputValue', searchQuery || '');
+    props.setLocalState('searchInputValueInitialized', true);
+  }
+
+  const handleSearchFocusOut = () => {
+    props.setLocalState('searchInputValueInitialized', false);
+  }
+
   const handleSearchChange = (e) => {
     const newQuery = e.target.value;
-    props.viewModel.updateStockSearchQuery(newQuery);
-    // Trigger data reload when search changes
-    props.viewModel.loadStock();
+    
+    // Update local state immediately for input value (single re-render)
+    props.setLocalState('searchInputValue', newQuery);
+    
+    // Clear existing timeout
+    const existingTimeout = props.getLocalState('searchTimeout');
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    
+    // If search is cleared, update ViewModel and reload immediately
+    if (!newQuery || newQuery.trim() === '') {
+      props.viewModel.updateStockSearchQuery('');
+      props.viewModel.loadStock();
+      props.setLocalState('searchTimeout', null);
+      return;
+    }
+    
+    // Debounce: wait 500ms after user stops typing before updating ViewModel and searching
+    // Defer ViewModel updates (which trigger 2 updateState calls) to avoid complex re-renders during typing
+    // This prevents input from losing focus while user is actively typing
+    const timeout = setTimeout(() => {
+      props.viewModel.updateStockSearchQuery(newQuery);
+      props.viewModel.loadStock();
+      props.setLocalState('searchTimeout', null);
+    }, 500);
+
+    props.setLocalState('searchTimeout', timeout);
   }
 
   // Get stock statistics from viewModel state
@@ -100,7 +145,7 @@ function StockUI(props) {
       title: 'Expiring Soon', 
       icon: 'time-outline', 
       value: (stats.expiringSoon || 0).toLocaleString(), 
-      subtitle: 'Expires within 30 days',
+      subtitle: 'Expires within product-specific threshold',
       color: 'text-yellow-600', 
       bgColor: 'bg-yellow-50',
       borderColor: 'border-yellow-200',
@@ -144,7 +189,7 @@ function StockUI(props) {
       title: 'High Value', 
       icon: 'diamond-outline', 
       value: (stats.highValue || 0).toLocaleString(), 
-      subtitle: 'Unit cost above $1,000',
+      subtitle: 'Unit cost above ETB 1,000',
       color: 'text-emerald-600', 
       bgColor: 'bg-emerald-50',
       borderColor: 'border-emerald-200',
@@ -159,7 +204,9 @@ function StockUI(props) {
         Button({ 
           variant: 'primary', 
           class: 'text-nowrap flex items-center gap-2',
-          onClick: () => openBorrowFromModal(props),
+          onClick: async () => {
+            await openBorrowFromModal(props);
+          },
           delegator: props.delegator
         }, [
           IonIcon({ name: 'arrow-down-outline', class: 'text-lg text-white font-bold' }),
@@ -179,7 +226,14 @@ function StockUI(props) {
         Button({ 
           variant: 'secondary', 
           class: 'text-nowrap flex items-center gap-2',
-          onClick: () => {} // Handle export
+          onClick: async () => {
+            const hasPermission = await permissionChecker.checkPermission('CanSeeStockItemDetails', {
+              actionName: 'export stock'
+            });
+            if (hasPermission) {
+              handleExportCSV(props);
+            }
+          }
         }, [
           IonIcon({ name: 'download-outline', class: 'text-lg' }),
           'Export CSV'
@@ -237,8 +291,10 @@ function StockUI(props) {
           Input({ 
             placeholder: 'Search stock by product code, name, or location...', 
             class: 'pl-10 pr-4',
-            value: searchQuery,
-            onChange: handleSearchChange,
+            value: searchInputValue,
+            onInput: handleSearchChange,
+            focusIn: handleSearchFocusIn,
+            focusOut: handleSearchFocusOut,
             name: 'stock-search'
           })
         ])
@@ -346,13 +402,6 @@ function StockCard({
   ])
 }
 
-// Helper function to get date string X days from today
-function getDateInDays(days) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toISOString().split('T')[0];
-}
-
 function StockTable({ filter, searchQuery, stockList = [], loading = false, ...props }) {
   // Get pagination from viewModel state (not local state)
   const tableConfig = props.viewModel.getState('stock-table-config');
@@ -364,26 +413,8 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
   // High value threshold - unit cost in dollars (per unit)
   const HIGH_VALUE_THRESHOLD = 1000;
   
-  // Use stockList from viewModel (passed as prop)
-  // For now, if stockList is empty, use empty array (will be populated when IPC is implemented)
-  const stockItems = stockList.length > 0 ? stockList : [
-    { id: 1, productCode: 'PRD001', name: 'Paracetamol 500mg', category: 'Regent', location: 'A-01', quantity: 150, unit: 'Bottle', unitCost: 15.50, expiryDate: '2025-06-15', status: 'active' },
-    { id: 2, productCode: 'PRD002', name: 'Bandages', category: 'Supplies', location: 'B-03', quantity: 0, unit: 'PK', unitCost: 8.00, expiryDate: '2026-12-20', status: 'out-of-stock' },
-    { id: 3, productCode: 'PRD003', name: 'Antibiotics', category: 'Regent', location: 'A-05', quantity: 25, unit: 'Bottle', unitCost: 45.00, expiryDate: '2025-03-10', status: 'low-stock' },
-    { id: 4, productCode: 'PRD004', name: 'Syringes', category: 'Supplies', location: 'C-02', quantity: 200, unit: 'Kit', unitCost: 12.00, expiryDate: '2025-08-30', status: 'active' },
-    { id: 5, productCode: 'PRD005', name: 'Vitamin D', category: 'Regent', location: 'A-02', quantity: 80, unit: 'Bottle', unitCost: 22.50, expiryDate: getDateInDays(15), status: 'active' }, // Expiring soon
-    { id: 6, productCode: 'PRD006', name: 'Gauze Pads', category: 'Supplies', location: 'B-01', quantity: 120, unit: 'PK', unitCost: 6.50, expiryDate: getDateInDays(-5), status: 'active' }, // Expired
-    { id: 7, productCode: 'PRD007', name: 'Aspirin', category: 'Regent', location: 'A-03', quantity: 90, unit: 'Bottle', unitCost: 18.00, expiryDate: getDateInDays(20), status: 'active' }, // Expiring soon
-    { id: 8, productCode: 'PRD008', name: 'MRI Contrast Agent', category: 'Regent', location: 'D-01', quantity: 150, unit: 'Bottle', unitCost: 85.00, expiryDate: '2025-12-31', status: 'active' },
-    { id: 9, productCode: 'PRD009', name: 'Surgical Equipment Set', category: 'Supplies', location: 'D-02', quantity: 25, unit: 'Kit', unitCost: 450.00, expiryDate: '2026-06-30', status: 'active' },
-    { id: 10, productCode: 'PRD010', name: 'Specialized Medication', category: 'Regent', location: 'D-03', quantity: 80, unit: 'Bottle', unitCost: 125.00, expiryDate: '2025-09-15', status: 'active' },
-    { id: 11, productCode: 'PRD011', name: 'Expensive Medical Device', category: 'Supplies', location: 'D-04', quantity: 10, unit: 'Unit', unitCost: 100000.00, expiryDate: '2026-12-31', status: 'active' }, // High value: $100K per unit
-    { id: 12, productCode: 'PRD012', name: 'Premium Surgical Tool', category: 'Supplies', location: 'D-05', quantity: 5, unit: 'Set', unitCost: 50000.00, expiryDate: '2027-06-30', status: 'active' }, // High value: $50K per unit
-    { id: 13, productCode: 'PRD013', name: 'Rare Pharmaceutical', category: 'Regent', location: 'D-06', quantity: 15, unit: 'Bottle', unitCost: 2500.00, expiryDate: '2025-10-20', status: 'active' }, // High value: $2.5K per unit
-    { id: 14, productCode: 'PRD014', name: 'Lab Equipment', category: 'Supplies', location: 'E-01', quantity: 8, unit: 'Unit', unitCost: 1500.00, expiryDate: '2026-12-31', status: 'borrowed', borrowedBy: 'Dr. Smith', borrowedDate: '2025-01-10' }, // Borrowed
-    { id: 15, productCode: 'PRD015', name: 'Medical Scanner', category: 'Supplies', location: 'E-02', quantity: 3, unit: 'Unit', unitCost: 3500.00, expiryDate: '2027-01-31', status: 'borrowed', borrowedBy: 'Department A', borrowedDate: '2025-01-15' }, // Borrowed
-    { id: 16, productCode: 'PRD016', name: 'Testing Kits', category: 'Regent', location: 'E-03', quantity: 12, unit: 'Kit', unitCost: 120.00, expiryDate: '2025-12-31', status: 'borrowed', borrowedBy: 'Research Lab', borrowedDate: '2025-01-20' }, // Borrowed
-  ];
+  // Use stockList from viewModel (real data from API)
+  const stockItems = stockList || [];
 
   props.ensureLocalStateKey('actionId', null);
   props.ensureLocalStateKey('selectedRowId', null);
@@ -391,12 +422,13 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
   const actionId = props.getLocalState('actionId');
 
 
-  // Helper function to check if date is within 30 days
-  const isExpiringSoon = (expiryDate) => {
+  // Helper function to check if date is within product-specific threshold
+  const isExpiringSoon = (expiryDate, expiryThreshold = 30) => {
+    if (!expiryDate) return false;
     const expiry = new Date(expiryDate);
     const today = new Date();
     const daysUntilExpiry = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
-    return daysUntilExpiry >= 0 && daysUntilExpiry <= 30;
+    return daysUntilExpiry >= 0 && daysUntilExpiry <= expiryThreshold;
   };
 
   // Helper function to check if date is expired
@@ -421,7 +453,10 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
     if (filter === 'all') return true;
     if (filter === 'out-of-stock') return item.quantity === 0;
     if (filter === 'low-stock') return item.quantity > 0 && item.quantity < 50;
-    if (filter === 'expiring-soon') return isExpiringSoon(item.expiryDate);
+    if (filter === 'expiring-soon') {
+      const expiryThreshold = item.expiry_threshold || item.product?.expiry_threshold || 30;
+      return isExpiringSoon(item.expiryDate, expiryThreshold);
+    }
     if (filter === 'expired') return isExpired(item.expiryDate);
     if (filter === 'borrowed-from') return item.status === 'borrowed-from' || (item.acquisitionType === 'borrow' && item.borrowDirection === 'from');
     if (filter === 'borrowed-to') return item.status === 'borrowed-to' || (item.acquisitionType === 'borrow' && item.borrowDirection === 'to');
@@ -470,7 +505,7 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
     props.viewModel.loadStock(); // Reload data for next page
   };
 
-  const getStatusBadge = (status, quantity, expiryDate) => {
+  const getStatusBadge = (status, quantity, expiryDate, item = null) => {
     if (status === 'borrowed-from') {
       return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700' }, 'Borrowed From');
     }
@@ -480,7 +515,9 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
     if (isExpired(expiryDate)) {
       return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-red-200 text-red-800' }, 'Expired');
     }
-    if (isExpiringSoon(expiryDate)) {
+    // Use product-specific expiry_threshold if available
+    const expiryThreshold = item?.expiry_threshold || item?.product?.expiry_threshold || 30;
+    if (isExpiringSoon(expiryDate, expiryThreshold)) {
       return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700' }, 'Expiring Soon');
     }
     if (quantity === 0) {
@@ -490,6 +527,17 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
       return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700' }, 'Low Stock');
     }
     return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700' }, 'In Stock');
+  };
+
+  // Sort icon helper function
+  const sortIcon = (column) => {
+    const tableConfig = props.viewModel.getState('stock-table-config');
+    const orderBy = tableConfig.orderBy;
+    const sortBy = tableConfig.sortBy;
+    if (column === sortBy) {
+      return IonIcon({ name: `${orderBy === 'asc' ? 'arrow-up-outline' : 'arrow-down-outline'}`, class: 'text-xs ml-2 font-semibold' });
+    }
+    return false;
   };
 
   return Row({ class: 'flex-1 flex flex-col overflow-hidden min-h-0' }, [
@@ -529,14 +577,34 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
         setOpenActionState: () => props.setLocalState('actionId', null)  
       }, [
       TableHeader({ class: 'sticky top-0 z-10 bg-white' }, [
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Product Code'),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Product Name'),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Category'),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Location'),
-        TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Quantity'),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Unit'),
-        TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Total Value'),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Expiry Date'),
+        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('product_code') }, [
+          'Product Code',
+          sortIcon('product_code')
+        ]),
+        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('name') }, [
+          'Product Name',
+          sortIcon('name')
+        ]),
+        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('category') }, [
+          'Category',
+          sortIcon('category')
+        ]),
+        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('location') }, [
+          'Location',
+          sortIcon('location')
+        ]),
+        TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('quantity') }, [
+          'Quantity',
+          sortIcon('quantity')
+        ]),
+        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('unit') }, [
+          'Unit',
+          sortIcon('unit')
+        ]),
+        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('expiry_date') }, [
+          'Expiry Date',
+          sortIcon('expiry_date')
+        ]),
         TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Status'),
         TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Action')
       ]),
@@ -545,7 +613,7 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
           ? TableRow({}, [
               TableDCell({ 
                 class: 'px-4 py-8 text-center text-sm text-gray-500', 
-                attributes: { colspan: 10 } 
+                attributes: { colspan: 9 } 
               }, 'No stock items found')
             ])
           : paginatedItems.map(item => 
@@ -558,11 +626,8 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
                 TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.location),
                 TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-medium' }, item.quantity.toLocaleString()),
                 TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.unit),
-                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-semibold' }, 
-                  `$${getTotalValue(item).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                ),
-                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.expiryDate),
-                TableDCell({ class: 'px-4 py-3 text-sm' }, getStatusBadge(item.status, item.quantity, item.expiryDate)),
+                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, formatDateDDMMYYYY(item.expiryDate)),
+                TableDCell({ class: 'px-4 py-3 text-sm' }, getStatusBadge(item.status, item.quantity, item.expiryDate, item)),
                 ActionDropdown({
                   actionId: item.id,
                   open: item.id === actionId,
@@ -572,33 +637,61 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
                   ActionItem({
                     label: 'View Details',
                     icon: 'eye-outline',
-                    onClick: () => {
-                      props.viewModel.openStockDrawer(item, 'view-details');
-                      props.setLocalState('actionId', null);
+                    onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanSeeStockItemDetails', {
+                        actionName: 'view stock details'
+                      });
+                      if (hasPermission) {
+                        props.viewModel.openStockDrawer(item, 'view-details');
+                        props.setLocalState('actionId', null);
+                      } else {
+                        props.setLocalState('actionId', null);
+                      }
                     }
                   }),
                   (item.status === 'borrowed-from' || item.status === 'borrowed') && ActionItem({
                     label: 'Return Borrowed From',
                     icon: 'return-down-back-outline',
-                    onClick: () => {
-                      props.viewModel.openStockDrawer(item, 'return-borrowed');
-                      props.setLocalState('actionId', null);
+                    onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanReturnBorrowedFromStock', {
+                        actionName: 'return borrowed items'
+                      });
+                      if (hasPermission) {
+                        props.viewModel.openStockDrawer(item, 'return-borrowed');
+                        props.setLocalState('actionId', null);
+                      } else {
+                        props.setLocalState('actionId', null);
+                      }
                     }
                   }),
                   ActionItem({
                     label: 'Adjust Stock',
                     icon: 'create-outline',
-                    onClick: () => {
-                      props.viewModel.openStockDrawer(item, 'adjust-stock');
-                      props.setLocalState('actionId', null);
+                    onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanAdjustStockItemQuantities', {
+                        actionName: 'adjust stock quantities'
+                      });
+                      if (hasPermission) {
+                        props.viewModel.openStockDrawer(item, 'adjust-stock');
+                        props.setLocalState('actionId', null);
+                      } else {
+                        props.setLocalState('actionId', null);
+                      }
                     }
                   }),
                   ActionItem({
                     label: 'Transfer',
                     icon: 'swap-horizontal-outline',
-                    onClick: () => {
-                      props.viewModel.openStockDrawer(item, 'transfer');
-                      props.setLocalState('actionId', null);
+                    onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanTransferItemShelf', {
+                        actionName: 'transfer stock items'
+                      });
+                      if (hasPermission) {
+                        props.viewModel.openStockDrawer(item, 'transfer');
+                        props.setLocalState('actionId', null);
+                      } else {
+                        props.setLocalState('actionId', null);
+                      }
                     }
                   })
                 ])
@@ -629,45 +722,118 @@ function StockDrawers({ drawerType, stockItem, showSlide, onClose, ...props }) {
 function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
   // Get form state from viewModel
   const stockDetailsForm = props.viewModel.getState('stock-details-form');
-  const editMode = props.viewModel.getState('stock-details-edit-mode');
+  const detailsEditMode = props.viewModel.getState('stock-details-edit-mode');
+  const pricingEditMode = props.viewModel.getState('stock-pricing-edit-mode');
   
   const inventoryCode = stockDetailsForm.inventoryCode || stockItem.inventoryCode || stockItem.id?.toString() || '';
   const productCode = stockDetailsForm.productCode || stockItem.productCode || '';
   const quantity = stockDetailsForm.quantity || stockItem.quantity || 0;
-  const batchNo = stockDetailsForm.batchNo || stockItem.batchNo || '';
-  const expiryDate = stockDetailsForm.expiryDate || stockItem.expiryDate || '';
-  const unitCost = stockDetailsForm.unitCost || stockItem.unitCost || 0;
-  const sellingPrice = stockDetailsForm.sellingPrice || stockItem.sellingPrice || 0;
+  const batchNo = stockDetailsForm.batchNo !== undefined ? stockDetailsForm.batchNo : (stockItem.batchNumber || stockItem.batchNo || '');
+  // Use form value if it exists (even if empty string or null), otherwise fall back to stockItem
+  const expiryDate = stockDetailsForm.expiryDate !== undefined ? stockDetailsForm.expiryDate : (stockItem.expiryDate || '');
+  const unitCost = stockDetailsForm.unitCost !== undefined ? stockDetailsForm.unitCost : (stockItem.unitCost || 0);
+  const sellingPrice = stockDetailsForm.sellingPrice !== undefined ? stockDetailsForm.sellingPrice : (stockItem.sellingPrice || 0);
 
   const getTotalValue = (item) => {
-    const cost = editMode ? unitCost : (item.unitCost || 0);
-    const qty = editMode ? quantity : (item.quantity || 0);
+    const cost = detailsEditMode ? unitCost : (item.unitCost || 0);
+    const qty = detailsEditMode ? quantity : (item.quantity || 0);
     return qty * cost;
   };
 
-  const handleEdit = () => {
-    props.viewModel.setStockDetailsEditMode(true);
+  const handleEditDetails = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanEditStockItemDetails', {
+      actionName: 'edit stock item details'
+    });
+    if (hasPermission) {
+      props.viewModel.setStockDetailsEditMode(true);
+    }
   };
 
-  const handleCancel = () => {
+  const handleEditPricing = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanEditStockItemPrice', {
+      actionName: 'edit selling price'
+    });
+    if (hasPermission) {
+      props.viewModel.setStockPricingEditMode(true);
+    }
+  };
+
+  const handleCancelDetails = () => {
     props.viewModel.setStockDetailsEditMode(false);
   };
 
-  const handleSave = async () => {
+  const handleCancelPricing = () => {
+    props.viewModel.setStockPricingEditMode(false);
+  };
+
+  const handleSaveDetails = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanEditStockItemDetails', {
+      actionName: 'update stock item details'
+    });
+    if (!hasPermission) {
+      return;
+    }
+
     try {
+      // Read fresh form state directly from ViewModel (don't use stale local variables)
+      const currentForm = props.viewModel.getState('stock-details-form');
+      
+      // Get values from form state, fallback to stockItem if not in form
+      const formBatchNo = currentForm.batchNo !== undefined ? currentForm.batchNo : (stockItem.batchNumber || stockItem.batchNo || '');
+      const formExpiryDate = currentForm.expiryDate !== undefined ? currentForm.expiryDate : (stockItem.expiryDate || '');
+      const formUnitCost = currentForm.unitCost !== undefined ? currentForm.unitCost : (stockItem.unitCost || 0);
+      const formInventoryCode = currentForm.inventoryCode || stockItem.inventoryCode || stockItem.id?.toString() || '';
+      const formProductCode = currentForm.productCode || stockItem.productCode || '';
+      
+      // Normalize expiryDate: empty string becomes null, otherwise use the value
+      const normalizedExpiryDate = (formExpiryDate === '' || formExpiryDate === null || formExpiryDate === undefined) ? null : formExpiryDate;
+      
+      console.log('[Stock.js] handleSaveDetails - Using fresh form state:', {
+        currentForm: JSON.stringify(currentForm, null, 2),
+        formExpiryDate,
+        normalizedExpiryDate,
+        formBatchNo,
+        formUnitCost,
+        staleExpiryDate: expiryDate, // This is the stale value from render
+        staleBatchNo: batchNo // This is the stale value from render
+      });
+      
       await props.viewModel.updateStock(stockItem.id, {
-        inventoryCode: inventoryCode,
-        productCode: productCode, // Read-only, but included for completeness
+        inventoryCode: formInventoryCode,
+        productCode: formProductCode, // Read-only, but included for completeness
         // quantity is NOT included - it's read-only and must be changed via Adjust Stock for data integrity
-        batchNo: batchNo,
-        expiryDate: expiryDate || null,
-        unitCost: unitCost,
-        sellingPrice: sellingPrice
+        batchNo: formBatchNo,
+        expiryDate: normalizedExpiryDate,
+        unitCost: formUnitCost
+        // Note: sellingPrice is NOT included here - it's saved separately via handleSavePricing
         // Note: inventoryCode, productCode, and quantity are system-managed/controlled fields
       });
       props.viewModel.setStockDetailsEditMode(false);
     } catch (error) {
-      console.error('Error updating stock:', error);
+      console.error('Error updating stock details:', error);
+    }
+  };
+
+  const handleSavePricing = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanEditStockItemPrice', {
+      actionName: 'update selling price'
+    });
+    if (!hasPermission) {
+      return;
+    }
+
+    // Get the current form value to ensure we're using the latest
+    const currentForm = props.viewModel.getState('stock-details-form');
+    const priceToSave = currentForm.sellingPrice !== undefined ? currentForm.sellingPrice : sellingPrice;
+
+    try {
+      await props.viewModel.updateStock(stockItem.id, {
+        sellingPrice: priceToSave
+        // Only update selling price, other fields remain unchanged
+      });
+      props.viewModel.setStockPricingEditMode(false);
+    } catch (error) {
+      console.error('Error updating selling price:', error);
     }
   };
 
@@ -675,7 +841,11 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
     CardHeader({ class: 'px-6 flex items-center justify-between h-12 border-b border-gray-200' }, [
       Row({ class: 'flex items-center gap-3' }, [
         IonIcon({ name: 'cube-outline', class: 'text-xl text-indigo-600' }),
-        Row({ class: 'text-lg font-semibold text-gray-800' }, editMode ? 'Edit Stock Item' : 'Stock Details'),
+        Row({ class: 'text-lg font-semibold text-gray-800' }, 
+          detailsEditMode ? 'Edit Stock Details' : 
+          pricingEditMode ? 'Edit Pricing' : 
+          'Stock Details'
+        ),
       ]),
       IconButton({ onClick: onClose, size: 'medium', delegator: props.delegator }, [
         IonIcon({ name: 'close-outline', class: 'text-xl' })
@@ -717,8 +887,8 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
               }),
               DetailField({ 
                 label: 'Batch No', 
-                value: editMode ? null : (batchNo || '-'),
-                editMode: editMode,
+                value: detailsEditMode ? null : (batchNo || '-'),
+                editMode: detailsEditMode,
                 inputProps: {
                   value: batchNo || '',
                   onChange: (e) => props.viewModel.updateStockDetailsForm('batchNo', e.target.value),
@@ -732,8 +902,8 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
             Row({ class: 'grid grid-cols-2 gap-6' }, [
               DetailField({ 
                 label: 'Unit Cost', 
-                value: editMode ? null : `$${(unitCost || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                editMode: editMode,
+                value: detailsEditMode ? null : `ETB ${(unitCost || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                editMode: detailsEditMode,
                 inputProps: {
                   type: 'number',
                   step: '0.01',
@@ -747,14 +917,17 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
               }),
               DetailField({ 
                 label: 'Selling Price', 
-                value: editMode ? null : `$${(sellingPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                editMode: editMode,
+                value: pricingEditMode ? null : `ETB ${(sellingPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                editMode: pricingEditMode,
                 inputProps: {
                   type: 'number',
                   step: '0.01',
                   min: 0,
-                  value: sellingPrice ?? 0,
-                  onChange: (e) => props.viewModel.updateStockDetailsForm('sellingPrice', parseFloat(e.target.value) || 0),
+                  value: stockDetailsForm.sellingPrice !== undefined ? stockDetailsForm.sellingPrice : (sellingPrice ?? 0),
+                  onChange: (e) => {
+                    const newValue = e.target.value === '' ? null : parseFloat(e.target.value);
+                    props.viewModel.updateStockDetailsForm('sellingPrice', newValue !== null && !isNaN(newValue) ? newValue : null);
+                  },
                   name: 'stock-selling-price',
                   placeholder: 'Enter selling price',
                   delegator: props.delegator
@@ -765,12 +938,20 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
             Row({ class: 'grid grid-cols-2 gap-6' }, [
               DetailField({ 
                 label: 'Expiry Date', 
-                value: editMode ? null : (expiryDate || '-'),
-                editMode: editMode,
+                value: detailsEditMode ? null : formatDateDDMMYYYY(expiryDate),
+                editMode: detailsEditMode,
                 inputProps: {
                   type: 'date',
                   value: expiryDate || '',
-                  onChange: (e) => props.viewModel.updateStockDetailsForm('expiryDate', e.target.value || null),
+                  onChange: (e) => {
+                    const newValue = e.target.value || null;
+                    console.log('[Stock.js] Expiry date onChange:', {
+                      targetValue: e.target.value,
+                      newValue,
+                      currentFormValue: stockDetailsForm.expiryDate
+                    });
+                    props.viewModel.updateStockDetailsForm('expiryDate', newValue);
+                  },
                   name: 'stock-expiry-date',
                   placeholder: 'Select expiry date',
                   delegator: props.delegator
@@ -778,7 +959,7 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
               }),
               DetailField({ 
                 label: 'Total Value', 
-                value: `$${getTotalValue(stockItem).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                value: `ETB ${getTotalValue(stockItem).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
                 editMode: false // Calculated field, read-only
               })
             ]),
@@ -802,19 +983,33 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
       ])
     ]),
     Row({ class: 'px-6 py-4 border-t border-gray-200 flex justify-end gap-3' }, [
-      editMode ? [
-        Button({ variant: 'secondary', onClick: handleCancel, delegator: props.delegator }, 'Cancel'),
-        Button({ variant: 'primary', onClick: handleSave, delegator: props.delegator }, 'Save Changes')
+      detailsEditMode ? [
+        Button({ variant: 'secondary', onClick: handleCancelDetails, delegator: props.delegator }, 'Cancel'),
+        Button({ variant: 'primary', onClick: handleSaveDetails, delegator: props.delegator }, 'Save Details')
+      ] : pricingEditMode ? [
+        Button({ variant: 'secondary', onClick: handleCancelPricing, delegator: props.delegator }, 'Cancel'),
+        Button({ variant: 'primary', onClick: handleSavePricing, delegator: props.delegator }, 'Save Price')
       ] : [
         Button({ variant: 'secondary', onClick: onClose, delegator: props.delegator }, 'Close'),
-        Button({ 
-          variant: 'primary', 
-          onClick: handleEdit,
-          delegator: props.delegator,
-          class: 'flex items-center gap-2'
-        }, [
-          IonIcon({ name: 'create-outline', class: 'text-lg' }),
-          'Edit'
+        Row({ class: 'flex items-center gap-2' }, [
+          Button({ 
+            variant: 'outline', 
+            onClick: handleEditDetails,
+            delegator: props.delegator,
+            class: 'flex items-center gap-2'
+          }, [
+            IonIcon({ name: 'create-outline', class: 'text-lg' }),
+            'Edit Details'
+          ]),
+          Button({ 
+            variant: 'outline', 
+            onClick: handleEditPricing,
+            delegator: props.delegator,
+            class: 'flex items-center gap-2'
+          }, [
+            IonIcon({ name: 'pricetag-outline', class: 'text-lg' }),
+            'Edit Price'
+          ])
         ])
       ]
     ])
@@ -887,9 +1082,21 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
   const reasonOptions = getReasonOptions(adjustmentType);
 
   const handleSave = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanAdjustStockItemQuantities', {
+      actionName: 'adjust stock quantities'
+    });
+    if (!hasPermission) {
+      return;
+    }
+
     // Validate: If "Borrow To" is selected, partner must be selected
     if (adjustReason === 'Borrow To' && !partnerId) {
-      alert('Please select a partner for "Borrow To" adjustment');
+      showAlert({
+        title: 'Partner Required',
+        message: 'Please select a partner for "Borrow To" adjustment',
+        variant: 'warning',
+        icon: 'warning-outline'
+      });
       return;
     }
     
@@ -1155,10 +1362,18 @@ function TransferStockDrawer({ stockItem, showSlide, onClose, ...props }) {
   const transferToLocation = transferStockForm.toLocation || '';
   const transferNotes = transferStockForm.notes || '';
 
-  // Mock locations
-  const locations = ['A-01', 'A-02', 'A-03', 'A-05', 'B-01', 'B-03', 'C-02', 'D-01', 'D-02', 'D-03', 'D-04', 'D-05', 'D-06'];
+  // Get unique locations from stock items (real data)
+  const stockList = props.viewModel.getStockList();
+  const locations = [...new Set(stockList.map(item => item.location).filter(Boolean))].sort();
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanTransferItemShelf', {
+      actionName: 'transfer stock items'
+    });
+    if (!hasPermission) {
+      return;
+    }
+
     // Handle stock transfer save
     console.log('Transferring stock:', {
       item: stockItem,
@@ -1266,26 +1481,34 @@ function TransferStockDrawer({ stockItem, showSlide, onClose, ...props }) {
 
 // Return Borrowed Drawer
 function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
-  // Mock borrowed item data (would come from API)
+  // TODO: Fetch borrowed item data from API
+  // For now, use stockItem data
   const borrowedItemData = {
-    productCode: stockItem.productCode,
+    productCode: stockItem.productCode || stockItem.inventoryCode,
     productName: stockItem.name,
-    totalBorrowed: 100,
-    settled: 60,
-    sold: 20,
-    unsettled: 20,
+    totalBorrowed: 0, // TODO: Get from API
+    settled: 0, // TODO: Get from API
+    sold: 0, // TODO: Get from API
+    unsettled: 0, // TODO: Get from API
     currentUnitPrice: stockItem.unitCost || 0,
     lastAdjustedPrice: stockItem.unitCost || 0,
-    borrowedDate: stockItem.borrowedDate || '2025-01-10',
-    borrowedBy: stockItem.borrowedBy || 'Partner Company'
+    borrowedDate: stockItem.borrowedDate || new Date().toISOString().split('T')[0],
+    borrowedBy: stockItem.borrowedBy || ''
   };
 
-  // Mock available stock items with same product code (would come from API)
-  const availableStocks = [
-    { id: 1, inventoryCode: 'INV-001', batchNumber: 'B001', purchaseUnitPrice: 15.50, expiryDate: '2025-06-15', quantity: 50, location: 'A-01' },
-    { id: 2, inventoryCode: 'INV-002', batchNumber: 'B002', purchaseUnitPrice: 16.00, expiryDate: '2025-08-20', quantity: 30, location: 'A-02' },
-    { id: 3, inventoryCode: 'INV-003', batchNumber: 'B003', purchaseUnitPrice: 15.75, expiryDate: '2025-07-10', quantity: 25, location: 'B-01' },
-  ];
+  // Get available stock items with same product code from real data
+  const stockList = props.viewModel.getStockList();
+  const availableStocks = stockList
+    .filter(item => item.productCode === stockItem.productCode && item.id !== stockItem.id)
+    .map(item => ({
+      id: item.id,
+      inventoryCode: item.inventoryCode,
+      batchNumber: item.batchNumber,
+      purchaseUnitPrice: item.unitCost,
+      expiryDate: item.expiryDate,
+      quantity: item.quantity,
+      location: item.location
+    }));
 
   props.ensureLocalStateKey('return-date', new Date().toISOString().split('T')[0]);
   props.ensureLocalStateKey('return-quantity', 0);
@@ -1350,7 +1573,14 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
   const totalReturnValue = summaryData.reduce((sum, s) => sum + s.totalValue, 0);
   const showSummary = selectedStocks.length > 0 && returnDate && returnQuantity > 0;
 
-  const handleProcessReturn = () => {
+  const handleProcessReturn = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanReturnBorrowedFromStock', {
+      actionName: 'return borrowed items'
+    });
+    if (!hasPermission) {
+      return;
+    }
+
     console.log('Processing return:', {
       borrowedItem: borrowedItemData,
       returnDate,
@@ -1384,7 +1614,7 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
             DetailField({ label: 'Product Code', value: borrowedItemData.productCode }),
             DetailField({ label: 'Product Name', value: borrowedItemData.productName }),
             DetailField({ label: 'Unsettled Quantity', value: `${borrowedItemData.unsettled.toLocaleString()} ${stockItem.unit}` }),
-            DetailField({ label: 'Last Adjusted Unit Price', value: `$${borrowedItemData.lastAdjustedPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }),
+            DetailField({ label: 'Last Adjusted Unit Price', value: `ETB ${borrowedItemData.lastAdjustedPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }),
           ])
         ]),
 
@@ -1405,7 +1635,7 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
               DetailField({ label: 'Total Borrowed', value: `${borrowedItemData.totalBorrowed.toLocaleString()} ${stockItem.unit}` }),
               DetailField({ label: 'Already Settled', value: `${borrowedItemData.settled.toLocaleString()} ${stockItem.unit}` }),
               DetailField({ label: 'Already Sold', value: `${borrowedItemData.sold.toLocaleString()} ${stockItem.unit}` }),
-              DetailField({ label: 'Current Adjusted Unit Price', value: `$${borrowedItemData.currentUnitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }),
+              DetailField({ label: 'Current Adjusted Unit Price', value: `ETB ${borrowedItemData.currentUnitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }),
             ])
           ])
         ]),
@@ -1482,9 +1712,9 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
                     TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 font-medium' }, stock.inventoryCode),
                     TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, stock.batchNumber),
                     TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, 
-                      `$${stock.purchaseUnitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      `ETB ${stock.purchaseUnitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                     ),
-                    TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, stock.expiryDate),
+                    TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, formatDateDDMMYYYY(stock.expiryDate)),
                     TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, stock.quantity.toLocaleString()),
                     TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, stock.location),
                     TableDCell({ class: 'px-4 py-3' }, [
@@ -1524,15 +1754,15 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
           Row({ class: 'space-y-2 mb-4' }, 
             summaryData.map((item, idx) => 
               Row({ key: idx, class: 'flex justify-between text-sm' }, [
-                Row({ class: 'text-gray-700' }, `${item.inventoryCode}: ${item.quantity} ${stockItem.unit} @ $${item.unitPrice.toFixed(2)}`),
-                Row({ class: 'font-medium text-gray-900' }, `$${item.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                Row({ class: 'text-gray-700' }, `${item.inventoryCode}: ${item.quantity} ${stockItem.unit} @ ETB ${item.unitPrice.toFixed(2)}`),
+                Row({ class: 'font-medium text-gray-900' }, `ETB ${item.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
               ])
             )
           ),
           Row({ class: 'pt-3 border-t border-green-300 flex justify-between items-center' }, [
             Row({ class: 'text-sm font-semibold text-green-800' }, 'Total Return Value:'),
             Row({ class: 'text-lg font-bold text-green-900' }, 
-              `$${totalReturnValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              `ETB ${totalReturnValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
             )
           ]),
           Row({ class: 'mt-3 text-xs text-gray-600' }, [
@@ -1584,7 +1814,23 @@ const formRow = ({ left, right }) => {
   ]);
 };
 
-function openBorrowFromModal(props) {
+async function handleExportCSV(props) {
+  try {
+    await props.viewModel.exportStock();
+  } catch (error) {
+    console.error('Export failed:', error);
+    // Error is already handled in ViewModel and shown via toast
+  }
+}
+
+async function openBorrowFromModal(props) {
+  // Load data before opening modal to avoid infinite re-rendering
+  console.log('[Stock] openBorrowFromModal - Loading products and partners...');
+  await Promise.all([
+    props.viewModel.loadAllProducts(),
+    props.viewModel.loadPartners()
+  ]);
+  console.log('[Stock] openBorrowFromModal - Data loaded, opening modal');
   Modal({}, (delegator, closeHandler) => BorrowFromModalContent(props.viewModel, delegator, closeHandler));
 }
 

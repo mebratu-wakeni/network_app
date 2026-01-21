@@ -1,0 +1,150 @@
+/**
+ * Schema: Validation layer using Zod
+ * Defines and validates request/response shapes for inventories/stock
+ */
+import { z } from 'zod'
+
+/**
+ * Schema for a single stock item in bulk import
+ * Accepts both camelCase (frontend) and snake_case (backend) formats
+ */
+export const stockItemSchema = z.object({
+  // Accept both camelCase and snake_case formats
+  productCode: z.string().trim().optional().nullable(),
+  product_code: z.string().trim().optional().nullable(),
+  productName: z.string().trim().optional(),
+  product_name: z.string().trim().optional(),
+  location: z.string().trim().optional().nullable(),
+  quantity: z.number().int().positive('Quantity must be a positive integer'),
+  unitCost: z.number().positive('Unit cost must be a positive number').optional(),
+  unit_cost: z.number().positive('Unit cost must be a positive number').optional(),
+  expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  batchNumber: z.string().trim().optional().nullable(),
+  batch_number: z.string().trim().optional().nullable(),
+  sellingPrice: z.number().positive('Selling price must be a positive number').optional().nullable(),
+  selling_price: z.number().positive('Selling price must be a positive number').optional().nullable()
+}).refine(
+  (data) => {
+    const productName = data.productName || data.product_name
+    return productName && productName.trim().length > 0
+  },
+  { message: 'Product name is required', path: ['productName'] }
+).refine(
+  (data) => {
+    const unitCost = data.unitCost !== undefined ? data.unitCost : data.unit_cost
+    return unitCost !== undefined && unitCost > 0
+  },
+  { message: 'Unit cost is required and must be a positive number', path: ['unitCost'] }
+)
+
+/**
+ * Schema for bulk import stock request body
+ */
+export const bulkImportStockSchema = z.object({
+  stockItems: z.array(stockItemSchema).min(1, 'At least one stock item is required'),
+  purchase_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Purchase date must be in YYYY-MM-DD format').optional(),
+  acquisition_type: z.enum(['purchase', 'cash', 'credit', 'cheque', 'borrow']).optional(),
+  reason: z.string().min(1, 'Reason is required').trim(),
+  created_by: z.number().int().positive().optional().nullable()
+})
+
+/**
+ * Schema for updating a stock item
+ * All fields are optional to allow partial updates
+ * Note: inventoryCode and productCode are read-only system fields and will be ignored
+ */
+export const updateStockItemSchema = z.object({
+  // Read-only fields (ignored but allowed to prevent validation errors)
+  inventoryCode: z.string().trim().optional().nullable(),
+  inventory_code: z.string().trim().optional().nullable(),
+  productCode: z.string().trim().optional().nullable(),
+  product_code: z.string().trim().optional().nullable(),
+  // Editable fields
+  batchNo: z.string().trim().optional().nullable(),
+  batch_no: z.string().trim().optional().nullable(),
+  expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  unitCost: z.number().positive('Unit cost must be a positive number').optional(),
+  unit_cost: z.number().positive('Unit cost must be a positive number').optional(),
+  sellingPrice: z.number().positive('Selling price must be a positive number').optional().nullable(),
+  selling_price: z.number().positive('Selling price must be a positive number').optional().nullable()
+})
+
+/**
+ * Schema for adjusting stock quantity
+ */
+export const adjustStockItemSchema = z.object({
+  adjustmentType: z.enum(['add', 'subtract', 'set'], {
+    errorMap: () => ({ message: 'Adjustment type must be "add", "subtract", or "set"' })
+  }),
+  amount: z.number().int().nonnegative('Amount must be a non-negative integer'),
+  newQuantity: z.number().int().nonnegative('New quantity must be a non-negative integer'),
+  reason: z.string().min(1, 'Reason is required').trim(),
+  notes: z.string().trim().optional().nullable(),
+  adjustmentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Adjustment date must be in YYYY-MM-DD format').optional(),
+  adjustment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Adjustment date must be in YYYY-MM-DD format').optional(),
+  partnerId: z.number().int().positive().optional().nullable(),
+  partner_id: z.number().int().positive().optional().nullable()
+})
+
+/**
+ * Schema for borrow from stock request
+ */
+export const borrowFromStockSchema = z.object({
+  partnerId: z.number().int().positive('Partner ID is required'),
+  partner_id: z.number().int().positive('Partner ID is required').optional(),
+  productId: z.number().int().positive('Product ID is required'),
+  product_id: z.number().int().positive('Product ID is required').optional(),
+  purchasePrice: z.number().positive('Purchase price must be a positive number'),
+  purchase_price: z.number().positive('Purchase price must be a positive number').optional(),
+  quantity: z.number().int().positive('Quantity must be a positive integer'),
+  batchNo: z.string().trim().optional().nullable(),
+  batch_no: z.string().trim().optional().nullable(),
+  expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  description: z.string().trim().optional().nullable(),
+  location: z.string().trim().optional().nullable(),
+  notes: z.string().trim().optional().nullable()
+}).refine(
+  (data) => {
+    const partnerId = data.partnerId || data.partner_id
+    return partnerId !== undefined && partnerId > 0
+  },
+  { message: 'Partner ID is required', path: ['partnerId'] }
+).refine(
+  (data) => {
+    const productId = data.productId || data.product_id
+    return productId !== undefined && productId > 0
+  },
+  { message: 'Product ID is required', path: ['productId'] }
+).refine(
+  (data) => {
+    const purchasePrice = data.purchasePrice !== undefined ? data.purchasePrice : data.purchase_price
+    return purchasePrice !== undefined && purchasePrice > 0
+  },
+  { message: 'Purchase price is required and must be positive', path: ['purchasePrice'] }
+)
+
+/**
+ * Validation middleware factory
+ * Creates middleware that validates req.body against a schema
+ */
+export const validate = (schema) => {
+  return (req, res, next) => {
+    const result = schema.safeParse(req.body)
+    
+    if (!result.success) {
+      const error = new Error('Validation failed')
+      error.status = 400
+      error.details = result.error.issues.map(e => ({
+        field: e.path.join('.'),
+        message: e.message
+      }))
+      return next(error)
+    }
+    
+    req.validBody = result.data
+    next()
+  }
+}

@@ -292,6 +292,25 @@ class UsersManager {
   }
 
   /**
+   * Get current authenticated user with permissions
+   */
+  async getCurrentUser(token) {
+    try {
+      const response = await this.apiRequest('/users/me', {
+        method: 'GET',
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        user: response.user || response.data
+      };
+    } catch (error) {
+      console.error('[Get Current User] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get user by ID
    */
   async getUserById(userId, token) {

@@ -22,7 +22,7 @@ export function InventoryUI() {
     ])
   } 
 
-  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading', 'inventory-tab', 'partner-list']}, render)
+  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading']}, render)
 }
 
 function InventoryTabs(props) {

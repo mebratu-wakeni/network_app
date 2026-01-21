@@ -5,6 +5,7 @@ import ServerManagerUI from "../serverManager/ServerManagerUI.js";
 import { cleanupServerManager } from "../serverManager/ServerManagerVM.js";
 import UserProfile from "../users/profile/profile.js";
 import UsersTable from "../users/UsersUI.js";
+import { CustomersUI } from "../customers/CustomersUI.js";
 import { Card, CardHeader } from "../utils/Card.js";
 import ExampleCard from "../utils/example.js";
 import ProductsTable from "../utils/exampleTable.js";
@@ -34,6 +35,7 @@ export default function  NavigationUI(props) {
       }
       if (option.route === '/') return ExampleCard();
       if (option.route === '/inventory') return InventoryUI();
+      if (option.route === '/customers') return CustomersUI();
       if (option.route === '/users') return UsersTable();
 
       if (option.route === '/user-profile') return UserProfile();

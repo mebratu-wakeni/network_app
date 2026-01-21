@@ -3,6 +3,8 @@ import { Card, CardHeader, CardBody, CardFooter } from "../../utils/Card";
 import { IconButton, IonIcon } from "../../utils/Icon";
 import { Input } from "../../utils/Input";
 import { Table, TableBody, TableHeader, TableHCell, TableRow, TableDCell } from "../../utils/Table";
+import { showAlert } from "../../utils/ModalHelpers";
+import { permissionChecker } from "../../utils/PermissionChecker";
 
 const { Row, StatefulRow } = Liteframe;
 
@@ -148,21 +150,36 @@ const ModalContent = (viewModel, delegator, handleClose) => {
 
       // Validate file type
       if (!selectedFile.name.endsWith('.csv')) {
-        alert('Please select a CSV file (.csv extension required)');
+        showAlert({
+          title: 'Invalid File Type',
+          message: 'Please select a CSV file (.csv extension required)',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
         e.target.value = ''; // Clear the input
         return;
       }
 
       // Validate file size (max 5MB)
       if (selectedFile.size > 5 * 1024 * 1024) {
-        alert('File size must be less than 5MB');
+        showAlert({
+          title: 'File Too Large',
+          message: 'File size must be less than 5MB',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
         e.target.value = ''; // Clear the input
         return;
       }
 
       // Validate file is not empty
       if (selectedFile.size === 0) {
-        alert('The selected file is empty');
+        showAlert({
+          title: 'Empty File',
+          message: 'The selected file is empty',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
         e.target.value = ''; // Clear the input
         return;
       }
@@ -234,19 +251,36 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           }
         } catch (error) {
           console.error('Error parsing CSV:', error);
-          alert(`Error parsing CSV file: ${error.message}\n\nExpected format:\n- First row: Headers (Product Name, Description, Category, Unit)\n- Subsequent rows: Data values\n- Use commas to separate columns`);
+          showAlert({
+            title: 'Error Parsing CSV',
+            message: `Error parsing CSV file: ${error.message}\n\nExpected format:\n- First row: Headers (Product Name, Description, Category, Unit)\n- Subsequent rows: Data values\n- Use commas to separate columns`,
+            variant: 'error',
+            icon: 'alert-circle-outline'
+          });
           props.setLocalState('file', null);
           props.setLocalState('parsedData', []);
           props.setLocalState('validationResults', []);
         }
       };
       reader.onerror = () => {
-        alert('Error reading file');
+        showAlert({
+          title: 'File Read Error',
+          message: 'Error reading file',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
       };
       reader.readAsText(selectedFile);
     };
 
     const handleImport = async () => {
+      const hasPermission = await permissionChecker.checkPermission('CanImportProducts', {
+        actionName: 'import products'
+      });
+      if (!hasPermission) {
+        return;
+      }
+
       // Filter valid rows
       const validRows = validationResults
         .map((result, index) => ({ result, index }))
@@ -261,7 +295,12 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         .filter(row => row !== null); // Remove any null entries
 
       if (validRows.length === 0) {
-        alert('No valid rows to import. Please fix errors and try again.');
+        showAlert({
+          title: 'No Valid Rows',
+          message: 'No valid rows to import. Please fix errors and try again.',
+          variant: 'warning',
+          icon: 'warning-outline'
+        });
         return;
       }
 
@@ -281,7 +320,12 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         props.setLocalState('importing', false);
       } catch (error) {
         console.error('Import error:', error);
-        alert('Error importing products. Please try again.');
+        showAlert({
+          title: 'Import Failed',
+          message: error.message || 'Error importing products. Please try again.',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
         props.setLocalState('importing', false);
       }
     };

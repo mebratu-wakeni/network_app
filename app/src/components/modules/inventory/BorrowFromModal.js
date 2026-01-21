@@ -4,6 +4,9 @@ import { IconButton, IonIcon } from "../../utils/Icon";
 import { Input } from "../../utils/Input";
 import Label from "../../utils/Label";
 import { DropdownSearch, DropdownSearchItem } from "../../utils/DropdownSearch";
+import { showAlert } from "../../utils/ModalHelpers";
+import { permissionChecker } from "../../utils/PermissionChecker";
+import Badge from "../../utils/Badge";
 
 const { Row, StatefulRow } = Liteframe;
 
@@ -33,11 +36,13 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     const loading = props.viewModel.getState('loading');
     const productList = props.viewModel.getProductList() || [];
     const partnerList = props.viewModel.getPartnerList() || [];
-    
-    // Load partners if not already loaded
-    if (!partnerList || partnerList.length === 0) {
-      props.viewModel.loadPartners();
-    }
+
+    // Data should already be loaded before modal opens (in button click handler)
+    // Just read from state - no loading calls here to avoid infinite re-rendering
+    console.log('[BorrowFromModal] Product list count:', productList.length);
+    console.log('[BorrowFromModal] Partner list count:', partnerList.length);
+    console.log('[BorrowFromModal] Product list sample:', productList.slice(0, 3));
+    console.log('[BorrowFromModal] Partner list sample:', partnerList.slice(0, 3));
     
     const showProductDropdown = props.getLocalState('show-product-dropdown');
     const productSearchQuery = props.getLocalState('product-search-query');
@@ -61,9 +66,9 @@ const ModalContent = (viewModel, delegator, handleClose) => {
              (product.productCode || '').toLowerCase().includes(query);
     });
     
-    // Filter partners based on search query (only show partner type)
+    // Filter partners based on search query
+    // Partners are already filtered by customer_type=supplier from the API
     const filteredPartners = partnerList.filter(partner => {
-      if (partner.type !== 'partner') return false;
       if (!partnerSearchQuery) return true;
       const query = partnerSearchQuery.toLowerCase();
       return (partner.name || '').toLowerCase().includes(query) ||
@@ -100,21 +105,48 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     };
     
     const handleSubmit = async () => {
+      const hasPermission = await permissionChecker.checkPermission('CanReceiveBorrowedFromStock', {
+        actionName: 'borrow stock from partners'
+      });
+      if (!hasPermission) {
+        return;
+      }
+
       // Validate required fields
       if (!selectedPartner) {
-        alert('Please select a partner/customer');
+        showAlert({
+          title: 'Partner Required',
+          message: 'Please select a partner/customer',
+          variant: 'warning',
+          icon: 'warning-outline'
+        });
         return;
       }
       if (!selectedProduct) {
-        alert('Please select a product');
+        showAlert({
+          title: 'Product Required',
+          message: 'Please select a product',
+          variant: 'warning',
+          icon: 'warning-outline'
+        });
         return;
       }
       if (!purchasePrice || parseFloat(purchasePrice) <= 0) {
-        alert('Purchase price is required and must be greater than 0');
+        showAlert({
+          title: 'Invalid Purchase Price',
+          message: 'Purchase price is required and must be greater than 0',
+          variant: 'warning',
+          icon: 'warning-outline'
+        });
         return;
       }
       if (!quantity || parseFloat(quantity) <= 0) {
-        alert('Quantity is required and must be greater than 0');
+        showAlert({
+          title: 'Invalid Quantity',
+          message: 'Quantity is required and must be greater than 0',
+          variant: 'warning',
+          icon: 'warning-outline'
+        });
         return;
       }
       
@@ -123,36 +155,49 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       try {
         // Create inventory item with "borrowed-from" status
         const borrowFromData = {
-          partnerId: selectedPartner.id,
-          partnerName: selectedPartner.name,
-          partnerCode: selectedPartner.code,
-          productId: selectedProduct.id,
-          productCode: selectedProduct.productCode,
+          partnerId: Number(selectedPartner.id),
+          productId: Number(selectedProduct.id),
           purchasePrice: parseFloat(purchasePrice),
           quantity: parseInt(quantity),
           batchNo: batchNumber || null,
           expiryDate: expiryDate || null,
           description: description || null,
-          acquisitionType: 'borrow',
-          borrowDirection: 'from'
+          location: null // Can be added later if needed
         };
         
+        console.log('[BorrowFromModal] Submitting borrow from data:', JSON.stringify(borrowFromData, null, 2));
+        
         // Call ViewModel method to create borrowed-from inventory item
-        await props.viewModel.createBorrowedFromStock(borrowFromData);
+        const result = await props.viewModel.createBorrowedFromStock(borrowFromData);
+        
+        console.log('[BorrowFromModal] Borrow from result:', JSON.stringify(result, null, 2));
+        
+        if (!result || !result.success) {
+          throw new Error(result?.error || 'Failed to create borrowed from stock');
+        }
         
         // Close modal and reload stock
         handleClose();
         props.viewModel.loadStock();
       } catch (error) {
-        console.error('Error creating borrowed from stock:', error);
-        alert(error.message || 'Failed to create borrowed from stock');
+        console.error('[BorrowFromModal] Error creating borrowed from stock:', error);
+        console.error('[BorrowFromModal] Error details:', {
+          message: error.message,
+          stack: error.stack
+        });
+        showAlert({
+          title: 'Error',
+          message: error.message || 'Failed to create borrowed from stock',
+          variant: 'error',
+          icon: 'alert-circle-outline'
+        });
       } finally {
         props.setLocalState('submitting', false);
       }
     };
     
     return Row({ class: 'flex flex-col h-full' }, [
-      Card({ class: 'w-full max-w-5xl mx-auto my-8 flex flex-col max-h-[95vh] overflow-hidden' }, [
+      Card({ class: 'w-full max-w-[1400px] mx-auto my-8 flex flex-col max-h-[95vh] overflow-hidden' }, [
         CardHeader({ class: 'px-6 flex items-center justify-between h-12 border-b border-gray-200 flex-shrink-0' }, [
           Row({ class: 'flex items-center gap-3' }, [
             IonIcon({ name: 'arrow-down-outline', class: 'text-xl text-blue-600' }),
@@ -180,13 +225,51 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                   setOpenState: () => props.setLocalState('show-partner-dropdown', false),
                   class: 'w-full relative',
                   delegator,
-                }, filteredPartners.map(partner => 
-                  DropdownSearchItem({
+                }, filteredPartners.map(partner => {
+                  // Helper to capitalize customer type
+                  const capitalizeCustomerType = (type) => {
+                    if (!type) return 'Supplier';
+                    return type.charAt(0).toUpperCase() + type.slice(1);
+                  };
+                  
+                  // Get badge color based on customer type
+                  const getCustomerTypeBadgeColor = (type) => {
+                    if (type === 'supplier') return 'info';
+                    if (type === 'retailer') return 'success';
+                    if (type === 'both') return 'warning';
+                    return 'default';
+                  };
+                  
+                  const partnerChildren = [
+                    Row({ class: 'flex items-center justify-between gap-2' }, [
+                      Row({ class: 'font-semibold text-gray-900' }, partner.name || 'Unknown'),
+                      Badge({
+                        label: capitalizeCustomerType(partner.customer_type),
+                        tone: getCustomerTypeBadgeColor(partner.customer_type),
+                        class: 'text-xs px-2 py-0.5'
+                      })
+                    ]),
+                    Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, [
+                      ...(partner.contact_person ? [
+                        Row({ class: 'flex items-center gap-1' }, [
+                          IonIcon({ name: 'person-outline', class: 'text-xs' }),
+                          partner.contact_person
+                        ])
+                      ] : []),
+                      ...(partner.contact_person ? [Row({}, '•')] : []),
+                      Row({}, partner.code || 'N/A')
+                    ])
+                  ];
+                  
+                  return DropdownSearchItem({
                     onSelect: () => handlePartnerSelect(partner),
                     key: partner.id,
                     delegator,
-                  }, `${partner.name} (${partner.code || 'N/A'})`)
-                ))
+                    class: 'py-3'
+                  }, [
+                    Row({ class: 'flex flex-col gap-1' }, partnerChildren)
+                  ]);
+                }))
               ]),
               
               // Product Selection
@@ -202,13 +285,41 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                   setOpenState: () => props.setLocalState('show-product-dropdown', false),
                   class: 'w-full relative',
                   delegator,
-                }, filteredProducts.map(product => 
-                  DropdownSearchItem({
+                }, filteredProducts.map(product => {
+                  const productHeaderChildren = [
+                    Row({ class: 'font-semibold text-gray-900' }, product.name || 'Unknown Product')
+                  ];
+                  
+                  if (product.category) {
+                    productHeaderChildren.push(
+                      Row({ class: 'text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded' }, product.category)
+                    );
+                  }
+                  
+                  const productCodeChildren = [
+                    Row({}, `Code: ${product.productCode || product.product_code || 'N/A'}`)
+                  ];
+                  
+                  if (product.unit) {
+                    productCodeChildren.push(
+                      Row({}, `• ${product.unit}`)
+                    );
+                  }
+                  
+                  const productChildren = [
+                    Row({ class: 'flex items-center justify-between gap-2' }, productHeaderChildren),
+                    Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, productCodeChildren)
+                  ];
+                  
+                  return DropdownSearchItem({
                     onSelect: () => handleProductSelect(product),
                     key: product.id,
                     delegator,
-                  }, `${product.name} (${product.productCode || 'N/A'})`)
-                ))
+                    class: 'py-3'
+                  }, [
+                    Row({ class: 'flex flex-col gap-1' }, productChildren)
+                  ]);
+                }))
               ])
             ]),
             
@@ -232,7 +343,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               Row({ class: 'flex flex-col gap-2' }, [
                 Label({ name: 'purchase-price', text: 'Purchase Price *', class: 'text-sm font-medium text-gray-700' }),
                 Row({ class: 'flex items-center gap-2' }, [
-                  Row({ class: 'text-gray-600' }, '$'),
+                  Row({ class: 'text-gray-600' }, 'ETB'),
                   Input({
                     type: 'number',
                     name: 'purchase-price',
@@ -316,7 +427,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
   };
   
   return StatefulRow({
-    stateKeys: ['loading', 'product-list', 'partner-list'],
+    stateKeys: ['loading', 'product-list', 'partner-list', 'product-total-count'],
     viewModel
   }, render);
 };

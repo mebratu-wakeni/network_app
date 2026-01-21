@@ -84,8 +84,10 @@ class InventoryManager {
    */
   async getPartners(token) {
     try {
-      const apiUrl = getApiUrl();
-      const response = await fetch(`${apiUrl}/api/partners?type=partner`, {
+      const url = `${getApiUrl('/customers')}?customer_type=supplier&limit=1000&offset=0`;
+      console.log('[InventoryManager] getPartners - API URL:', url);
+      
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -93,26 +95,47 @@ class InventoryManager {
         }
       });
 
+      console.log('[InventoryManager] getPartners - Response status:', response.status, response.statusText);
+
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[InventoryManager] getPartners - Error response:', errorText);
         throw new Error(`Failed to fetch partners: ${response.statusText}`);
       }
 
       const data = await response.json();
-      return data.partners || [];
+      console.log('[InventoryManager] getPartners - Success, customers count:', data.customers?.length || 0);
+      
+      // Transform customers to partners format - include all relevant fields
+      const partners = (data.customers || []).map(customer => ({
+        id: customer.id,
+        name: customer.name,
+        code: `CUST${String(customer.id).padStart(4, '0')}`, // Generate code if not present
+        type: 'partner',
+        contact_person: customer.contact_person || null,
+        customer_type: customer.customer_type || 'supplier',
+        phone: customer.phone || null,
+        email: customer.email || null
+      }));
+      
+      return partners;
     } catch (error) {
-      console.error('Error fetching partners, using mock data:', error);
-      // Fallback to mock data
-      return this.getMockPartners();
+      console.error('[InventoryManager] getPartners - Error:', error);
+      console.error('[InventoryManager] getPartners - Error details:', {
+        message: error.message,
+        stack: error.stack
+      });
+      throw error; // Don't use mock data, throw error instead
     }
   }
 
   /**
    * Calculate stock statistics from stock list
+   * Uses product-specific expiry_threshold if available, otherwise defaults to 30 days
    */
   calculateStockStats(stockList) {
     const today = new Date();
-    const thirtyDaysFromNow = new Date();
-    thirtyDaysFromNow.setDate(today.getDate() + 30);
+    const DEFAULT_EXPIRY_THRESHOLD = 30;
     const HIGH_VALUE_THRESHOLD = 1000;
 
     const stats = {
@@ -137,8 +160,15 @@ class InventoryManager {
         const expiry = new Date(item.expiryDate);
         if (expiry < today) {
           stats.expired++;
-        } else if (expiry <= thirtyDaysFromNow) {
-          stats.expiringSoon++;
+        } else {
+          // Use product-specific expiry_threshold if available, otherwise default to 30 days
+          const expiryThreshold = item.expiry_threshold || item.product?.expiry_threshold || DEFAULT_EXPIRY_THRESHOLD;
+          const thresholdDate = new Date();
+          thresholdDate.setDate(today.getDate() + expiryThreshold);
+          
+          if (expiry <= thresholdDate) {
+            stats.expiringSoon++;
+          }
         }
       }
     });
@@ -244,41 +274,160 @@ class InventoryManager {
   }
 
   /**
-   * Create a new product
+   * Create a new category
    */
-  async createProduct(productData, token) {
+  async createCategory(categoryData, token) {
     try {
-      const response = await this.apiRequest('/products', {
+      const response = await this.apiRequest('/products/categories', {
         method: 'POST',
-        body: JSON.stringify(productData),
+        body: JSON.stringify(categoryData),
       }, token);
 
       return {
         success: response.ok === true || response.success === true,
+        category: response.category || response.data
+      };
+    } catch (error) {
+      console.error('[Create Category] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new unit
+   */
+  async createUnit(unitData, token) {
+    try {
+      const response = await this.apiRequest('/products/units', {
+        method: 'POST',
+        body: JSON.stringify(unitData),
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        unit: response.unit || response.data
+      };
+    } catch (error) {
+      console.error('[Create Unit] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all categories
+   */
+  async getAllCategories(token) {
+    try {
+      const response = await this.apiRequest('/products/categories', {
+        method: 'GET',
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        categories: response.categories || response.data || []
+      };
+    } catch (error) {
+      console.error('[Get All Categories] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all units
+   */
+  async getAllUnits(token) {
+    try {
+      const response = await this.apiRequest('/products/units', {
+        method: 'GET',
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        units: response.units || response.data || []
+      };
+    } catch (error) {
+      console.error('[Get All Units] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Find category by name
+   */
+  async findCategoryByName(name, token) {
+    try {
+      const encodedName = encodeURIComponent(name);
+      const response = await this.apiRequest(`/products/categories/${encodedName}`, {
+        method: 'GET',
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        category: response.category || response.data
+      };
+    } catch (error) {
+      console.error('[Find Category] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Find unit by name
+   */
+  async findUnitByName(name, token) {
+    try {
+      const encodedName = encodeURIComponent(name);
+      const response = await this.apiRequest(`/products/units/${encodedName}`, {
+        method: 'GET',
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        unit: response.unit || response.data
+      };
+    } catch (error) {
+      console.error('[Find Unit] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new product with auto-generated product code
+   */
+  async createProduct(productData, token) {
+    try {
+      console.log('[Create Product] Sending request with data:', JSON.stringify(productData, null, 2));
+      
+      const response = await this.apiRequest('/products/create', {
+        method: 'POST',
+        body: JSON.stringify(productData),
+      }, token);
+
+      if (!response.ok && !response.success) {
+        const errorMessage = response.error || 'Failed to create product';
+        const error = new Error(errorMessage);
+        if (response.details) {
+          error.details = response.details;
+        }
+        throw error;
+      }
+
+      if (!response.product && !response.data) {
+        throw new Error('Product creation succeeded but no product data returned');
+      }
+
+      return {
+        success: true,
         product: response.product || response.data
       };
     } catch (error) {
-      // Fallback to mock response when API is not available
-      console.log('API not available, using mock create product response');
-      const mockProducts = this.getMockProducts();
-      const maxId = Math.max(...mockProducts.map(p => p.id), 0);
-      const newProduct = {
-        id: maxId + 1,
-        product_code: String(maxId + 1).padStart(4, '0'),
-        name: productData.name || '',
-        description: productData.description || '',
-        category: productData.category || '',
-        unit: productData.unit || '',
-        category_id: 61,
-        unit_id: 106,
-        created_at: new Date().toISOString(),
-        last_updated: new Date().toISOString(),
-        sync_status: 'pending'
-      };
-      return {
-        success: true,
-        product: newProduct
-      };
+      console.error('[Create Product] Error:', error.message);
+      if (error.details) {
+        console.error('[Create Product] Validation details:', error.details);
+      }
+      // Re-throw the error instead of falling back to mock data
+      // This ensures the frontend knows the product wasn't actually created
+      throw error;
     }
   }
 
@@ -287,35 +436,140 @@ class InventoryManager {
    */
   async updateProduct(productId, productData, token) {
     try {
+      console.log('[Update Product] Sending request with data:', JSON.stringify(productData, null, 2));
+      
       const response = await this.apiRequest(`/products/${productId}`, {
         method: 'PUT',
         body: JSON.stringify(productData),
       }, token);
 
+      if (!response.ok && !response.success) {
+        const errorMessage = response.error || 'Failed to update product';
+        const error = new Error(errorMessage);
+        if (response.details) {
+          error.details = response.details;
+        }
+        throw error;
+      }
+
+      if (!response.product && !response.data) {
+        throw new Error('Product update succeeded but no product data returned');
+      }
+
       return {
-        success: response.ok === true || response.success === true,
+        success: true,
         product: response.product || response.data
       };
     } catch (error) {
-      // Fallback to mock response when API is not available
-      console.log('API not available, using mock update product response');
-      const mockProducts = this.getMockProducts();
-      const existingProduct = mockProducts.find(p => p.id === productId);
-      if (!existingProduct) {
-        return {
-          success: false,
-          error: 'Product not found'
-        };
+      console.error('[Update Product] Error:', error.message);
+      if (error.details) {
+        console.error('[Update Product] Validation details:', error.details);
       }
-      const updatedProduct = {
-        ...existingProduct,
-        ...productData,
-        last_updated: new Date().toISOString()
-      };
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a product
+   */
+  async deleteProduct(productId, token) {
+    try {
+      console.log('[Delete Product] Deleting product:', productId);
+      
+      const response = await this.apiRequest(`/products/${productId}`, {
+        method: 'DELETE',
+      }, token);
+
+      if (!response.ok && !response.success) {
+        throw new Error(response.error || 'Failed to delete product');
+      }
+
       return {
         success: true,
-        product: updatedProduct
+        message: response.message || 'Product deleted successfully'
       };
+    } catch (error) {
+      console.error('[Delete Product] Error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Export products to CSV
+   */
+  async exportProducts(searchParams, token) {
+    try {
+      const params = new URLSearchParams({
+        limit: searchParams.limit || 10000,
+        offset: searchParams.offset || 0,
+        search: searchParams.search || '',
+        sortBy: searchParams.sortBy || 'id',
+        orderBy: searchParams.orderBy || 'desc'
+      });
+      
+      const url = `${getApiUrl('/products/export')}?${params.toString()}`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'text/csv'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to export products: ${response.statusText}`);
+      }
+
+      const csvContent = await response.text();
+      
+      return {
+        success: true,
+        csvContent: csvContent
+      };
+    } catch (error) {
+      console.error('[Export Products] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Export stock/inventories to CSV
+   */
+  async exportStock(searchParams, token) {
+    try {
+      const params = new URLSearchParams({
+        limit: searchParams.limit || 10000,
+        offset: searchParams.offset || 0,
+        search: searchParams.search || '',
+        filter: searchParams.filter || 'all',
+        sortBy: searchParams.sortBy || 'id',
+        orderBy: searchParams.orderBy || 'desc'
+      });
+      
+      const url = `${getApiUrl('/inventories/export')}?${params.toString()}`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'text/csv'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to export stock: ${response.statusText}`);
+      }
+
+      const csvContent = await response.text();
+      
+      return {
+        success: true,
+        csvContent: csvContent
+      };
+    } catch (error) {
+      console.error('[Export Stock] Error:', error);
+      throw error;
     }
   }
 
@@ -372,7 +626,7 @@ class InventoryManager {
    */
   async getStock(searchParams, token) {
     try {
-      const response = await this.apiRequest('/stock', {
+      const response = await this.apiRequest('/inventories', {
         method: 'POST',
         body: JSON.stringify(searchParams),
       }, token);
@@ -384,59 +638,23 @@ class InventoryManager {
         stats: response.stats || null
       };
     } catch (error) {
-      // Fallback to mock data when API is not available
-      console.log('API not available, using mock stock data');
-      const mockStock = this.getMockStock();
-      const { limit = 10, offset = 0, search = '', filter = 'all' } = searchParams || {};
-      
-      // Apply filter
-      let filtered = mockStock;
-      if (filter !== 'all') {
-        const today = new Date();
-        const thirtyDaysFromNow = new Date();
-        thirtyDaysFromNow.setDate(today.getDate() + 30);
-        const HIGH_VALUE_THRESHOLD = 1000;
-
-        filtered = mockStock.filter(item => {
-          if (filter === 'out-of-stock') return item.quantity === 0;
-          if (filter === 'low-stock') return item.quantity > 0 && item.quantity < 50;
-          if (filter === 'borrowed-from') return item.status === 'borrowed-from' || item.status === 'borrowed';
-          if (filter === 'borrowed-to') return item.status === 'borrowed-to';
-          if (filter === 'high-value') return item.unitCost >= HIGH_VALUE_THRESHOLD;
-          if (filter === 'expiring-soon' && item.expiryDate) {
-            const expiry = new Date(item.expiryDate);
-            return expiry >= today && expiry <= thirtyDaysFromNow;
-          }
-          if (filter === 'expired' && item.expiryDate) {
-            const expiry = new Date(item.expiryDate);
-            return expiry < today;
-          }
-          return true;
-        });
-      }
-      
-      // Apply search filter
-      if (search) {
-        const query = search.toLowerCase();
-        filtered = filtered.filter(item => 
-          (item.productCode || '').toLowerCase().includes(query) ||
-          (item.name || '').toLowerCase().includes(query) ||
-          (item.location || '').toLowerCase().includes(query)
-        );
-      }
-      
-      // Calculate stats
-      const stats = this.calculateStockStats(mockStock);
-      
-      // Apply pagination
-      const total = filtered.length;
-      const paginated = filtered.slice(offset, offset + limit);
-      
+      console.error('[InventoryManager] Error fetching stock:', error);
+      // Return empty result instead of mock data
       return {
-        success: true,
-        stock: paginated,
-        total: total,
-        stats: stats
+        success: false,
+        stock: [],
+        total: 0,
+        stats: {
+          total: 0,
+          outOfStock: 0,
+          lowStock: 0,
+          expiringSoon: 0,
+          expired: 0,
+          borrowedFrom: 0,
+          borrowedTo: 0,
+          highValue: 0
+        },
+        error: error.message || 'Failed to fetch stock'
       };
     }
   }
@@ -446,7 +664,7 @@ class InventoryManager {
    */
   async adjustStock(stockId, adjustmentData, token) {
     try {
-      const response = await this.apiRequest(`/stock/${stockId}/adjust`, {
+      const response = await this.apiRequest(`/inventories/${stockId}/adjust`, {
         method: 'POST',
         body: JSON.stringify(adjustmentData),
       }, token);
@@ -469,48 +687,31 @@ class InventoryManager {
    */
   async createBorrowedFromStock(borrowData, token) {
     try {
-      const response = await this.apiRequest('/stock/borrow-from', {
+      console.log('[InventoryManager] createBorrowedFromStock - Payload:', JSON.stringify(borrowData, null, 2));
+      
+      const response = await this.apiRequest('/inventories/borrow-from', {
         method: 'POST',
         body: JSON.stringify(borrowData),
       }, token);
 
+      console.log('[InventoryManager] createBorrowedFromStock - Response:', JSON.stringify(response, null, 2));
+
       return {
         success: response.ok === true || response.success === true,
-        stock: response.stock || response.data
+        borrowFrom: response.borrowFrom || response.data
       };
     } catch (error) {
-      // Fallback to mock response when API is not available
-      console.log('API not available, using mock create borrowed from stock response');
-      const mockStock = this.getMockStock();
-      const maxId = Math.max(...mockStock.map(s => s.id), 0);
-      
-      // Generate inventory code
-      const inventoryCode = `INV-${String(maxId + 1).padStart(6, '0')}`;
-      
-      const newStock = {
-        id: maxId + 1,
-        inventory_code: inventoryCode,
-        product_id: borrowData.productId,
-        productCode: borrowData.productCode,
-        name: borrowData.productName || 'Product',
-        category: borrowData.category || '',
-        location: borrowData.location || 'A-01',
-        quantity: borrowData.quantity || 0,
-        unit: borrowData.unit || 'Unit',
-        unitCost: borrowData.purchasePrice || 0,
-        sellingPrice: borrowData.sellingPrice || null,
-        batchNo: borrowData.batchNo || null,
-        expiryDate: borrowData.expiryDate || null,
-        purchaseDate: new Date().toISOString().split('T')[0],
-        acquisitionType: 'borrow',
-        status: 'borrowed-from',
-        borrowDirection: 'from',
-        settlement_status: 'unsettled'
-      };
+      console.error('[InventoryManager] createBorrowedFromStock - Error:', error);
+      console.error('[InventoryManager] createBorrowedFromStock - Payload:', JSON.stringify(borrowData, null, 2));
+      console.error('[InventoryManager] createBorrowedFromStock - Error details:', {
+        message: error.message,
+        stack: error.stack
+      });
       
       return {
-        success: true,
-        stock: newStock
+        success: false,
+        error: error.message || 'Failed to create borrowed from stock',
+        details: error.details || null
       };
     }
   }
@@ -564,11 +765,14 @@ class InventoryManager {
   /**
    * Bulk import stock
    */
-  async bulkImportStock(stockItems, token) {
+  async bulkImportStock(stockItems, reason, token) {
     try {
-      const response = await this.apiRequest('/stock/bulk-import', {
+      const response = await this.apiRequest('/inventories/bulk-import', {
         method: 'POST',
-        body: JSON.stringify({ stockItems }),
+        body: JSON.stringify({ 
+          stockItems,
+          reason: reason || 'Bulk Import'
+        }),
       }, token);
 
       return {
@@ -605,7 +809,7 @@ class InventoryManager {
    */
   async updateStock(stockId, stockData, token) {
     try {
-      const response = await this.apiRequest(`/stock/${stockId}`, {
+      const response = await this.apiRequest(`/inventories/${stockId}`, {
         method: 'PUT',
         body: JSON.stringify(stockData),
       }, token);
@@ -621,6 +825,114 @@ class InventoryManager {
         success: true,
         stock: { id: stockId, ...stockData }
       };
+    }
+  }
+
+  /**
+   * Get bin card transactions for a product
+   * @param {number} productId - Product ID
+   * @param {Object} params - Query parameters (limit, offset, sortBy, orderBy, search, filter)
+   * @param {string} token - Auth token
+   * @returns {Object} - { success, transactions, total }
+   */
+  async getBinCardsByProductId(productId, params = {}, token) {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params.limit) queryParams.append('limit', params.limit);
+      if (params.offset) queryParams.append('offset', params.offset);
+      if (params.sortBy) queryParams.append('sortBy', params.sortBy);
+      if (params.orderBy) queryParams.append('orderBy', params.orderBy);
+      if (params.search) queryParams.append('search', params.search);
+      
+      // Add filter parameters
+      if (params.filter) {
+        if (params.filter.transactionType && params.filter.transactionType.length > 0) {
+          queryParams.append('transactionType', params.filter.transactionType.join(','));
+        }
+        if (params.filter.reason) queryParams.append('reason', params.filter.reason);
+        if (params.filter.dateFrom) queryParams.append('dateFrom', params.filter.dateFrom);
+        if (params.filter.dateTo) queryParams.append('dateTo', params.filter.dateTo);
+        if (params.filter.location) queryParams.append('location', params.filter.location);
+      }
+
+      const queryString = queryParams.toString();
+      const url = `/bin-cards/product/${productId}${queryString ? `?${queryString}` : ''}`;
+
+      const response = await this.apiRequest(url, {
+        method: 'GET',
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        transactions: response.transactions || [],
+        total: response.total || 0
+      };
+    } catch (error) {
+      console.error('[Get Bin Cards] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Export bin card transactions to CSV
+   * @param {number} productId - Product ID
+   * @param {Object} params - Query parameters (limit, offset, sortBy, orderBy, search, filter)
+   * @param {string} token - Auth token
+   * @returns {Object} - { success, csvContent }
+   */
+  async exportBinCards(productId, params = {}, token) {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params.limit) queryParams.append('limit', params.limit);
+      if (params.offset) queryParams.append('offset', params.offset);
+      if (params.sortBy) queryParams.append('sortBy', params.sortBy);
+      if (params.orderBy) queryParams.append('orderBy', params.orderBy);
+      if (params.search) queryParams.append('search', params.search);
+      
+      // Add filter parameters
+      if (params.filter) {
+        if (params.filter.transactionType && params.filter.transactionType.length > 0) {
+          queryParams.append('transactionType', params.filter.transactionType.join(','));
+        }
+        if (params.filter.reason) queryParams.append('reason', params.filter.reason);
+        if (params.filter.dateFrom) queryParams.append('dateFrom', params.filter.dateFrom);
+        if (params.filter.dateTo) queryParams.append('dateTo', params.filter.dateTo);
+        if (params.filter.location) queryParams.append('location', params.filter.location);
+      }
+
+      const queryString = queryParams.toString();
+      const url = `/bin-cards/product/${productId}/export${queryString ? `?${queryString}` : ''}`;
+
+      const response = await fetch(getApiUrl(url), {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText || `HTTP ${response.status}` };
+        }
+        const error = new Error(errorData.error || errorData.message || `HTTP ${response.status}`);
+        if (errorData.details) error.details = errorData.details;
+        throw error;
+      }
+
+      const csvContent = await response.text();
+
+      return {
+        success: true,
+        csvContent
+      };
+    } catch (error) {
+      console.error('[Export Bin Cards] Error:', error);
+      throw error;
     }
   }
 }

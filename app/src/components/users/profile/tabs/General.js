@@ -22,15 +22,15 @@ export default function UserGeneralTab(props) {
     ============================== */
     Row({
       class: `flex-1 flex flex-col
-        bg-gray-50
-        border border-gray-200
-        rounded-lg
-        p-6
-        // gap-6
+        bg-white
+        border border-gray-300
+        rounded-xl
+        shadow-sm
+        p-8
       ` }, [
-      Row({ class: 'text-sm font-medium text-gray-800 -mb-4' }, 'Identity'),
-      Row({ class: 'border-t border-gray-200'}),
-      Row({ class: 'grid grid-cols-1 gap-x-12 gap-y-4 text-sm ' }, [
+      Row({ class: 'text-base font-semibold text-gray-900 mb-2' }, 'Identity'),
+      Row({ class: 'border-t border-gray-200 -mx-8 px-8 pt-4'}),
+      Row({ class: 'grid grid-cols-1 gap-y-5' }, [
 
         InfoRow('Username', user.username),
         InfoRow('Full Name', user.full_name),
@@ -45,27 +45,30 @@ export default function UserGeneralTab(props) {
        Editable Personal Details
     ============================== */
     Row({
-      class: `flex-1 flex flex-col gap-6 pt-6 border-t border-gray-200 flex flex-col gap-4
-        bg-gray-50
-        border border-gray-200
-        rounded-lg
-        p-6
+      class: `flex-1 flex flex-col
+        bg-white
+        border border-gray-300
+        rounded-xl
+        shadow-sm
+        p-8
         ` }, [
-      Row({ class: 'text-sm font-medium text-gray-800 -mb-4' }, 'Personal Details'),
-      Row({ class: 'border-t border-gray-200' }),
-      FieldRow(
-        'Display Name:',
-        Input({ placeholder: 'Name', value: form.display_name || user.display_name || '', onInput: (e) => viewModel.updateGeneralForm('display_name', e.target.value.trim()) })
-      ),
+      Row({ class: 'text-base font-semibold text-gray-900 mb-2' }, 'Personal Details'),
+      Row({ class: 'border-t border-gray-200 -mx-8 px-8 pt-4' }),
+      Row({ class: 'flex flex-col gap-5 mt-4' }, [
+        FieldRow(
+          'Display Name:',
+          Input({ placeholder: 'Name', value: form.display_name || user.display_name || '', onInput: (e) => viewModel.updateGeneralForm('display_name', e.target.value.trim()) })
+        ),
 
-      FieldRow(
-        'Phone Number:',
-        Input({ placeholder: '+251 ...', value: form.phone || user.phone || '', onInput: e => viewModel.updateGeneralForm('phone', e.target.value) })
-      ),
-      FieldRow(
-        'Email:',
-        Input({ placeholder: 'johndoe@example.com', value: form.email || user.email || '', onInput: e => viewModel.updateGeneralForm('email', e.target.value) })
-      ),
+        FieldRow(
+          'Phone Number:',
+          Input({ placeholder: '+251 ...', value: form.phone || user.phone || '', onInput: e => viewModel.updateGeneralForm('phone', e.target.value) })
+        ),
+        FieldRow(
+          'Email:',
+          Input({ placeholder: 'johndoe@example.com', value: form.email || user.email || '', onInput: e => viewModel.updateGeneralForm('email', e.target.value) })
+        ),
+      ]),
       FormActions(Button({ variant: 'primary', onClick: handleSave }, 'Save Changes'))
     ])
   ]);
@@ -76,9 +79,9 @@ export default function UserGeneralTab(props) {
 ============================== */
 
 function InfoRow(label, value) {
-  return Row({ class: 'flex gap-4' }, [
-    Row({ class: 'w-40 text-gray-500' }, label),
-    Row({ class: 'text-gray-800' }, value)
+  return Row({ class: 'flex gap-6' }, [
+    Row({ class: 'w-44 text-sm font-medium text-gray-600' }, label),
+    Row({ class: 'text-sm text-gray-900' }, value)
   ]);
 }
 
@@ -90,9 +93,9 @@ function InfoRow(label, value) {
 // }
 export function FieldRow(label, field) {
   return Row(
-    { class: 'grid grid-cols-[160px_1fr] gap-6 items-center' },
+    { class: 'grid grid-cols-[180px_1fr] gap-6 items-center' },
     [
-      Row({ class: 'text-sm text-gray-600' }, label),
+      Row({ class: 'text-sm font-medium text-gray-700' }, label),
 
       // width responsibility lives here
       Row(
@@ -125,7 +128,7 @@ const inputClass = `
 export function FormActions(actions) {
   return Row(
     {
-      class: 'grid grid-cols-[160px_1fr] gap-6 pt-6'
+      class: 'grid grid-cols-[180px_1fr] gap-6 pt-4'
     },
     [
       Row(), // empty label column

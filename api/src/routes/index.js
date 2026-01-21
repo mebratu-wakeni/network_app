@@ -3,6 +3,9 @@ import testItems from '../modules/testItems/testItems.routes.js'
 import auth from '../modules/auth/auth.routes.js'
 import users from '../modules/users/users.routes.js'
 import products from '../modules/inventory/products.routes.js'
+import inventories from '../modules/inventory/inventories.routes.js'
+import binCards from '../modules/inventory/binCards.routes.js'
+import customers from '../modules/customers/customers.routes.js'
 
 const router = Router()
 
@@ -21,6 +24,9 @@ router.use('/auth', auth)
 router.use('/test-items', testItems)
 router.use('/users', users)
 router.use('/products', products)
+router.use('/inventories', inventories)
+router.use('/bin-cards', binCards)
+router.use('/customers', customers)
 
 export default router
 

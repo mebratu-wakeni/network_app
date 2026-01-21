@@ -88,13 +88,20 @@ const TableRow = (props, children) => {
 // --- TableHeaderCell (<th>) ---
 
 const TableHCell = (props, children) => {
-  const { class: className = '' } = props;
+  const { class: className = '', onClick, delegator } = props;
+
+  let events = {};
+  if (onClick) {
+    events['click'] = onClick;
+  }
   return Row({
     tagType: 'th',
     // Sticky positioning: each th cell sticks to top of scrollable container
     // Use a solid white background and slightly higher z so header overlays rows reliably.
     class: `px-6 py-5 text-left text-xs font-medium text-gray-600 uppercase tracking-wider sticky top-0 z-20 bg-white ${className}`,
-    attributes: { scope: 'col' }
+    attributes: { scope: 'col' },
+    events: events,
+    delegator,
   }, children);
 };
 

@@ -19,6 +19,14 @@ export const seed = async (knex) => {
     { key: 'CanSeeProductDetails', description: 'Can view product details and information' },
     { key: 'CanEditProductDetails', description: 'Can edit product details and information' },
     
+    // Customer management rules
+    { key: 'CanSeeCustomers', description: 'Can view customer details and information' },
+    { key: 'CanAddCustomer', description: 'Can add new customers' },
+    { key: 'CanEditCustomer', description: 'Can edit customer details and information' },
+    { key: 'CanDeleteCustomer', description: 'Can delete customers' },
+    { key: 'CanImportCustomers', description: 'Can import customers via bulk import' },
+    { key: 'CanExportCustomers', description: 'Can export customer data' },
+    
     // Stock/Inventory management rules
     { key: 'CanImportStock', description: 'Can import stock via bulk import' },
     { key: 'CanExportStock', description: 'Can export stock/inventory data' },
@@ -57,6 +65,7 @@ export const seed = async (knex) => {
   const allRuleIds = insertedRules.map(r => r.id)
   const userManagementRuleIds = insertedRules.filter(r => r.key.startsWith('CanSeeUsers') || r.key.startsWith('CanEditUsers')).map(r => r.id)
   const productRuleIds = insertedRules.filter(r => r.key.startsWith('CanAddProduct') || r.key.startsWith('CanImportProducts') || r.key.startsWith('CanExportProducts') || r.key.startsWith('CanSeeProductDetails') || r.key.startsWith('CanEditProductDetails')).map(r => r.id)
+  const customerRuleIds = insertedRules.filter(r => r.key.startsWith('CanSeeCustomers') || r.key.startsWith('CanAddCustomer') || r.key.startsWith('CanEditCustomer') || r.key.startsWith('CanDeleteCustomer') || r.key.startsWith('CanImportCustomers') || r.key.startsWith('CanExportCustomers')).map(r => r.id)
   const stockRuleIds = insertedRules.filter(r => r.key.startsWith('CanImportStock') || r.key.startsWith('CanExportStock') || r.key.startsWith('CanSeeStock') || r.key.startsWith('CanEditStock') || r.key.startsWith('CanAdjustStock') || r.key.startsWith('CanTransferItem') || r.key.startsWith('CanReceiveBorrowed') || r.key.startsWith('CanReturnBorrowed')).map(r => r.id)
   const stockViewRuleIds = insertedRules.filter(r => r.key === 'CanSeeStockDashboard' || r.key === 'CanSeeTotalStockStat' || r.key === 'CanSeeExpiredStockStat' || r.key === 'CanSeeHighValueStockStat' || r.key === 'CanSeeStockItemDetails').map(r => r.id)
   const stockOperationsRuleIds = [...stockViewRuleIds, ...insertedRules.filter(r => r.key === 'CanEditStockItemDetails' || r.key === 'CanAdjustStockItemQuantities' || r.key === 'CanTransferItemShelf').map(r => r.id)]
@@ -66,8 +75,8 @@ export const seed = async (knex) => {
   // Admin -> all rules
   for (const rid of allRuleIds) roleRules.push({ role_id: roleIdByName.get('Admin'), rule_id: rid })
   
-  // Manager -> all inventory rules (products + stock), no user management
-  for (const rid of [...productRuleIds, ...stockRuleIds]) roleRules.push({ role_id: roleIdByName.get('Manager'), rule_id: rid })
+  // Manager -> all inventory rules (products + customers + stock), no user management
+  for (const rid of [...productRuleIds, ...customerRuleIds, ...stockRuleIds]) roleRules.push({ role_id: roleIdByName.get('Manager'), rule_id: rid })
   
   // Product Manager -> all product rules
   for (const rid of productRuleIds) roleRules.push({ role_id: roleIdByName.get('Product Manager'), rule_id: rid })
@@ -93,7 +102,18 @@ export const seed = async (knex) => {
     return bcrypt.hash(password, saltRounds)
   }
 
-  await knex('users').where({username: 'admin'}).del();
+  // Check if admin user exists
+  const existingAdmin = await knex('users').where({username: 'admin'}).first();
+  
+  // If admin exists, set bin_cards.created_by to NULL for records referencing this user
+  // to avoid foreign key constraint violation when deleting/updating
+  if (existingAdmin) {
+    await knex('bin_cards').where({created_by: existingAdmin.id}).update({created_by: null});
+    // Also remove existing role assignments
+    await knex('user_roles').where({user_id: existingAdmin.id}).del();
+    // Delete the user
+    await knex('users').where({username: 'admin'}).del();
+  }
 
   // create admin user 
   const adminUser = {

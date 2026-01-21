@@ -7,11 +7,14 @@ import { Table, TableBody, TableHeader, TableHCell, TableRow, TableDCell } from 
 import Dropdown from "../../../utils/Dropdown";
 import { ActionDropdown, ActionItem } from "../../../utils/Action";
 import Drawer from "../../../shared/ExampleDrawer";
-import { CardHeader } from "../../../utils/Card";
+import { CardHeader, Card } from "../../../utils/Card";
 import { DropdownSearch } from "../../../utils/DropdownSearch";
 import Modal from "../../../shared/Modal";
 import ModalContent from "../CreateProductModal";
 import ImportModalContent from "../ImportProductsModal";
+import { showConfirmation } from "../../../utils/ModalHelpers";
+import { permissionChecker } from "../../../utils/PermissionChecker";
+import { formatDateDDMMYYYY } from "../../../utils/DateUtils";
 
 const { Row } = Liteframe;
 
@@ -37,50 +40,68 @@ export function Products(props) {
   props.ensureLocalStateKey('searchTimeout', null);
   
   // Initialize search input value only once, then keep it in sync manually
+  // const searchInputValueInitialized = props.getLocalState('searchInputValueInitialized');
+  props.ensureLocalStateKey('searchInputValueInitialized', false);
   const searchInputValueInitialized = props.getLocalState('searchInputValueInitialized');
-  if (!searchInputValueInitialized) {
+
+  // if (!searchInputValueInitialized) {
+  //   props.setLocalState('searchInputValue', searchQuery || '');
+  //   props.setLocalState('searchInputValueInitialized', true);
+  // }
+
+  const handleSearchFocusIn = () => {
     props.setLocalState('searchInputValue', searchQuery || '');
     props.setLocalState('searchInputValueInitialized', true);
+  }
+
+  const handleSearchFocusOut = () => {
+    props.setLocalState('searchInputValueInitialized', false);
   }
   
   const selectedRowId = props.getLocalState('selectedRowId');
   const searchInputValue = props.getLocalState('searchInputValue') || '';
 
+  let timeout;
+
+  console.log('newQuery', searchInputValue);
+
   const handleSearchChange = (e) => {
     const newQuery = e.target.value;
-    console.log('newQuery', newQuery);
-    // Update local state immediately for input value
+    
+    // Update local state immediately for input value (single re-render)
     props.setLocalState('searchInputValue', newQuery);
-    // Update ViewModel state for actual search
-    props.viewModel.updateProductSearchQuery(newQuery);
     
     // Clear existing timeout
-    const existingTimeout = props.getLocalState('searchTimeout');
-    if (existingTimeout) {
-      clearTimeout(existingTimeout);
+    // const existingTimeout = props.getLocalState('searchTimeout');
+    if (timeout) {
+      clearTimeout(timeout);
     }
-
-    console.log('product-limit', tableConfig.limit);
     
-    // If search is cleared, reload immediately
+    // If search is cleared, update ViewModel and reload immediately
     if (!newQuery || newQuery.trim() === '') {
+      props.viewModel.updateProductSearchQuery('');
       props.viewModel.loadProducts();
-      props.setLocalState('searchTimeout', null);
+      // props.setLocalState('searchTimeout', null);
+      timeout = null;
       return;
     }
     
-    // Debounce: wait 500ms after user stops typing before searching
-    const timeout = setTimeout(() => {
+    // Debounce: wait 500ms after user stops typing before updating ViewModel and searching
+    // Defer ViewModel updates (which trigger 2 updateState calls) to avoid complex re-renders during typing
+    // This prevents input from losing focus while user is actively typing
+    timeout = setTimeout(() => {
+      props.viewModel.updateProductSearchQuery(newQuery);
       props.viewModel.loadProducts();
-      props.setLocalState('searchTimeout', null);
+      // props.setLocalState('searchTimeout', null);
+      timeout = null;
     }, 500);
     
-    props.setLocalState('searchTimeout', timeout);
+    // props.setLocalState('searchTimeout', timeout);
   };
 
   return Row({ class: 'w-full flex-1 flex flex-col overflow-hidden'}, [
-    loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'Loading products...'),
-    !loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'No products found'),
+    !searchInputValueInitialized && loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'Loading products...'),
+    !searchInputValueInitialized && !loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'No products found'),
     
     // Header Section with Actions
     Row({ class: 'flex items-center justify-between gap-6 p-6 border-b border-gray-200' }, [
@@ -88,7 +109,14 @@ export function Products(props) {
         Button({ 
           variant: 'primary', 
           class: 'text-nowrap flex items-center gap-2',
-          onClick: () => openAddProductModal(props)
+          onClick: async () => {
+            const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
+              actionName: 'add products'
+            });
+            if (hasPermission) {
+              openAddProductModal(props);
+            }
+          }
         }, [
           IonIcon({ name: 'add-outline', class: 'text-lg text-white' }),
           'Add Product'
@@ -96,7 +124,14 @@ export function Products(props) {
         Button({ 
           variant: 'outline', 
           class: 'text-nowrap flex items-center gap-2',
-          onClick: () => openImportProductsModal(props)
+          onClick: async () => {
+            const hasPermission = await permissionChecker.checkPermission('CanImportProducts', {
+              actionName: 'import products'
+            });
+            if (hasPermission) {
+              openImportProductsModal(props);
+            }
+          }
         }, [
           IonIcon({ name: 'cloud-upload-outline', class: 'text-lg' }),
           'Import Products'
@@ -105,7 +140,14 @@ export function Products(props) {
       Button({ 
         variant: 'secondary', 
         class: 'text-nowrap flex items-center gap-2',
-        onClick: () => handleExportCSV(props)
+        onClick: async () => {
+          const hasPermission = await permissionChecker.checkPermission('CanExportProducts', {
+            actionName: 'export products'
+          });
+          if (hasPermission) {
+            handleExportCSV(props);
+          }
+        }
       }, [
         IonIcon({ name: 'download-outline', class: 'text-lg' }),
         'Export CSV'
@@ -124,7 +166,11 @@ export function Products(props) {
             placeholder: 'Search products by code, name, or category...', 
             class: 'pl-10 pr-4',
             value: searchInputValue,
-            onInput: handleSearchChange
+            onInput: handleSearchChange,
+            focusIn: handleSearchFocusIn,
+            focusOut: handleSearchFocusOut,
+            // name: 'product-search-input',
+            // id: 'product-search-input'
           })
         ])
       ]),
@@ -196,16 +242,38 @@ function ProductTable(props) {
   props.ensureLocalStateKey('selectedRowId', null);
   const selectedRowId = props.getLocalState('selectedRowId')
   const actionId = props.getLocalState('actionId');
+
+  const sortIcon = (column) => {
+    const orderBy = props.viewModel.getState('product-table-config').orderBy;
+    const sortBy = props.viewModel.getState('product-table-config').sortBy;
+    if (column === sortBy ) {
+      return IonIcon({ name: `${orderBy === 'asc' ? 'arrow-up-outline' : 'arrow-down-outline'}`, class: 'text-xs ml-2 font-semibold' });
+    }
+    return false;
+  };
+  
   return Table({ 
     class: 'flex-1 flex flex-col min-h-0', 
     getOpenActionState: () => props.getLocalState('actionId'), 
     setOpenActionState: () => props.setLocalState('actionId', null)  
   }, [
     TableHeader({ class: 'sticky top-0 z-10' }, [ // 'sticky top-12 z-10 mb-10'
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, "Code"),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, "Description/Name"),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, "Category"),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, "Unit"),
+      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('id') }, [
+        'Code',
+        sortIcon('id') // product_code and id are related
+      ]),
+      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('name') }, [
+        'Description/Name',
+        sortIcon('name')
+      ]),
+      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('category') }, [
+        'Category',
+        sortIcon('category')
+      ]),
+      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('unit') }, [
+        'Unit',
+        sortIcon('unit')
+      ]),
       TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase tracking-wide' }, "Action"),      
     ]),
     TableBody({ class: 'flex-1 overflow-y-auto'}, 
@@ -224,31 +292,72 @@ function ProductTable(props) {
           ActionItem({
             label: 'Edit',
             icon: 'create-outline',
-            onClick: () => {
-              props.setLocalState('selectedRowId', row.id);
-              props.viewModel.openProductDrawer(row, 'details');
-              props.setLocalState('actionId', null);
+            onClick: async () => {
+              const hasPermission = await permissionChecker.checkPermission('CanEditProductDetails', {
+                actionName: 'edit products'
+              });
+              if (hasPermission) {
+                props.setLocalState('selectedRowId', row.id);
+                props.viewModel.openProductDrawer(row, 'details');
+                props.setLocalState('actionId', null);
+              } else {
+                props.setLocalState('actionId', null);
+              }
             }
           }),
           ActionItem({
             label: 'Bin Card', 
             icon: 'reader-outline',
             danger: false,
-            onClick: () => {
-              props.setLocalState('selectedRowId', row.id);
-              props.viewModel.openProductDrawer(row, 'bin-card');
-              props.setLocalState('actionId', null);
+            onClick: async () => {
+              const hasPermission = await permissionChecker.checkPermission('CanSeeProductDetails', {
+                actionName: 'view bin card'
+              });
+              if (hasPermission) {
+                props.setLocalState('selectedRowId', row.id);
+                props.viewModel.openProductDrawer(row, 'bin-card');
+                props.setLocalState('actionId', null);
+              } else {
+                props.setLocalState('actionId', null);
+              }
             }
           }),
-          // ActionItem({
-          //   label: 'Delete',
-          //   danger: true,
-          //   onClick: () => {
-          //     // deactivateUser(product);
-          //     props.setLocalState('actionId', null)
-          //     // viewModel.updateState('openActionId', null);
-          //   }
-          // })
+          ActionItem({
+            label: 'Delete',
+            icon: 'trash-outline',
+            danger: true,
+            onClick: async () => {
+              const hasPermission = await permissionChecker.checkPermission('CanEditProductDetails', {
+                actionName: 'delete products'
+              });
+              if (!hasPermission) {
+                props.setLocalState('actionId', null);
+                return;
+              }
+
+              const confirmed = await showConfirmation({
+                title: 'Delete Product',
+                message: `Are you sure you want to delete "${row.name}"? This action cannot be undone.`,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+                variant: 'danger',
+                icon: 'trash-outline'
+              });
+              
+              if (confirmed) {
+                try {
+                  await props.viewModel.deleteProduct(row.id);
+                  props.setLocalState('actionId', null);
+                } catch (error) {
+                  // Error is handled by viewModel and displayed via error state
+                  console.error('Error deleting product:', error);
+                  props.setLocalState('actionId', null);
+                }
+              } else {
+                props.setLocalState('actionId', null);
+              }
+            }
+          })
         ]),
 
       ]))
@@ -265,7 +374,22 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
   const productName = productDetailsForm.name || '';
   const productDescription = productDetailsForm.description || '';
   const productCategory = productDetailsForm.category || '';
+  const productCategoryId = productDetailsForm.category_id || null;
   const productUnit = productDetailsForm.unit || '';
+  const productUnitId = productDetailsForm.unit_id || null;
+  const productExpiryThreshold = productDetailsForm.expiry_threshold || 30;
+  
+  // Get categories and units from ViewModel
+  const categories = props.viewModel.getCategoryList();
+  const units = props.viewModel.getUnitList();
+  
+  // Load categories and units if not already loaded
+  if (categories.length === 0) {
+    props.viewModel.loadCategories();
+  }
+  if (units.length === 0) {
+    props.viewModel.loadUnits();
+  }
   
   // Inline form states (UI-only, can stay local)
   props.ensureLocalStateKey('show-new-category-form', false);
@@ -284,8 +408,13 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
   const newUnitAbbreviation = props.getLocalState('new-unit-abbreviation');
   const newUnitDescription = props.getLocalState('new-unit-description');
 
-  const handleEdit = () => {
-    props.viewModel.setProductDetailsEditMode(true);
+  const handleEdit = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanEditProductDetails', {
+      actionName: 'edit products'
+    });
+    if (hasPermission) {
+      props.viewModel.setProductDetailsEditMode(true);
+    }
   };
 
   const handleCancel = () => {
@@ -295,17 +424,29 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
     props.setLocalState('show-new-unit-form', false);
   };
 
-  const handleSaveNewCategory = () => {
-    // Handle saving new category
-    console.log('Saving new category:', {
-      name: newCategoryName,
-      description: newCategoryDescription
+  const handleSaveNewCategory = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
+      actionName: 'create categories'
     });
-    // Add to category options and select it
-    props.viewModel.updateProductDetailsForm('category', newCategoryName);
-    props.setLocalState('show-new-category-form', false);
-    props.setLocalState('new-category-name', '');
-    props.setLocalState('new-category-description', '');
+    if (!hasPermission) {
+      return;
+    }
+
+    try {
+      const category = await props.viewModel.createCategory({
+        name: newCategoryName,
+        description: newCategoryDescription
+      });
+      // Add to category options and select it
+      props.viewModel.updateProductDetailsForm('category', category.name);
+      props.viewModel.updateProductDetailsForm('category_id', category.id);
+      props.setLocalState('show-new-category-form', false);
+      props.setLocalState('new-category-name', '');
+      props.setLocalState('new-category-description', '');
+    } catch (error) {
+      // Error is handled by viewModel and displayed via error state
+      console.error('Error creating category:', error);
+    }
   };
 
   const handleCancelNewCategory = () => {
@@ -314,19 +455,30 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
     props.setLocalState('new-category-description', '');
   };
 
-  const handleSaveNewUnit = () => {
-    // Handle saving new unit
-    console.log('Saving new unit:', {
-      name: newUnitName,
-      abbreviation: newUnitAbbreviation,
-      description: newUnitDescription
+  const handleSaveNewUnit = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
+      actionName: 'create units'
     });
-    // Add to unit options and select it
-    props.viewModel.updateProductDetailsForm('unit', newUnitName);
-    props.setLocalState('show-new-unit-form', false);
-    props.setLocalState('new-unit-name', '');
-    props.setLocalState('new-unit-abbreviation', '');
-    props.setLocalState('new-unit-description', '');
+    if (!hasPermission) {
+      return;
+    }
+
+    try {
+      const unit = await props.viewModel.createUnit({
+        name: newUnitName,
+        abbreviation: newUnitAbbreviation
+      });
+      // Add to unit options and select it
+      props.viewModel.updateProductDetailsForm('unit', unit.name);
+      props.viewModel.updateProductDetailsForm('unit_id', unit.id);
+      props.setLocalState('show-new-unit-form', false);
+      props.setLocalState('new-unit-name', '');
+      props.setLocalState('new-unit-abbreviation', '');
+      props.setLocalState('new-unit-description', '');
+    } catch (error) {
+      // Error is handled by viewModel and displayed via error state
+      console.error('Error creating unit:', error);
+    }
   };
 
   const handleCancelNewUnit = () => {
@@ -337,20 +489,69 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
   };
 
   const handleSave = async () => {
+    const hasPermission = await permissionChecker.checkPermission('CanEditProductDetails', {
+      actionName: 'update products'
+    });
+    if (!hasPermission) {
+      return;
+    }
+
     try {
-      await props.viewModel.updateProduct(product.id, {
+      // Prepare product data with category_id and unit_id
+      const productPayload = {
         name: productName,
-        description: productDescription,
-        category: productCategory,
-        unit: productUnit
-        // Note: productCode is system-assigned and not editable
-      });
-      props.setLocalState('edit-mode', false);
+        description: productDescription || null,
+        remark: productDetailsForm.remark || null,
+        expiry_threshold: productExpiryThreshold || 30
+      };
+
+      // Handle category_id - use existing ID or look up by name
+      if (productCategoryId) {
+        productPayload.category_id = parseInt(productCategoryId, 10);
+      } else if (productCategory && productCategory.trim() !== '') {
+        // Category name provided - look it up by name
+        try {
+          const result = await window.ipcRenderer.invoke('inventory:find-category-by-name', productCategory);
+          if (result.success && result.category && result.category.id) {
+            productPayload.category_id = parseInt(result.category.id, 10);
+          } else {
+            throw new Error(`Category "${productCategory}" not found`);
+          }
+        } catch (error) {
+          throw new Error(`Failed to find category "${productCategory}": ${error.message || 'Unknown error'}`);
+        }
+      } else {
+        throw new Error('Category is required');
+      }
+
+      // Handle unit_id - use existing ID or look up by name
+      if (productUnitId) {
+        productPayload.unit_id = parseInt(productUnitId, 10);
+      } else if (productUnit && productUnit.trim() !== '') {
+        // Unit name provided - look it up by name
+        try {
+          const result = await window.ipcRenderer.invoke('inventory:find-unit-by-name', productUnit);
+          if (result.success && result.unit && result.unit.id) {
+            productPayload.unit_id = parseInt(result.unit.id, 10);
+          } else {
+            throw new Error(`Unit "${productUnit}" not found`);
+          }
+        } catch (error) {
+          throw new Error(`Failed to find unit "${productUnit}": ${error.message || 'Unknown error'}`);
+        }
+      } else {
+        throw new Error('Unit is required');
+      }
+
+      await props.viewModel.updateProduct(product.id, productPayload);
+      props.viewModel.setProductDetailsEditMode(false);
+      // Reload products list to show updated data
+      props.viewModel.updateState('loading', false);
+      await props.viewModel.loadProducts();
     } catch (error) {
       // Error is handled by viewModel and displayed via error state
       console.error('Error updating product:', error);
     }
-    // onClose(); // Optionally close after save
   };
 
   return Drawer({ class: 'h-full overflow-y-auto flex flex-col', openSlide: showSlide }, [
@@ -417,13 +618,33 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                     SelectFluid({ 
                       name: 'product-category', 
                       containerClass: 'flex-1', 
-                      value: productCategory,
-                      onChange: (e) => props.viewModel.updateProductDetailsForm('category', e.target.value),
+                      value: productCategoryId ? String(productCategoryId) : '',
+                      onChange: (e) => {
+                        const categoryId = e.target.value;
+                        if (categoryId !== '') {
+                          const selectedCategory = categories.find(c => String(c.id) === categoryId);
+                          if (selectedCategory) {
+                            props.viewModel.updateProductDetailsForm('category', selectedCategory.name);
+                            props.viewModel.updateProductDetailsForm('category_id', selectedCategory.id);
+                          }
+                        } else {
+                          props.viewModel.updateProductDetailsForm('category', '');
+                          props.viewModel.updateProductDetailsForm('category_id', null);
+                        }
+                      },
                       delegator: props.delegator
-                    }, SelectOptions({ 
-                      options: ['Regent', 'Supplies'], 
-                      selectedOption: productCategory
-                    })),
+                    }, [
+                      Row({ tagType: 'option', attributes: { value: '', selected: !productCategoryId } }, 'Select Category'),
+                      ...categories.map(c => 
+                        Row({ 
+                          tagType: 'option', 
+                          attributes: { 
+                            value: String(c.id), 
+                            selected: productCategoryId === c.id 
+                          } 
+                        }, c.name)
+                      )
+                    ]),
                     Button({ 
                       variant: 'outline', 
                       class: 'w-20 text-nowrap text-xs',
@@ -449,13 +670,33 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                     SelectFluid({ 
                       name: 'product-unit', 
                       containerClass: 'flex-1', 
-                      value: productUnit,
-                      onChange: (e) => props.viewModel.updateProductDetailsForm('unit', e.target.value),
+                      value: productUnitId ? String(productUnitId) : '',
+                      onChange: (e) => {
+                        const unitId = e.target.value;
+                        if (unitId !== '') {
+                          const selectedUnit = units.find(u => String(u.id) === unitId);
+                          if (selectedUnit) {
+                            props.viewModel.updateProductDetailsForm('unit', selectedUnit.name);
+                            props.viewModel.updateProductDetailsForm('unit_id', selectedUnit.id);
+                          }
+                        } else {
+                          props.viewModel.updateProductDetailsForm('unit', '');
+                          props.viewModel.updateProductDetailsForm('unit_id', null);
+                        }
+                      },
                       delegator: props.delegator
-                    }, SelectOptions({ 
-                      options: ['Bottle', 'PK', 'Kit', 'Box', 'Unit'], 
-                      selectedOption: productUnit
-                    })),
+                    }, [
+                      Row({ tagType: 'option', attributes: { value: '', selected: !productUnitId } }, 'Select Unit'),
+                      ...units.map(u => 
+                        Row({ 
+                          tagType: 'option', 
+                          attributes: { 
+                            value: String(u.id), 
+                            selected: productUnitId === u.id 
+                          } 
+                        }, u.name)
+                      )
+                    ]),
                     Button({ 
                       variant: 'outline', 
                       class: 'w-20 text-nowrap text-xs',
@@ -474,6 +715,24 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                   })
                 ]) : null
               })
+            ]),
+            // Row 4: Expiry Threshold (full width)
+            Row({ class: 'flex justify-center' }, [
+              Row({ class: 'w-full max-w-md' }, [
+                DetailField({ 
+                  label: 'Expiry Threshold (Days)', 
+                  value: editMode ? null : `${productExpiryThreshold || 30} days`,
+                  editMode: editMode,
+                  inputProps: {
+                    type: 'number',
+                    min: 1,
+                    value: productExpiryThreshold || 30,
+                    onChange: (e) => props.viewModel.updateProductDetailsForm('expiry_threshold', parseInt(e.target.value) || 30),
+                    name: 'expiry-threshold',
+                    placeholder: 'Enter number of days'
+                  }
+                })
+              ])
             ])
           ])
         ])
@@ -614,16 +873,245 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
 
 // Bin Card Drawer
 function BinCardDrawer({ product, showSlide, onClose, ...props }) {
-  // Mock bin card transactions - these would come from API for the product
-  const binCardTransactions = [
-    { date: '2025-01-15', type: 'IN', reference: 'PO-001', quantity: 100, balance: 100, location: 'A-01', batch: 'B001', expiryDate: '2025-06-15', user: 'John Doe' },
-    { date: '2025-01-20', type: 'OUT', reference: 'IS-001', quantity: -25, balance: 75, location: 'A-01', batch: 'B001', expiryDate: '2025-06-15', user: 'Jane Smith' },
-    { date: '2025-01-25', type: 'IN', reference: 'PO-002', quantity: 50, balance: 125, location: 'B-03', batch: 'B002', expiryDate: '2025-08-20', user: 'John Doe' },
-    { date: '2025-02-01', type: 'OUT', reference: 'IS-002', quantity: -30, balance: 95, location: 'A-01', batch: 'B001', expiryDate: '2025-06-15', user: 'Jane Smith' },
-    { date: '2025-02-05', type: 'ADJ', reference: 'ADJ-001', quantity: 5, balance: 100, location: 'A-01', batch: 'B001', expiryDate: '2025-06-15', user: 'Admin' },
-    { date: '2025-02-10', type: 'TRANSFER', reference: 'TR-001', quantity: -20, balance: 80, location: 'A-01', batch: 'B001', expiryDate: '2025-06-15', user: 'John Doe', toLocation: 'C-02' },
-    { date: '2025-02-10', type: 'TRANSFER', reference: 'TR-001', quantity: 20, balance: 20, location: 'C-02', batch: 'B001', expiryDate: '2025-06-15', user: 'John Doe', fromLocation: 'A-01' },
+  // Get bin card transactions from ViewModel
+  const binCardTransactions = props.viewModel.getBinCardTransactions();
+  const binCardTotal = props.viewModel.getBinCardTotal();
+  const binCardSearchQuery = props.viewModel.getState('bin-card-search-query') || '';
+  const binCardFilter = props.viewModel.getState('bin-card-filter') || {
+    transactionType: [],
+    reason: '',
+    dateFrom: '',
+    dateTo: '',
+    location: ''
+  };
+  const binCardTableConfig = props.viewModel.getState('bin-card-table-config') || {
+    limit: 50,
+    offset: 0,
+    sortBy: 'transaction_date',
+    orderBy: 'desc'
+  };
+
+  // Local state for search input and filter UI
+  props.ensureLocalStateKey('searchInputValue', '');
+  props.ensureLocalStateKey('searchTimeout', null);
+  props.ensureLocalStateKey('filterReasonValue', '');
+  props.ensureLocalStateKey('filterLocationValue', '');
+  props.ensureLocalStateKey('filterTimeout', null);
+  props.ensureLocalStateKey('showFilters', false);
+  props.ensureLocalStateKey('showSortMenu', false);
+  
+  const searchInputValue = props.getLocalState('searchInputValue') || '';
+  const filterReasonValue = props.getLocalState('filterReasonValue') || binCardFilter.reason || '';
+  const filterLocationValue = props.getLocalState('filterLocationValue') || binCardFilter.location || '';
+  const showFilters = props.getLocalState('showFilters');
+  const showSortMenu = props.getLocalState('showSortMenu');
+
+  // Transaction type options
+  const transactionTypes = [
+    { value: 'received', label: 'Received (IN)' },
+    { value: 'issued', label: 'Issued (OUT)' },
+    { value: 'adjustment', label: 'Adjustment' },
+    { value: 'opening', label: 'Opening' },
+    { value: 'return', label: 'Return' },
+    { value: 'transfer_in', label: 'Transfer In' },
+    { value: 'transfer_out', label: 'Transfer Out' },
+    { value: 'expired', label: 'Expired' },
+    { value: 'damaged', label: 'Damaged' },
+    { value: 'voided', label: 'Voided' }
   ];
+
+  // Sort options
+  const sortOptions = [
+    { value: 'transaction_date', label: 'Transaction Date' },
+    { value: 'balance', label: 'Balance' },
+    { value: 'quantity_in', label: 'Quantity In' },
+    { value: 'quantity_out', label: 'Quantity Out' },
+    { value: 'reason', label: 'Reason' },
+    { value: 'batch_no', label: 'Batch Number' },
+    { value: 'document_no', label: 'Document Number' },
+    { value: 'location', label: 'Location' },
+    { value: 'user_name', label: 'User' },
+    { value: 'created_at', label: 'Created At' }
+  ];
+
+  const handleSearchFocusIn = () => {
+    props.setLocalState('searchInputValue', binCardSearchQuery || '');
+  };
+
+  const handleSearchChange = (e) => {
+    const newQuery = e.target.value;
+    props.setLocalState('searchInputValue', newQuery);
+    
+    const existingTimeout = props.getLocalState('searchTimeout');
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    
+    if (!newQuery || newQuery.trim() === '') {
+      props.viewModel.updateBinCardSearchQuery('');
+      props.viewModel.loadBinCards(product.id);
+      props.setLocalState('searchTimeout', null);
+      return;
+    }
+    
+    const timeout = setTimeout(() => {
+      props.viewModel.updateBinCardSearchQuery(newQuery);
+      props.viewModel.loadBinCards(product.id);
+      props.setLocalState('searchTimeout', null);
+    }, 500);
+
+    props.setLocalState('searchTimeout', timeout);
+  };
+
+  const handleFilterChange = (filterKey, value) => {
+    const newFilter = { ...binCardFilter };
+    if (filterKey === 'transactionType') {
+      // Toggle transaction type in array
+      const currentTypes = newFilter.transactionType || [];
+      if (currentTypes.includes(value)) {
+        newFilter.transactionType = currentTypes.filter(t => t !== value);
+      } else {
+        newFilter.transactionType = [...currentTypes, value];
+      }
+      // Apply immediately for transaction type (button clicks)
+      props.viewModel.updateBinCardFilter(newFilter);
+      props.viewModel.loadBinCards(product.id);
+    } else if (filterKey === 'dateFrom' || filterKey === 'dateTo') {
+      // Apply immediately for date filters
+      newFilter[filterKey] = value;
+      props.viewModel.updateBinCardFilter(newFilter);
+      props.viewModel.loadBinCards(product.id);
+    } else if (filterKey === 'reason' || filterKey === 'location') {
+      // Debounce text input filters
+      props.setLocalState(`filter${filterKey.charAt(0).toUpperCase() + filterKey.slice(1)}Value`, value);
+      
+      const existingTimeout = props.getLocalState('filterTimeout');
+      if (existingTimeout) {
+        clearTimeout(existingTimeout);
+      }
+      
+      const timeout = setTimeout(() => {
+        newFilter[filterKey] = value;
+        props.viewModel.updateBinCardFilter(newFilter);
+        props.viewModel.loadBinCards(product.id);
+        props.setLocalState('filterTimeout', null);
+      }, 500);
+      
+      props.setLocalState('filterTimeout', timeout);
+    } else {
+      newFilter[filterKey] = value;
+      props.viewModel.updateBinCardFilter(newFilter);
+      props.viewModel.loadBinCards(product.id);
+    }
+  };
+
+  const handleSortChange = (sortBy, orderBy) => {
+    console.log('handleSortChange', sortBy, orderBy);
+    props.viewModel.updateBinCardSort(sortBy, orderBy);
+    props.viewModel.loadBinCards(product.id);
+    props.setLocalState('showSortMenu', false);
+  };
+
+  const handleClearFilters = () => {
+    const clearedFilter = {
+      transactionType: [],
+      reason: '',
+      dateFrom: '',
+      dateTo: '',
+      location: ''
+    };
+    props.viewModel.updateBinCardFilter(clearedFilter);
+    props.viewModel.updateBinCardSearchQuery('');
+    props.setLocalState('searchInputValue', '');
+    props.setLocalState('filterReasonValue', '');
+    props.setLocalState('filterLocationValue', '');
+    // Clear any pending filter timeout
+    const existingTimeout = props.getLocalState('filterTimeout');
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+      props.setLocalState('filterTimeout', null);
+    }
+    props.viewModel.loadBinCards(product.id);
+  };
+
+  const hasActiveFilters = () => {
+    return binCardSearchQuery || 
+           (binCardFilter.transactionType && binCardFilter.transactionType.length > 0) ||
+           binCardFilter.reason ||
+           binCardFilter.dateFrom ||
+           binCardFilter.dateTo ||
+           binCardFilter.location;
+  };
+  
+  // Map database transaction types to display types
+  const getTransactionTypeDisplay = (type) => {
+    const typeMap = {
+      'received': 'IN',
+      'issued': 'OUT',
+      'voided': 'VOID',
+      'adjustment': 'ADJ',
+      'opening': 'OPEN',
+      'return': 'RET',
+      'transfer_in': 'TRANSFER',
+      'transfer_out': 'TRANSFER',
+      'expired': 'EXP',
+      'damaged': 'DAM'
+    };
+    return typeMap[type] || type.toUpperCase();
+  };
+
+  // Calculate quantity change (positive for in, negative for out)
+  const getQuantityChange = (txn) => {
+    if (txn.quantity_in > 0) return txn.quantity_in;
+    if (txn.quantity_out > 0) return -txn.quantity_out;
+    return 0;
+  };
+
+  // Get reason badge color based on reason type
+  const getReasonBadgeColor = (reason) => {
+    if (!reason) return 'bg-gray-100 text-gray-700 border-gray-200';
+    
+    const reasonLower = reason.toLowerCase();
+    
+    // Purchase/Import related
+    if (reasonLower.includes('purchase') || reasonLower.includes('import') || reasonLower.includes('bulk')) {
+      return 'bg-blue-100 text-blue-700 border-blue-200';
+    }
+    // Sales related
+    if (reasonLower.includes('sale') || reasonLower.includes('sell')) {
+      return 'bg-purple-100 text-purple-700 border-purple-200';
+    }
+    // Borrow From (receiving from partner)
+    if (reasonLower.includes('borrow from') || reasonLower.includes('receive borrow')) {
+      return 'bg-cyan-100 text-cyan-700 border-cyan-200';
+    }
+    // Borrow To (giving to partner)
+    if (reasonLower.includes('borrow to')) {
+      return 'bg-orange-100 text-orange-700 border-orange-200';
+    }
+    // Return Borrow From (returning items borrowed from partner)
+    if (reasonLower.includes('return borrow from') || reasonLower.includes('return borrowed from')) {
+      return 'bg-teal-100 text-teal-700 border-teal-200';
+    }
+    // Return Borrow To (receiving back items borrowed to partner)
+    if (reasonLower.includes('return borrow to') || reasonLower.includes('receive borrow to')) {
+      return 'bg-amber-100 text-amber-700 border-amber-200';
+    }
+    // Found/Correction/Physical Count
+    if (reasonLower.includes('found') || reasonLower.includes('correction') || reasonLower.includes('physical count') || reasonLower.includes('stock take')) {
+      return 'bg-green-100 text-green-700 border-green-200';
+    }
+    // Lost/Damaged/Expired
+    if (reasonLower.includes('lost') || reasonLower.includes('damaged') || reasonLower.includes('expired')) {
+      return 'bg-red-100 text-red-700 border-red-200';
+    }
+    // Transfer
+    if (reasonLower.includes('transfer')) {
+      return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+    }
+    // Default
+    return 'bg-gray-100 text-gray-700 border-gray-200';
+  };
 
   return Drawer({ class: 'h-full overflow-y-auto flex flex-col', openSlide: showSlide }, [
     CardHeader({ class: 'px-6 flex items-center justify-between h-12 border-b border-gray-200' }, [
@@ -636,7 +1124,7 @@ function BinCardDrawer({ product, showSlide, onClose, ...props }) {
       ])
     ]),
     Row({ class: 'px-6 py-4 border-b border-gray-200 bg-gray-50' }, [
-      Row({ class: 'flex items-center gap-6 flex-wrap' }, [
+      Row({ class: 'flex items-center gap-6 flex-wrap mb-3' }, [
         Row({ class: 'text-sm text-gray-600' }, [
           Row({ tagType: 'span', class: 'font-medium' }, 'Product: '),
           product.description || product.name
@@ -653,57 +1141,264 @@ function BinCardDrawer({ product, showSlide, onClose, ...props }) {
           Row({ tagType: 'span', class: 'font-medium' }, 'Unit: '),
           product.unit
         ])
-      ])
-    ]),
-    Row({ class: 'flex-1 overflow-y-auto p-6' }, [
-      Table({ class: 'w-full' }, [
-        TableHeader({}, [
-          TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Date'),
-          TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Type'),
-          TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Reference'),
-          TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Location'),
-          TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'Batch'),
-          TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase' }, 'Quantity'),
-          TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase' }, 'Balance'),
-          TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase' }, 'User')
+      ]),
+      // Search and Filter Controls
+      Row({ class: 'flex items-center gap-3 flex-wrap' }, [
+        // Search Input
+        Row({ class: 'flex-1 min-w-[200px]' }, [
+          Input({
+            type: 'text',
+            placeholder: 'Search by reason, batch, location, user...',
+            value: searchInputValue,
+            onFocus: handleSearchFocusIn,
+            onInput: handleSearchChange,
+            class: 'w-full'
+          })
         ]),
-        TableBody({}, 
-          binCardTransactions.map((txn, idx) => 
-            TableRow({ key: idx }, [
-              TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, txn.date),
-              TableDCell({ class: 'px-4 py-3 text-sm' }, [
-                Row({ class: `px-2 py-1 rounded text-xs font-medium ${
-                  txn.type === 'IN' ? 'bg-green-100 text-green-700' :
-                  txn.type === 'OUT' ? 'bg-red-100 text-red-700' :
-                  txn.type === 'TRANSFER' ? 'bg-blue-100 text-blue-700' :
-                  'bg-yellow-100 text-yellow-700'
-                }` }, txn.type)
-              ]),
-              TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, txn.reference),
-              TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, 
-                txn.toLocation ? `${txn.location} → ${txn.toLocation}` : 
-                txn.fromLocation ? `${txn.fromLocation} → ${txn.location}` :
-                txn.location
-              ),
-              TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, txn.batch || '-'),
-              TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-medium' }, 
-                txn.quantity > 0 ? `+${txn.quantity}` : txn.quantity
-              ),
-              TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-semibold' }, txn.balance),
-              TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, txn.user)
-            ])
+        // Filter Button
+        Button({
+          variant: hasActiveFilters() ? 'primary' : 'outline',
+          onClick: () => props.setLocalState('showFilters', !showFilters),
+          class: 'flex items-center gap-2'
+        }, [
+          IonIcon({ name: 'filter-outline', class: 'text-sm' }),
+          'Filter',
+          hasActiveFilters() && Row({ class: 'ml-1 px-1.5 py-0.5 bg-white rounded text-xs' }, 
+            (binCardFilter.transactionType?.length || 0) + 
+            (binCardFilter.reason ? 1 : 0) + 
+            (binCardFilter.dateFrom ? 1 : 0) + 
+            (binCardFilter.dateTo ? 1 : 0) + 
+            (binCardFilter.location ? 1 : 0)
           )
-        )
-      ])
+        ]),
+        // Sort Button with Dropdown
+        Row({ class: 'relative' }, [
+          Button({
+            variant: 'outline',
+            onClick: () => props.setLocalState('showSortMenu', !showSortMenu),
+            class: 'flex items-center gap-2'
+          }, [
+            IonIcon({ name: 'swap-vertical-outline', class: 'text-sm' }),
+            'Sort'
+          ]),
+          // Sort Menu (dropdown)
+          showSortMenu && Row({ 
+            class: 'absolute top-full right-0 mt-2 p-2 bg-white rounded-lg border border-gray-200 shadow-lg z-10 min-w-[200px]',
+            events: {
+              click: (e) => e.stopPropagation() // Prevent clicks inside menu from closing it
+            }
+          }, [
+            Row({ class: 'text-xs font-medium text-gray-500 mb-2 px-2' }, 'Sort By'),
+            ...sortOptions.map((option, idx) => {
+              const isSelected = binCardTableConfig.sortBy === option.value;
+              const isAsc = isSelected && binCardTableConfig.orderBy === 'asc';
+              const isDesc = isSelected && binCardTableConfig.orderBy === 'desc';
+              return Row({
+                key: `sort-option-${option.value}-${idx}`,
+                class: `px-3 py-2 cursor-pointer hover:bg-gray-50 rounded ${isSelected ? 'bg-indigo-50' : ''}`,
+                events: { 
+                  click: () => handleSortChange(
+                    option.value, 
+                    isSelected && isDesc ? 'asc' : 'desc'
+                  )
+                }
+              }, [
+                Row({ class: 'flex items-center justify-between' }, [
+                  Row({ class: 'text-sm' }, option.label),
+                  isSelected && IonIcon({ 
+                    name: isAsc ? 'chevron-up-outline' : 'chevron-down-outline', 
+                    class: 'text-sm text-indigo-600' 
+                  })
+                ])
+              ]);
+            })
+          ])
+        ]),
+        // Clear Filters Button (only show if filters are active)
+        hasActiveFilters() && Button({
+          variant: 'outline',
+          onClick: handleClearFilters,
+          class: 'text-red-600 hover:text-red-700'
+        }, 'Clear')
+      ]),
+      // Filter Panel (collapsible)
+      showFilters && Row({ class: 'mt-4 p-4 bg-white rounded-lg border border-gray-200' }, [
+        Row({ class: 'grid grid-cols-2 gap-4' }, [
+          // Transaction Type Filter
+          Row({ class: 'flex flex-col' }, [
+            Row({ class: 'text-sm font-medium text-gray-700 mb-2' }, 'Transaction Type'),
+            Row({ class: 'flex flex-wrap gap-2' }, 
+              transactionTypes.map(type => {
+                const isSelected = binCardFilter.transactionType?.includes(type.value);
+                return Button({
+                  variant: isSelected ? 'primary' : 'outline',
+                  onClick: () => handleFilterChange('transactionType', type.value),
+                  class: 'text-xs px-2 py-1'
+                }, type.label);
+              })
+            )
+          ]),
+          // Reason Filter
+          Row({ class: 'flex flex-col' }, [
+            Row({ class: 'text-sm font-medium text-gray-700 mb-2' }, 'Reason'),
+            Input({
+              type: 'text',
+              placeholder: 'Filter by reason...',
+              value: filterReasonValue,
+              onInput: (e) => handleFilterChange('reason', e.target.value),
+              class: 'w-full'
+            })
+          ]),
+          // Date From Filter
+          Row({ class: 'flex flex-col' }, [
+            Row({ class: 'text-sm font-medium text-gray-700 mb-2' }, 'Date From'),
+            Input({
+              type: 'date',
+              value: binCardFilter.dateFrom || '',
+              onInput: (e) => handleFilterChange('dateFrom', e.target.value),
+              class: 'w-full'
+            })
+          ]),
+          // Date To Filter
+          Row({ class: 'flex flex-col' }, [
+            Row({ class: 'text-sm font-medium text-gray-700 mb-2' }, 'Date To'),
+            Input({
+              type: 'date',
+              value: binCardFilter.dateTo || '',
+              onInput: (e) => handleFilterChange('dateTo', e.target.value),
+              class: 'w-full'
+            })
+          ]),
+          // Location Filter
+          Row({ class: 'flex flex-col col-span-2' }, [
+            Row({ class: 'text-sm font-medium text-gray-700 mb-2' }, 'Location'),
+            Input({
+              type: 'text',
+              placeholder: 'Filter by location...',
+              value: filterLocationValue,
+              onInput: (e) => handleFilterChange('location', e.target.value),
+              class: 'w-full'
+            })
+          ])
+        ])
+      ]),
     ]),
-    Row({ class: 'px-6 py-4 border-t border-gray-200 flex justify-end gap-3' }, [
-      Button({ variant: 'outline', onClick: () => {} }, 'Export'),
+    Row({ class: 'flex-1 overflow-y-auto p-4' }, [
+      binCardTransactions.length === 0 
+        ? Row({ class: 'flex items-center justify-center py-12' }, [
+            Row({ class: 'text-sm text-gray-500' }, 'No bin card transactions found for this product')
+          ])
+        : Row({ class: 'flex flex-col gap-3' }, 
+            binCardTransactions.map((txn, idx) => {
+              const typeDisplay = getTransactionTypeDisplay(txn.transaction_type);
+              const quantityChange = getQuantityChange(txn);
+              const transactionDate = formatDateDDMMYYYY(txn.transaction_date);
+              const isIn = quantityChange > 0;
+              const typeColorClass = 
+                typeDisplay === 'IN' || typeDisplay === 'OPEN' || typeDisplay === 'TRANSFER' ? 'bg-green-100 text-green-700 border-green-200' :
+                typeDisplay === 'OUT' || typeDisplay === 'EXP' || typeDisplay === 'DAM' ? 'bg-red-100 text-red-700 border-red-200' :
+                typeDisplay === 'ADJ' || typeDisplay === 'RET' ? 'bg-yellow-100 text-yellow-700 border-yellow-200' :
+                'bg-gray-100 text-gray-700 border-gray-200';
+              
+              return Card({ 
+                key: txn.id || idx, 
+                class: 'border border-gray-200 hover:shadow-md transition-shadow' 
+              }, [
+                Row({ class: 'p-3' }, [
+                  // Header row: Date, Type badge, and Balance badge
+                  Row({ class: 'flex items-center justify-between mb-2' }, [
+                    Row({ class: 'flex items-center gap-2' }, [
+                      Row({ class: 'text-xs font-medium text-gray-500' }, transactionDate),
+                      Row({ class: `px-2 py-0.5 rounded text-xs font-semibold border ${typeColorClass}` }, typeDisplay)
+                    ]),
+                    Row({ class: `px-2 py-0.5 rounded text-xs font-semibold border bg-indigo-100 text-indigo-700 border-indigo-200` }, 
+                      `Balance: ${txn.balance || 0}`
+                    )
+                  ]),
+                  
+                  // Reason badge (full width if present)
+                  txn.reason && Row({ class: 'mb-2' }, [
+                    Row({ class: `px-2 py-0.5 rounded text-xs font-semibold border inline-block ${getReasonBadgeColor(txn.reason)}` }, txn.reason)
+                  ]),
+                  
+                  // Quantity change row
+                  Row({ class: 'flex items-center gap-2 mb-2' }, [
+                    Row({ class: 'text-xs text-gray-500' }, 'Quantity:'),
+                    Row({ 
+                      class: `text-sm font-semibold ${isIn ? 'text-green-600' : 'text-red-600'}` 
+                    }, isIn ? `+${quantityChange}` : quantityChange)
+                  ]),
+                  
+                  // Details grid: Reference, Location, Batch, User (3 columns)
+                  Row({ class: 'grid grid-cols-3 gap-2 text-xs' }, [
+                    txn.document_no || txn.reference_table ? Row({ class: 'flex flex-col' }, [
+                      Row({ class: 'text-gray-500 mb-0.5' }, 'Reference'),
+                      Row({ class: 'text-gray-900 font-medium truncate' }, txn.document_no || txn.reference_table)
+                    ]) : null,
+                    txn.location ? Row({ class: 'flex flex-col' }, [
+                      Row({ class: 'text-gray-500 mb-0.5' }, 'Location'),
+                      Row({ class: 'text-gray-900 font-medium truncate' }, txn.location)
+                    ]) : null,
+                    txn.batch_no ? Row({ class: 'flex flex-col' }, [
+                      Row({ class: 'text-gray-500 mb-0.5' }, 'Batch'),
+                      Row({ class: 'text-gray-900 font-medium truncate' }, txn.batch_no)
+                    ]) : null,
+                    txn.user_name ? Row({ class: 'flex flex-col' }, [
+                      Row({ class: 'text-gray-500 mb-0.5' }, 'User'),
+                      Row({ class: 'text-gray-900 font-medium truncate' }, txn.user_name)
+                    ]) : null
+                  ].filter(Boolean))
+                ])
+              ]);
+            })
+          )
+    ]),
+    Row({ class: 'px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3' }, [
+      // Pagination Controls (IconButtons only)
+      IconButton({
+        onClick: () => {
+          props.viewModel.previousBinCardPage();
+          props.viewModel.loadBinCards(product.id);
+        },
+        disabled: binCardTableConfig.offset <= 0,
+        size: 'medium'
+      }, [
+        IonIcon({ name: 'chevron-back-outline', class: 'text-xl' })
+      ]),
+      IconButton({
+        onClick: () => {
+          props.viewModel.nextBinCardPage();
+          props.viewModel.loadBinCards(product.id);
+        },
+        disabled: binCardTableConfig.offset + binCardTableConfig.limit >= binCardTotal,
+        size: 'medium'
+      }, [
+        IonIcon({ name: 'chevron-forward-outline', class: 'text-xl' })
+      ]),
+      // Actions
+      Button({ 
+        variant: 'outline', 
+        onClick: async () => {
+          try {
+            await props.viewModel.exportBinCards(product.id);
+          } catch (error) {
+            console.error('Export failed:', error);
+            // Error is already handled in ViewModel and shown via toast
+          }
+        },
+        class: 'flex items-center gap-2'
+      }, [
+        IonIcon({ name: 'download-outline', class: 'text-sm' }),
+        'Export CSV'
+      ]),
       Button({ variant: 'secondary', onClick: onClose }, 'Close')
     ])
   ])
 }
 
 function openAddProductModal(props) {
+  // Clear the form before opening the modal
+  props.viewModel.resetProductForm();
   Modal({}, (delegator, closeHandler) => ModalContent(props.viewModel, delegator, closeHandler)) 
 }
 
@@ -711,31 +1406,13 @@ function openImportProductsModal(props) {
   Modal({}, (delegator, closeHandler) => ImportModalContent(props.viewModel, delegator, closeHandler)) 
 }
 
-function handleExportCSV(props) {
-  // Get current table config (filters, search, pagination)
-  const tableConfig = props.viewModel.getState('table-config');
-  const searchQuery = props.getLocalState('search-query') || '';
-  
-  // Build query parameters
-  const params = new URLSearchParams({
-    limit: tableConfig.limit || 1000, // Export more rows for CSV
-    offset: tableConfig.offset || 0,
-    search: searchQuery,
-    format: 'csv'
-  });
-  
-  // Create download URL
-  // TODO: Replace with actual API base URL from config
-  const apiBaseUrl = 'http://localhost:4000'; // This should come from app config
-  const exportUrl = `${apiBaseUrl}/api/products/export?${params.toString()}`;
-  
-  // Create a temporary anchor element to trigger download
-  const link = document.createElement('a');
-  link.href = exportUrl;
-  link.download = `products_export_${new Date().toISOString().split('T')[0]}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+async function handleExportCSV(props) {
+  try {
+    await props.viewModel.exportProducts();
+  } catch (error) {
+    console.error('Export failed:', error);
+    // Error is already handled in ViewModel and shown via toast
+  }
 }
 
 export { formRow}

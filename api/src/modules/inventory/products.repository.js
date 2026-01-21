@@ -43,6 +43,13 @@ export class ProductsRepository {
   }
 
   /**
+   * Find product by ID
+   */
+  async findById(id) {
+    return this.knex('products').where({ id }).first()
+  }
+
+  /**
    * Find product by name (case-insensitive)
    */
   async findByName(name) {
@@ -181,6 +188,28 @@ export class ProductsRepository {
     return this.knex('products')
       .insert(data)
       .returning(['id', 'product_code', 'name', 'description', 'category_id', 'unit_id', 'remark', 'created_at', 'last_updated'])
+  }
+
+  /**
+   * Update a product
+   */
+  async update(id, data) {
+    return this.knex('products')
+      .where({ id })
+      .update({
+        ...data,
+        last_updated: this.knex.fn.now()
+      })
+      .returning(['id', 'product_code', 'name', 'description', 'category_id', 'unit_id', 'remark', 'created_at', 'last_updated'])
+  }
+
+  /**
+   * Delete a product
+   */
+  async delete(id) {
+    return this.knex('products')
+      .where({ id })
+      .del()
   }
 
   /**
