@@ -1,0 +1,201 @@
+/**
+ * Controller: HTTP layer for sales module.
+ */
+export class SalesController {
+  constructor(service) {
+    this.service = service
+  }
+
+  /**
+   * POST /api/sales/orders — create sales order and its items (sales_order_items); inventory decremented.
+   */
+  createOrder = async (req, res, next) => {
+    try {
+      const body = req.validBody || req.body
+      const user = req.user || null
+      const order = await this.service.createOrder(body, user)
+      res.status(201).json({ ok: true, order })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  /**
+   * GET /api/sales/orders/:id — order details with items.
+   */
+  getOrderDetails = async (req, res, next) => {
+    try {
+      const { id } = req.params
+      const result = await this.service.getOrderDetails(id)
+      if (!result) {
+        const err = new Error('Order not found')
+        err.status = 404
+        return next(err)
+      }
+      res.json({ ok: true, ...result })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  /**
+   * GET /api/sales/export — export sales order.
+   */
+  exportSalesOrder = async (req, res, next) => {
+    console.log('***** exportSalesOrder ***** controller ******')
+    try {
+      const csvContent = await this.service.exportSalesOrder()
+      
+      console.log(`[SalesController] Export response: ${csvContent.split('\n').length - 1} rows`)
+      
+      // Set headers for CSV download
+      res.setHeader('Content-Type', 'text/csv')
+      res.setHeader('Content-Disposition', `attachment; filename="sales_orders_export_${new Date().toISOString().split('T')[0]}.csv"`)
+      
+      res.send(csvContent)
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  /**
+   * GET /api/sales/orders/:id/receipt — receipt for printing/view.
+   */
+  getOrderReceipt = async (req, res, next) => {
+    try {
+      const id = parseInt(req.params.id, 10)
+      const receipt = await this.service.getOrderReceipt(id)
+      res.json({ ok: true, receipt })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  getWithholdPercentage = async (_req, res, next) => {
+    try {
+      const result = await this.service.getWithholdPercentage()
+      res.json({ ok: true, ...result })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  listOrders = async (req, res, next) => {
+    try {
+      const q = req.query
+      const result = await this.service.listOrders({
+        limit: q.limit ? parseInt(q.limit, 10) : 20,
+        offset: q.offset ? parseInt(q.offset, 10) : 0,
+        search: q.search,
+        status: q.status,
+        customer_id: q.customer_id ? parseInt(q.customer_id, 10) : undefined,
+        payment_type: q.payment_type || q.payment_mode,
+        date_from: q.date_from,
+        date_to: q.date_to,
+        has_outstanding_balance: q.has_outstanding_balance,
+        stat_filter: q.stat_filter,
+        sort_by: q.sort_by,
+        order_by: q.order_by
+      })
+      res.json({ ok: true, orders: result.orders, total: result.total, stats: result.stats })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  createHoldOrder = async (req, res, next) => {
+    try {
+      const body = req.validBody || req.body
+      const hold = await this.service.createHoldOrder(body, req.user)
+      res.status(201).json({ ok: true, hold_order: hold })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  listHoldOrders = async (req, res, next) => {
+    try {
+      const q = req.query
+      const result = await this.service.listHoldOrders({
+        limit: q.limit ? parseInt(q.limit, 10) : 20,
+        offset: q.offset ? parseInt(q.offset, 10) : 0,
+        search: q.search,
+        filter: q.filter,
+        sort_by: q.sort_by,
+        order_by: q.order_by
+      })
+      res.json({ ok: true, hold_orders: result.hold_orders, total: result.total })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  getHoldOrder = async (req, res, next) => {
+    try {
+      const { id } = req.params
+      const hold = await this.service.getHoldOrderById(id)
+      if (!hold) {
+        const err = new Error('Hold order not found')
+        err.status = 404
+        return next(err)
+      }
+      res.json({ ok: true, hold_order: hold })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  archiveHoldOrder = async (req, res, next) => {
+    try {
+      const { id } = req.params
+      await this.service.archiveHoldOrder(id)
+      res.json({ ok: true })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  payOrder = async (req, res, next) => {
+    try {
+      const { id } = req.params
+      const body = req.validBody || req.body
+      const result = await this.service.recordPayment(id, body, req.user?.id)
+      res.json({ ok: true, ...result })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  confirmWithhold = async (req, res, next) => {
+    try {
+      const { id } = req.params
+      const body = req.validBody || req.body
+      await this.service.confirmWithhold(id, body.sales_invoice_no)
+      const order = await this.service.getOrderDetails(id)
+      res.json({ ok: true, order: order?.order })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  rollbackWithhold = async (req, res, next) => {
+    try {
+      const { id } = req.params
+      await this.service.rollbackWithhold(id)
+      const order = await this.service.getOrderDetails(id)
+      res.json({ ok: true, order: order?.order })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  reverseOrder = async (req, res, next) => {
+    try {
+      const { id } = req.params
+      const result = await this.service.reverseOrder(id, req.user)
+      res.json({ ok: true, ...result })
+    } catch (err) {
+      next(err)
+    }
+  }
+}

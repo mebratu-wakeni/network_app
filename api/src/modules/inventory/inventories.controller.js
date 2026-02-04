@@ -122,6 +122,24 @@ export class InventoriesController {
   }
 
   /**
+   * GET /api/inventories/by-product/:productId
+   * List inventories for a product (inventories table only). Used e.g. by return-borrowed drawer.
+   */
+  listByProduct = async (req, res, next) => {
+    try {
+      const productId = parseInt(req.params.productId, 10)
+      if (!productId) {
+        return res.status(400).json({ ok: false, error: 'Valid product ID is required' })
+      }
+      const items = await this.service.findInventoriesByProduct(productId)
+      res.json({ ok: true, success: true, items: items || [] })
+    } catch (error) {
+      console.error('[InventoriesController] List by product error:', error)
+      next(error)
+    }
+  }
+
+  /**
    * GET /api/inventories/export
    * Export stock/inventories to CSV
    */
@@ -228,6 +246,150 @@ export class InventoriesController {
     } catch (error) {
       console.error('[InventoriesController] Borrow from error:', error)
       console.error('[InventoriesController] Borrow from payload:', JSON.stringify(req.body, null, 2))
+      next(error)
+    }
+  }
+
+  /**
+   * GET /api/inventories/borrow-to/:id/returns
+   * Get return history for a borrow_to_inventory record
+   */
+  getBorrowToReturnHistory = async (req, res, next) => {
+    try {
+      const { id } = req.params
+      const history = await this.service.getBorrowToReturnHistory(parseInt(id, 10))
+
+      res.json({
+        ok: true,
+        success: true,
+        history: history || []
+      })
+    } catch (error) {
+      console.error('[InventoriesController] Get borrow to return history error:', error)
+      next(error)
+    }
+  }
+
+  /**
+   * POST /api/inventories/borrow-to/return
+   * Process return of borrowed-to items
+   */
+  processBorrowToReturn = async (req, res, next) => {
+    try {
+      const returnData = req.validBody
+      const userId = req.user?.id || null
+
+      console.log('[InventoriesController] Process borrow to return request:', JSON.stringify(returnData, null, 2))
+
+      const result = await this.service.processBorrowToReturn(returnData, userId)
+
+      console.log('[InventoriesController] Process borrow to return success:', JSON.stringify(result, null, 2))
+
+      res.json({
+        ok: true,
+        success: true,
+        return: result
+      })
+    } catch (error) {
+      console.error('[InventoriesController] Process borrow to return error:', error)
+      
+      // Handle validation errors with details
+      if (error.details) {
+        console.error('[InventoriesController] Validation details:', error.details)
+        return res.status(error.status || 400).json({
+          ok: false,
+          success: false,
+          error: error.message || 'Validation failed',
+          details: error.details
+        })
+      }
+      
+      next(error)
+    }
+  }
+
+  /**
+   * GET /api/inventories/borrow-from/:inventoryId/return-status
+   * Get return status by inventory ID (remaining to return, etc.)
+   */
+  getBorrowFromReturnStatus = async (req, res, next) => {
+    try {
+      const inventoryId = parseInt(req.params.inventoryId, 10)
+      if (!inventoryId) {
+        return res.status(400).json({ ok: false, error: 'Valid inventory ID is required' })
+      }
+      const status = await this.service.getBorrowFromReturnStatus({ borrowedInventoryId: inventoryId })
+      res.json({ ok: true, success: true, ...status })
+    } catch (error) {
+      console.error('[InventoriesController] Get borrow from return status error:', error)
+      next(error)
+    }
+  }
+
+  /**
+   * GET /api/inventories/borrow-from/by-borrow/:borrowFromId/return-status
+   * Get return status by borrow_from_inventories id (used when row is from borrowed-from list).
+   */
+  getBorrowFromReturnStatusByBorrowId = async (req, res, next) => {
+    try {
+      const borrowFromId = parseInt(req.params.borrowFromId, 10)
+      if (!borrowFromId) {
+        return res.status(400).json({ ok: false, error: 'Valid borrow-from ID is required' })
+      }
+      // Get borrowedInventoryId from query parameter if provided
+      const borrowedInventoryId = req.query.borrowedInventoryId 
+        ? parseInt(req.query.borrowedInventoryId, 10) 
+        : null
+      
+      const status = await this.service.getBorrowFromReturnStatus({ 
+        borrowFromId,
+        borrowedInventoryId 
+      })
+      res.json({ ok: true, success: true, ...status })
+    } catch (error) {
+      console.error('[InventoriesController] Get borrow from return status by borrow ID error:', error)
+      next(error)
+    }
+  }
+
+  /**
+   * POST /api/inventories/borrow-from/return
+   * Process return of borrowed-from items with GL adjustments
+   */
+  processBorrowFromReturn = async (req, res, next) => {
+    try {
+      const returnData = req.validBody
+      const userId = req.user?.id || null
+
+      console.log('[InventoriesController] Process borrow from return request:', JSON.stringify(returnData, null, 2))
+      console.log('[InventoriesController] returnData type:', typeof returnData, Array.isArray(returnData), returnData && typeof returnData === 'object')
+
+      const result = await this.service.processBorrowFromReturn(returnData, userId)
+
+      console.log('[InventoriesController] Process borrow from return success. result type:', typeof result, Array.isArray(result))
+      console.log('[InventoriesController] result keys:', result && typeof result === 'object' ? Object.keys(result) : 'n/a')
+
+      res.json({
+        ok: true,
+        success: true,
+        result: result
+      })
+    } catch (error) {
+      console.error('[InventoriesController] Process borrow from return error:', error)
+      console.error('[InventoriesController] error.message:', error?.message)
+      console.error('[InventoriesController] error.stack:', error?.stack)
+      
+      // Handle validation errors with details
+      if (error.details) {
+        console.error('[InventoriesController] Validation details:', error.details)
+        return res.status(error.status || 400).json({
+          ok: false,
+          success: false,
+          error: error.message || 'Validation failed',
+          details: error.details
+        })
+      }
+      
       next(error)
     }
   }

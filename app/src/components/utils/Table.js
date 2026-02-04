@@ -2,33 +2,31 @@ import { ManageOutsideClick } from "./OutsideClick";
 const { Row } = Liteframe;
 
 /**
- * The main container for the Table component.
- * IMPROVEMENT: Adds max-height and overflow-y for fixed header functionality.
+ * Table component: parent is flex-col, so Table uses flex-1 to take the rest of the space.
+ * Structure: Table = flex-1 flex-col overflow-hidden; inner scroll wrapper = flex-1 min-h-0
+ * min-w-0 overflow-auto so the table body area scrolls. Thead is sticky inside that scroll area.
  */
 let cleanupOutsideClick;
 const Table = (props, children) => {
-  const { class: className = '', getOpenActionState,  setOpenActionState} = props;
+  const { class: className = '', tableClass = '', getOpenActionState, setOpenActionState } = props;
 
-  // Added 'relative' to the wrapper for positioning context.
   const baseClasses = 'min-w-full divide-y divide-gray-200 sm:rounded-lg relative';
 
-  // The inner <table> tag needs no overflow settings, but we need to prevent it from expanding
-  const tableElement = Row({ tagType: 'table', class: 'min-w-full divide-y divide-gray-300' }, children);
+  const tableElement = Row({ tagType: 'table', class: `min-w-full divide-y divide-gray-300 ${tableClass}`.trim() }, children);
 
-  // Wrapper div for responsive scrolling AND fixed header
-  // Ensure the outer wrapper cannot become the scroll container by forcing `overflow-hidden`.
-  // The inner scrollable div (`overflow-y-auto`) is the single vertical scroller that
-  // `position: sticky` on table headers will use.
+  // Outer: Table takes rest of space in parent flex-col; flex-col + overflow-hidden so inner can scroll
+  const outerClass = `flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden ${baseClasses} ${className}`.trim();
+  // Inner: scrollable body area – flex-1 min-h-0 min-w-0 overflow-auto; pb-48 so bottom-row dropdowns aren't cut off
+  const scrollClass = 'flex-1 min-h-0 min-w-0 overflow-auto pb-48';
   const container = Row({
     tagType: 'div',
-    class: `overflow-hidden ${baseClasses} ${className} flex flex-col flex-1 min-h-0`
+    class: outerClass
   }, [
-    Row({ tagType: 'div', class: 'overflow-x-auto overflow-y-auto flex-1 min-h-0', 
-      attributes: { 
-        // style: 'max-height: calc(100vh - 12rem);', 
-        id: props.id } }, [
-      tableElement
-    ])
+    Row({
+      tagType: 'div',
+      class: scrollClass,
+      attributes: { id: props.id || undefined }
+    }, [tableElement])
   ]);
 
   // Register once
@@ -78,10 +76,11 @@ const TableBody = (props, children) => {
  */
 const TableRow = (props, children) => {
   const { class: className = '', onClick } = props;
+  const events = onClick ? { click: onClick } : {};
   return Row({
     tagType: 'tr',
     class: className,
-    events: {'click': onClick}
+    events
   }, children);
 };
 

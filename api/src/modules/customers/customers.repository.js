@@ -24,6 +24,17 @@ export class CustomersRepository {
   }
 
   /**
+   * Find supplier by name (case-insensitive, customer_type in supplier/both)
+   */
+  async findSupplierByName(name) {
+    if (!name || String(name).trim() === '') return null
+    return this.knex('customers')
+      .whereRaw('LOWER(name) = LOWER(?)', [name.trim()])
+      .whereIn('customer_type', ['supplier', 'both'])
+      .first()
+  }
+
+  /**
    * Get all customers with pagination, search, and sorting
    * @param {Object} params - { limit, offset, search, sortBy, orderBy }
    * @returns {Object} - { customers, total }

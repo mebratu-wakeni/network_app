@@ -324,10 +324,19 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         return;
       }
 
-      props.setLocalState('importing', true);
+      // Validate reason - prevent submission if "Other"
+      if (importReason === 'Other') {
+        showAlert({
+          title: 'Not Implemented',
+          message: 'Import with "other" reason is not yet implemented. Please use "Initial Stock" for now.',
+          variant: 'warning',
+          icon: 'warning-outline'
+        });
+        return;
+      }
 
-      // Validate reason
-      const finalReason = importReason === 'Other' ? customReason.trim() : importReason;
+      // Validate reason is provided
+      const finalReason = importReason.trim();
       if (!finalReason || finalReason === '') {
         showAlert({
           title: 'Reason Required',
@@ -335,9 +344,10 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           variant: 'warning',
           icon: 'warning-outline'
         });
-        props.setLocalState('importing', false);
         return;
       }
+
+      props.setLocalState('importing', true);
 
       try {
         // Use viewModel method for bulk import with reason
@@ -377,8 +387,11 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     };
 
     const validCount = validationResults.filter(r => r && r.isValid).length;
+    
     const invalidCount = validationResults.filter(r => r && !r.isValid).length;
-    const canImport = validCount > 0 && !importing && !importResults;
+    const isOtherReason = importReason === 'Other';
+    // Disable import if reason is "Other" (not yet implemented)
+    const canImport = validCount > 0 && !importing && !importResults && !isOtherReason;
 
     return Card({
       class: 'bg-white rounded-lg shadow-2xl w-full max-w-5xl transform transition-all max-h-[90vh] overflow-hidden flex flex-col'
@@ -408,18 +421,30 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               options: ['Initial Stock', 'Other'],
               selectedOption: importReason
             })),
-            ...(importReason === 'Other' ? [Row({ class: 'flex flex-col gap-2 mt-2' }, [
-              Label({ name: 'custom-reason', text: 'Specify Reason *', class: 'text-sm font-medium text-gray-700' }),
-              Input({
-                type: 'text',
-                name: 'custom-reason',
-                value: customReason,
-                onChange: (e) => props.setLocalState('customReason', e.target.value),
-                placeholder: 'Enter reason for importing stock...',
-                class: 'w-full',
-                delegator
-              })
-            ])] : [])
+            ...(importReason === 'Other' ? [
+              Row({ class: 'bg-yellow-50 border border-yellow-200 rounded-lg p-4 mt-2' }, [
+                Row({ class: 'flex items-start gap-3' }, [
+                  IonIcon({ name: 'warning-outline', class: 'text-xl text-yellow-600 flex-shrink-0 mt-0.5' }),
+                  Row({ class: 'flex flex-col gap-2 flex-1' }, [
+                    Row({ class: 'text-sm font-semibold text-yellow-800' }, 'Not Yet Implemented'),
+                    Row({ class: 'text-sm text-yellow-700' }, 'Import with "other" reason is not yet implemented. Please use "Initial Stock" for now.'),
+                    Row({ class: 'flex flex-col gap-2 mt-2' }, [
+                      Label({ name: 'custom-reason', text: 'Specify Reason (for future implementation)', class: 'text-xs font-medium text-yellow-700' }),
+                      Input({
+                        type: 'text',
+                        name: 'custom-reason',
+                        value: customReason,
+                        onChange: (e) => props.setLocalState('customReason', e.target.value),
+                        placeholder: 'Enter reason for importing stock...',
+                        class: 'w-full',
+                        disabled: true,
+                        delegator
+                      })
+                    ])
+                  ])
+                ])
+              ])
+            ] : [])
           ]),
           
           // File Selection Section
@@ -548,10 +573,10 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.productCode || '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.location || '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.quantity?.toLocaleString() || '-'),
-                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.unitCost ? `ETB ${normalizedRow.unitCost.toFixed(2)}` : '-'),
+                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.unitCost ? `Br ${normalizedRow.unitCost.toFixed(2)}` : '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.expiryDate || '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, normalizedRow.batchNumber || '-'),
-                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.sellingPrice ? `ETB ${normalizedRow.sellingPrice.toFixed(2)}` : '-'),
+                        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right' }, normalizedRow.sellingPrice ? `Br ${normalizedRow.sellingPrice.toFixed(2)}` : '-'),
                         TableDCell({ class: 'px-4 py-3 text-sm text-center' },
                           validation.isValid
                             ? Row({ class: 'flex items-center justify-center gap-1 text-green-700' }, [

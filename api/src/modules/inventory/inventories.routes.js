@@ -8,7 +8,7 @@ import { authenticate, requireRules } from '../../middleware/auth.js'
 import { InventoriesRepository } from './inventories.repository.js'
 import { InventoriesService } from './inventories.service.js'
 import { InventoriesController } from './inventories.controller.js'
-import { validate, bulkImportStockSchema, updateStockItemSchema, adjustStockItemSchema, borrowFromStockSchema } from './inventories.schema.js'
+import { validate, bulkImportStockSchema, updateStockItemSchema, adjustStockItemSchema, borrowFromStockSchema, returnBorrowedToStockSchema, returnBorrowedFromStockSchema } from './inventories.schema.js'
 
 // Initialize dependencies (Dependency Injection pattern)
 const repository = new InventoriesRepository(knex)
@@ -29,6 +29,13 @@ router.post(
   requireRules(['CanImportStock']),
   validate(bulkImportStockSchema),
   controller.bulkImport
+)
+
+// Inventories by product (for return-borrowed drawer, etc.) — before /:id
+router.get(
+  '/by-product/:productId',
+  requireRules(['CanSeeStockItemDetails']),
+  controller.listByProduct
 )
 
 // Export stock to CSV - requires CanExportStock rule (or CanSeeStockItemDetails)
@@ -59,6 +66,43 @@ router.post(
   requireRules(['CanReceiveBorrowedFromStock']),
   validate(borrowFromStockSchema),
   controller.borrowFrom
+)
+
+// Get return history for borrow to inventory - requires CanSeeStockItemDetails rule
+router.get(
+  '/borrow-to/:id/returns',
+  requireRules(['CanSeeStockItemDetails']),
+  controller.getBorrowToReturnHistory
+)
+
+// Process return of borrowed-to items - requires CanReturnBorrowedToStock rule
+router.post(
+  '/borrow-to/return',
+  requireRules(['CanReturnBorrowedToStock']),
+  validate(returnBorrowedToStockSchema),
+  controller.processBorrowToReturn
+)
+
+// Get return status by inventory ID
+router.get(
+  '/borrow-from/:inventoryId/return-status',
+  requireRules(['CanSeeStockItemDetails']),
+  controller.getBorrowFromReturnStatus
+)
+
+// Get return status by borrow_from_inventories id (borrowed-from list rows)
+router.get(
+  '/borrow-from/by-borrow/:borrowFromId/return-status',
+  requireRules(['CanSeeStockItemDetails']),
+  controller.getBorrowFromReturnStatusByBorrowId
+)
+
+// Process return of borrowed-from items - requires CanReturnBorrowedFromStock rule
+router.post(
+  '/borrow-from/return',
+  requireRules(['CanReturnBorrowedFromStock']),
+  validate(returnBorrowedFromStockSchema),
+  controller.processBorrowFromReturn
 )
 
 export default router

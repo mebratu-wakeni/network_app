@@ -10,6 +10,9 @@ import FormData from "form-data"; // Node FormData
 import { UserIpcHandlers } from './users/ipcHandlers.js'
 import { InventoryIpcHandlers } from './inventory/ipcHandlers.js'
 import { CustomersIpcHandlers } from './customers/ipcHandlers.js'
+import { PurchaseIpcHandlers } from './purchase/ipcHandlers.js'
+import { SalesIpcHandlers } from './sales/ipcHandlers.js'
+import { SettingsIpcHandlers } from './settings/ipcHandlers.js'
 import { setToken } from './config/authManager.js'
 
 const require = createRequire(import.meta.url)
@@ -121,7 +124,9 @@ ipcMain.handle('auth:login', async (event, credentials) => {
 UserIpcHandlers();
 InventoryIpcHandlers();
 CustomersIpcHandlers();
-
+PurchaseIpcHandlers();
+SalesIpcHandlers();
+SettingsIpcHandlers();
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

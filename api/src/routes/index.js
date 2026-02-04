@@ -6,6 +6,9 @@ import products from '../modules/inventory/products.routes.js'
 import inventories from '../modules/inventory/inventories.routes.js'
 import binCards from '../modules/inventory/binCards.routes.js'
 import customers from '../modules/customers/customers.routes.js'
+import purchases from '../modules/purchase/purchase.routes.js'
+import sales from '../modules/sales/sales.routes.js'
+import settings from '../modules/settings/settings.routes.js'
 
 const router = Router()
 
@@ -27,6 +30,9 @@ router.use('/products', products)
 router.use('/inventories', inventories)
 router.use('/bin-cards', binCards)
 router.use('/customers', customers)
+router.use('/purchases', purchases)
+router.use('/sales', sales)
+router.use('/settings', settings)
 
 export default router
 

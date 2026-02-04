@@ -40,8 +40,29 @@ export const seed = async (knex) => {
     { key: 'CanReceiveBorrowedFromStock', description: 'Can receive stock items borrowed from partners (temporary receipt)' },
     { key: 'CanReturnBorrowedFromStock', description: 'Can return stock items that were borrowed from partners (settling borrowed items)' },
     { key: 'CanReceiveBorrowedToStock', description: 'Can receive back stock items that were borrowed to partners (getting items back)' },
+    { key: 'CanReturnBorrowedToStock', description: 'Can return stock items that were borrowed to partners (processing returns from partners)' },
     { key: 'CanAdjustStockItemQuantities', description: 'Can adjust stock item quantities (add, subtract, set)' },
-    { key: 'CanTransferItemShelf', description: 'Can transfer stock items between locations/shelves' }
+    { key: 'CanTransferItemShelf', description: 'Can transfer stock items between locations/shelves' },
+    
+    // Purchase management rules
+    { key: 'CanCreatePurchase', description: 'Can create new purchase orders' },
+    { key: 'CanSeePurchase', description: 'Can view purchase orders and purchase information' },
+    { key: 'CanEditPurchase', description: 'Can edit purchase orders (before full payment)' },
+    { key: 'CanReversePurchase', description: 'Can reverse purchase orders and void receipts' },
+    { key: 'CanPayPurchase', description: 'Can record payments against purchase orders' },
+    { key: 'CanHoldPurchase', description: 'Can create and manage hold orders' },
+    { key: 'CanImportPurchase', description: 'Can import purchases via bulk import' },
+
+    // Sales management rules (API: sales.routes.js)
+    // CanCreateSale -> POST /orders, POST /hold-orders
+    // CanSeeSale -> GET withhold-percentage (any), GET/POST/PATCH/DELETE orders & hold-orders (list, details, pay, withhold confirm/rollback, reverse, archive)
+    // CanEditSalesPrice -> frontend only: edit unit price on sale line (no API route)
+    { key: 'CanCreateSale', description: 'Can create sales orders and hold orders' },
+    { key: 'CanSeeSale', description: 'Can view sales orders, list/hold orders, pay, confirm/rollback withhold, reverse' },
+    { key: 'CanEditSalesPrice', description: 'Can edit selling price on sale line items (otherwise view-only)' },
+    { key: 'CanExportSales', description: 'Can export sales orders and hold orders' },
+
+    { key: 'CanEditSettings', description: 'Can edit system-wide settings (withhold, company info)' }
   ]
 
   // const rules = ruleKeys.map((key) => ({ key, description: key }))
@@ -57,6 +78,10 @@ export const seed = async (knex) => {
     { name: 'Stock Clerk', description: 'Day-to-day stock operations', color: '#9c27b0' },
     { name: 'Stock Viewer', description: 'Read-only access to stock information', color: '#607d8b' },
     { name: 'Borrow Coordinator', description: 'Manage borrowed stock operations', color: '#00bcd4' },
+    { name: 'Purchase Manager', description: 'Full purchase management operations', color: '#795548' },
+    { name: 'Purchase Clerk', description: 'Day-to-day purchase operations', color: '#e91e63' },
+    { name: 'Sales Manager', description: 'Full sales operations; can override selling price', color: '#2e7d32' },
+    { name: 'Sales Cashier', description: 'Process sales at default selling price only', color: '#00838f' },
   ]
   const insertedRoles = await knex('roles').insert(roles).returning(['id', 'name'])
   const roleIdByName = new Map(insertedRoles.map(r => [r.name, r.id]))
@@ -69,14 +94,20 @@ export const seed = async (knex) => {
   const stockRuleIds = insertedRules.filter(r => r.key.startsWith('CanImportStock') || r.key.startsWith('CanExportStock') || r.key.startsWith('CanSeeStock') || r.key.startsWith('CanEditStock') || r.key.startsWith('CanAdjustStock') || r.key.startsWith('CanTransferItem') || r.key.startsWith('CanReceiveBorrowed') || r.key.startsWith('CanReturnBorrowed')).map(r => r.id)
   const stockViewRuleIds = insertedRules.filter(r => r.key === 'CanSeeStockDashboard' || r.key === 'CanSeeTotalStockStat' || r.key === 'CanSeeExpiredStockStat' || r.key === 'CanSeeHighValueStockStat' || r.key === 'CanSeeStockItemDetails').map(r => r.id)
   const stockOperationsRuleIds = [...stockViewRuleIds, ...insertedRules.filter(r => r.key === 'CanEditStockItemDetails' || r.key === 'CanAdjustStockItemQuantities' || r.key === 'CanTransferItemShelf').map(r => r.id)]
-  const borrowRuleIds = [ruleIdByKey.get('CanSeeStockDashboard'), ruleIdByKey.get('CanSeeStockItemDetails'), ruleIdByKey.get('CanReceiveBorrowedFromStock'), ruleIdByKey.get('CanReturnBorrowedFromStock'), ruleIdByKey.get('CanReceiveBorrowedToStock')].filter(id => id !== undefined)
+  const borrowRuleIds = [ruleIdByKey.get('CanSeeStockDashboard'), ruleIdByKey.get('CanSeeStockItemDetails'), ruleIdByKey.get('CanReceiveBorrowedFromStock'), ruleIdByKey.get('CanReturnBorrowedFromStock'), ruleIdByKey.get('CanReceiveBorrowedToStock'), ruleIdByKey.get('CanReturnBorrowedToStock')].filter(id => id !== undefined)
+  const purchaseRuleIds = insertedRules.filter(r => r.key.startsWith('CanCreatePurchase') || r.key.startsWith('CanSeePurchase') || r.key.startsWith('CanEditPurchase') || r.key.startsWith('CanReversePurchase') || r.key.startsWith('CanPayPurchase') || r.key.startsWith('CanHoldPurchase') || r.key.startsWith('CanImportPurchase')).map(r => r.id)
+  const purchaseViewRuleIds = insertedRules.filter(r => r.key === 'CanSeePurchase').map(r => r.id)
+  const purchaseOperationsRuleIds = [...purchaseViewRuleIds, ...insertedRules.filter(r => r.key === 'CanCreatePurchase' || r.key === 'CanPayPurchase' || r.key === 'CanHoldPurchase').map(r => r.id)]
+
+  const salesRuleIds = insertedRules.filter(r => r.key.startsWith('CanEditSalesPrice') || r.key.startsWith('CanCreateSale') || r.key.startsWith('CanSeeSale')).map(r => r.id)
+  const salesApiRuleIds = insertedRules.filter(r => r.key === 'CanCreateSale' || r.key === 'CanSeeSale').map(r => r.id)
 
   const roleRules = []
-  // Admin -> all rules
+  // Admin -> all rules (every permission across all modules)
   for (const rid of allRuleIds) roleRules.push({ role_id: roleIdByName.get('Admin'), rule_id: rid })
-  
-  // Manager -> all inventory rules (products + customers + stock), no user management
-  for (const rid of [...productRuleIds, ...customerRuleIds, ...stockRuleIds]) roleRules.push({ role_id: roleIdByName.get('Manager'), rule_id: rid })
+
+  // Manager -> all inventory rules (products + customers + stock + purchases + sales), no user management
+  for (const rid of [...productRuleIds, ...customerRuleIds, ...stockRuleIds, ...purchaseRuleIds, ...salesRuleIds]) roleRules.push({ role_id: roleIdByName.get('Manager'), rule_id: rid })
   
   // Product Manager -> all product rules
   for (const rid of productRuleIds) roleRules.push({ role_id: roleIdByName.get('Product Manager'), rule_id: rid })
@@ -92,6 +123,18 @@ export const seed = async (knex) => {
   
   // Borrow Coordinator -> borrow operations + viewing
   for (const rid of borrowRuleIds) roleRules.push({ role_id: roleIdByName.get('Borrow Coordinator'), rule_id: rid })
+  
+  // Purchase Manager -> all purchase rules
+  for (const rid of purchaseRuleIds) roleRules.push({ role_id: roleIdByName.get('Purchase Manager'), rule_id: rid })
+
+  // Purchase Clerk -> purchase viewing + basic operations (create, pay, hold) - no edit/reverse/import
+  for (const rid of purchaseOperationsRuleIds) roleRules.push({ role_id: roleIdByName.get('Purchase Clerk'), rule_id: rid })
+
+  // Sales Manager -> all sales rules (CanCreateSale, CanSeeSale, CanEditSalesPrice)
+  for (const rid of salesRuleIds) roleRules.push({ role_id: roleIdByName.get('Sales Manager'), rule_id: rid })
+
+  // Sales Cashier -> sales API only (CanCreateSale, CanSeeSale); no CanEditSalesPrice (selling price is view-only)
+  for (const rid of salesApiRuleIds) roleRules.push({ role_id: roleIdByName.get('Sales Cashier'), rule_id: rid })
 
   await knex('role_rules').insert(roleRules);
 

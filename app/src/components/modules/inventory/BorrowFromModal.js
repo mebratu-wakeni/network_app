@@ -343,7 +343,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               Row({ class: 'flex flex-col gap-2' }, [
                 Label({ name: 'purchase-price', text: 'Purchase Price *', class: 'text-sm font-medium text-gray-700' }),
                 Row({ class: 'flex items-center gap-2' }, [
-                  Row({ class: 'text-gray-600' }, 'ETB'),
+                  Row({ class: 'text-gray-600' }, 'Br'),
                   Input({
                     type: 'number',
                     name: 'purchase-price',

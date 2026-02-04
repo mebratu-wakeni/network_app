@@ -1,13 +1,20 @@
 import { twMerge } from 'tailwind-merge';
-import { ManageDSOutsideClick } from './OutsideClick';
+import { registerDropdownOutsideClickByTag } from './OutsideClick';
 import { Input } from './Input';
 
 const { Row } = Liteframe;
 
+/** Current open dropdown ref; updated by each DropdownSearch when it is open. One listener uses this. */
+const currentOpenRef = { current: null };
 
-let cleanupOutsideClick;
-
-
+// One document listener: if click is not inside [data-dropdown-search], close current open.
+// ES modules run once per app, so this runs once; guard ensures we never attach twice (e.g. if bundler re-evaluates).
+// Callback returns currentOpenRef.current at *call time* (we close over the ref object, not .current).
+let dropdownOutsideClickRegistered = false;
+if (!dropdownOutsideClickRegistered) {
+  registerDropdownOutsideClickByTag(() => currentOpenRef.current);
+  dropdownOutsideClickRegistered = true;
+}
 
 function DropdownSearch(props, children) {
   const {
@@ -51,7 +58,7 @@ function DropdownSearch(props, children) {
 
   const container = Row({
     class: rootClass,
-    attributes: { 'data-dropdown-search': 'root' }
+    attributes: { 'data-dropdown-search': '' }
   }, [
     Input({
       delegator,
@@ -66,13 +73,9 @@ function DropdownSearch(props, children) {
     open && Row({ class: menuBaseClass }, children)
   ]);
 
-  // Register once
-  if (!cleanupOutsideClick && getOpenState && setOpenState) {
-    cleanupOutsideClick = ManageDSOutsideClick({
-      containerEl: container,
-      getOpenState,
-      setOpenState,
-    });
+  // Tell the global listener which dropdown is open (no per-component registration). Only set when open; don't clear when closed (another may be open).
+  if (getOpenState && setOpenState && getOpenState()) {
+    currentOpenRef.current = { getOpenState, setOpenState };
   }
 
   return container;

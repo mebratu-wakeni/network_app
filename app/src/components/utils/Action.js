@@ -66,15 +66,15 @@ function ActionItem(props) {
     icon,
     onClick = () => { },
     danger = false,
+    disabled = false,
     class: className = ''
   } = props;
-
-  
 
   const baseClass = twMerge(
     `
       w-full text-left px-3 py-2 text-sm flex items-center justify-start gap-2
-      transition-colors font-semibold cursor-pointer
+      transition-colors font-semibold
+      ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}
       ${danger
       ? 'text-red-400 hover:bg-red-500/10'
       : 'text-indigo-600 hover:bg-indigo-500/10'
@@ -86,9 +86,11 @@ function ActionItem(props) {
   return Row({
     tagType: 'button',
     class: baseClass,
+    disabled,
     events: {
       click: (e) => {
         e.stopPropagation();
+        if (disabled) return;
         onClick();
       }
     }

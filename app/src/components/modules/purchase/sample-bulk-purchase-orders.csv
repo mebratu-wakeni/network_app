@@ -1,0 +1,6 @@
+supplier_name,order_date,invoice_number,total_amount,amount_paid,withhold_percentage,payment_mode,product_name,batch_number,expiry_date,quantity,unit_price
+Company X,2026-01-15,INV-001,15000,15000,2,cash,Amoxa 500,BATCH-A,2030-05-01,3,3000
+Company X,2026-01-15,INV-001,15000,15000,2,cash,Paracetamol 500mg,BATCH-B,2028-12-31,10,500
+MedSupply Ltd,2026-01-20,INV-2026-002,25000,10000,2,credit,Amoxa 500,BATCH-C,2030-06-15,5,2800
+MedSupply Ltd,2026-01-20,INV-2026-002,25000,10000,2,credit,Ibuprofen 400mg,,2029-03-01,20,350
+MedSupply Ltd,2026-01-20,INV-2026-002,25000,10000,2,credit,Vitamin C 1000mg,BATCH-D,2027-11-30,50,120

@@ -59,29 +59,31 @@ export class InventoryVM extends ViewModel {
     this.setState('category-list', []);
     this.setState('unit-list', []);
 
-    // Stock State
-    this.setState('stock-list', []);
-    this.setState('stock-total-count', 0);
-    this.setState('stock-table-config', {
-      limit: 10,
-      offset: 0,
-      sortBy: 'id',
-      orderBy: 'desc'
+    // Stock State - Consolidated into single object
+    // This state contains all stock data and changes based on filters/search
+    this.setState('stock-list', {
+      items: [], // The actual stock items array
+      total: 0, // Total count
+      stats: { // Statistics
+        total: 0,
+        outOfStock: 0,
+        lowStock: 0,
+        expiringSoon: 0,
+        expired: 0,
+        borrowedFrom: 0,
+        borrowedTo: 0,
+        highValue: 0
+      },
+      config: { // Table configuration
+        limit: 10,
+        offset: 0,
+        sortBy: 'id',
+        orderBy: 'desc'
+      },
+      search: '', // Search query
+      filter: 'all' // Filter: 'all', 'out-of-stock', 'low-stock', etc.
     });
-    this.setState('stock-search-query', '');
-    this.setState('stock-filter', 'all'); // 'all', 'out-of-stock', 'low-stock', etc.
-    
-    // Stock Statistics (aggregate data)
-    this.setState('stock-stats', {
-      total: 0,
-      outOfStock: 0,
-      lowStock: 0,
-      expiringSoon: 0,
-      expired: 0,
-      borrowedFrom: 0,
-      borrowedTo: 0,
-      highValue: 0
-    });
+    this.setState('inventory-by-product-list', []); // Inventories by product (return-borrowed drawer)
 
     // Drawer States (Products)
     this.setState('selected-product', null);
@@ -155,6 +157,12 @@ export class InventoryVM extends ViewModel {
       selectedStocks: [], // Array of {stockId, quantity}
       notes: ''
     });
+    this.setState('return-borrowed-to-form', {
+      returnDate: new Date().toISOString().split('T')[0],
+      returnItems: [], // Array of {batch_number, expiry_date, quantity_returned, location}
+      notes: '',
+      returnHistory: [] // Will be loaded when drawer opens
+    });
 
     // Import Modal State
     this.setState('import-file', null);
@@ -165,11 +173,11 @@ export class InventoryVM extends ViewModel {
 
   // ==================== Partners Methods ====================
 
-  async loadPartners() {
+  async loadPartners(customerType = 'supplier') {
     try {
       this.updateState('loading', true);
       
-      const result = await window.ipcRenderer.invoke('inventory:get-partners');
+      const result = await window.ipcRenderer.invoke('inventory:get-partners', customerType);
       
       this.updateState('partner-list', result || []);
       this.updateState('loading', false);
@@ -722,32 +730,65 @@ export class InventoryVM extends ViewModel {
 
   async loadStock() {
     if (this.getState('loading')) return;
-    
+
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
 
     try {
-      const tableConfig = this.getState('stock-table-config');
-      const searchQuery = this.getState('stock-search-query');
-      const filter = this.getState('stock-filter');
-      
+      const raw = this.getState('stock-list');
+      const stockList = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+      const config = (stockList.config && typeof stockList.config === 'object' && !Array.isArray(stockList.config)) 
+        ? stockList.config 
+        : { limit: 10, offset: 0, sortBy: 'id', orderBy: 'desc' };
+      const search = typeof stockList.search === 'string' ? stockList.search : '';
+      const filter = typeof stockList.filter === 'string' ? stockList.filter : 'all';
+
+      console.log('[InventoryVM] loadStock - Filter:', filter, 'Full state:', stockList);
+
       const result = await window.ipcRenderer.invoke('inventory:get-stock', {
-        limit: tableConfig.limit,
-        offset: tableConfig.offset,
-        search: searchQuery,
+        limit: config.limit,
+        offset: config.offset,
+        search: search,
         filter: filter,
-        sortBy: tableConfig.sortBy,
-        orderBy: tableConfig.orderBy
+        sortBy: config.sortBy,
+        orderBy: config.orderBy
+      });
+
+      console.log('[InventoryVM] loadStock - Result:', {
+        success: result.success,
+        stockCount: result.stock?.length || 0,
+        total: result.total,
+        filter: filter
       });
 
       if (result.success) {
-        this.updateState('stock-list', result.stock || []);
-        this.updateState('stock-total-count', result.total || 0);
-        // Update statistics (should come from backend)
-        if (result.stats) {
-          this.updateState('stock-stats', result.stats);
-        }
+        const statsFallback = {
+          total: 0,
+          outOfStock: 0,
+          lowStock: 0,
+          expiringSoon: 0,
+          expired: 0,
+          borrowedFrom: 0,
+          borrowedTo: 0,
+          highValue: 0,
+          totalCost: 0,
+          itemsWithStock: 0,
+          totalQuantity: 0
+        };
+        const safeStats = (result.stats && typeof result.stats === 'object' && !Array.isArray(result.stats))
+          ? result.stats
+          : (stockList.stats && typeof stockList.stats === 'object' && !Array.isArray(stockList.stats))
+            ? stockList.stats
+            : statsFallback;
+        this.updateState('stock-list', {
+          ...stockList,
+          items: Array.isArray(result.stock) ? result.stock : [],
+          total: typeof result.total === 'number' ? result.total : 0,
+          filter: filter,
+          search: search,
+          stats: safeStats
+        });
         return result.stock;
       }
 
@@ -765,17 +806,18 @@ export class InventoryVM extends ViewModel {
     this.updateState('success', null);
 
     try {
-      const tableConfig = this.getState('stock-table-config');
-      const searchQuery = this.getState('stock-search-query');
-      const filter = this.getState('stock-filter');
+      const stockList = this.getState('stock-list');
+      const config = stockList.config || { sortBy: 'id', orderBy: 'desc' };
+      const search = stockList.search || '';
+      const filter = stockList.filter || 'all';
       
       const result = await window.ipcRenderer.invoke('inventory:export-stock', {
         limit: 10000, // Export all matching records
         offset: 0,
-        search: searchQuery,
+        search: search,
         filter: filter,
-        sortBy: tableConfig.sortBy,
-        orderBy: tableConfig.orderBy
+        sortBy: config.sortBy,
+        orderBy: config.orderBy
       });
 
       if (result.success && result.csvContent) {
@@ -895,52 +937,69 @@ export class InventoryVM extends ViewModel {
   }
 
   updateStockSearchQuery(query) {
-    this.updateState('stock-search-query', query);
-    // Reset to first page when searching
-    this.updateState('stock-table-config', {
-      ...this.getState('stock-table-config'),
-      offset: 0
+    const stockList = this.getState('stock-list');
+    this.updateState('stock-list', {
+      ...stockList,
+      search: query,
+      config: {
+        ...stockList.config,
+        offset: 0 // Reset to first page when searching
+      }
     });
   }
 
   updateStockFilter(filter) {
-    this.updateState('stock-filter', filter);
-    // Reset to first page when filtering
-    this.updateState('stock-table-config', {
-      ...this.getState('stock-table-config'),
-      offset: 0
+    const stockList = this.getState('stock-list');
+    this.updateState('stock-list', {
+      ...stockList,
+      filter: filter,
+      config: {
+        ...stockList.config,
+        offset: 0 // Reset to first page when filtering
+      }
     });
   }
 
   setStockLimit(limit) {
-    const tableConfig = this.getState('stock-table-config');
-    this.updateState('stock-table-config', {
-      ...tableConfig,
-      limit: parseInt(limit),
-      offset: 0 // Reset to first page
+    const stockList = this.getState('stock-list');
+    this.updateState('stock-list', {
+      ...stockList,
+      config: {
+        ...stockList.config,
+        limit: parseInt(limit),
+        offset: 0 // Reset to first page
+      }
     });
   }
 
   nextStockPage() {
-    const tableConfig = this.getState('stock-table-config');
-    const totalCount = this.getState('stock-total-count');
+    const stockList = this.getState('stock-list');
+    const config = stockList.config || { limit: 10, offset: 0 };
+    const total = stockList.total || 0;
     
-    if (tableConfig.offset + tableConfig.limit >= totalCount) return;
+    if (config.offset + config.limit >= total) return;
     
-    this.updateState('stock-table-config', {
-      ...tableConfig,
-      offset: tableConfig.offset + tableConfig.limit
+    this.updateState('stock-list', {
+      ...stockList,
+      config: {
+        ...config,
+        offset: config.offset + config.limit
+      }
     });
   }
 
   previousStockPage() {
-    const tableConfig = this.getState('stock-table-config');
+    const stockList = this.getState('stock-list');
+    const config = stockList.config || { limit: 10, offset: 0 };
     
-    if (tableConfig.offset <= 0) return;
+    if (config.offset <= 0) return;
     
-    this.updateState('stock-table-config', {
-      ...tableConfig,
-      offset: Math.max(0, tableConfig.offset - tableConfig.limit)
+    this.updateState('stock-list', {
+      ...stockList,
+      config: {
+        ...config,
+        offset: Math.max(0, config.offset - config.limit)
+      }
     });
   }
 
@@ -951,7 +1010,12 @@ export class InventoryVM extends ViewModel {
   }
 
   getStockList() {
-    return this.getState('stock-list');
+    const stockList = this.getState('stock-list');
+    return stockList?.items || [];
+  }
+
+  getInventoriesByProductList() {
+    return this.getState('inventory-by-product-list') || [];
   }
 
   getPartnerList() {
@@ -959,19 +1023,32 @@ export class InventoryVM extends ViewModel {
   }
 
   getStockStats() {
-    return this.getState('stock-stats');
+    const stockList = this.getState('stock-list');
+    return stockList?.stats || {
+      total: 0,
+      outOfStock: 0,
+      lowStock: 0,
+      expiringSoon: 0,
+      expired: 0,
+      borrowedFrom: 0,
+      borrowedTo: 0,
+      highValue: 0,
+      totalCost: 0,
+      itemsWithStock: 0,
+      totalQuantity: 0
+    };
   }
 
   getActiveTab() {
     return this.getState('inventory-tab');
   }
 
-  async updateTab(value) {
-    this.updateState('inventory-tab', value);
-    // Load data for the new tab
-    if (value === 'products') {
+  async updateTab(tabKey) {
+    this.updateState('inventory-tab', tabKey);
+    // Fetch data for the active tab
+    if (tabKey === 'products') {
       await this.loadProducts();
-    } else if (value === 'stock') {
+    } else if (tabKey === 'stock') {
       await this.loadStock();
     }
   }
@@ -1117,6 +1194,9 @@ export class InventoryVM extends ViewModel {
         partnerSearchQuery: '',
         showPartnerDropdown: false
       });
+      // Load all customers for adjust stock drawer (needed for borrow-to operations)
+      // This ensures customers with type 'both', 'retailer', 'other' are available
+      this.loadPartners('all');
     } else if (drawerType === 'transfer' && stockItem) {
       this.updateState('transfer-stock-form', {
         quantity: 0,
@@ -1128,8 +1208,18 @@ export class InventoryVM extends ViewModel {
       this.updateState('return-borrowed-form', {
         returnDate: new Date().toISOString().split('T')[0],
         returnQuantity: 0,
-        selectedStocks: [],
-        notes: ''
+        selectedStocks: [], // Array of {inventory_id, quantity}
+        notes: '',
+        returnStatus: null, // { totalBorrowed, totalReturned, remaining }
+        availableStocks: [] // Array of inventory items from inventories table
+      });
+    } else if (drawerType === 'return-borrowed-to' && stockItem) {
+      // Initialize return-borrowed-to form state
+      this.updateState('return-borrowed-to-form', {
+        returnDate: new Date().toISOString().split('T')[0],
+        returnQuantity: 0,
+        notes: '',
+        returnHistory: [] // Will be loaded when drawer opens
       });
     }
     
@@ -1241,15 +1331,6 @@ export class InventoryVM extends ViewModel {
     });
   }
 
-  // Return Borrowed Form
-  updateReturnBorrowedForm(key, value) {
-    const form = this.getState('return-borrowed-form');
-    this.updateState('return-borrowed-form', {
-      ...form,
-      [key]: value
-    });
-  }
-
   updateReturnBorrowedSelectedStocks(stocks) {
     this.updateState('return-borrowed-form', {
       ...this.getState('return-borrowed-form'),
@@ -1267,6 +1348,271 @@ export class InventoryVM extends ViewModel {
       selectedStocks: [],
       notes: ''
     });
+  }
+
+  /**
+   * Get return history for a borrow_to_inventory record
+   */
+  async getBorrowToReturnHistory(borrowToInventoryId) {
+    if (this.getState('loading')) return;
+    
+    this.updateState('loading', true);
+    this.updateState('error', null);
+
+    try {
+      const result = await window.ipcRenderer.invoke('inventory:get-borrow-to-return-history', borrowToInventoryId);
+
+      if (result.success) {
+        return result.history || [];
+      }
+
+      throw new Error(result.error || 'Failed to get return history');
+    } catch (error) {
+      console.error('Error getting return history:', error);
+      this.updateState('error', { message: error.message || 'Failed to get return history' });
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  /**
+   * Process return of borrowed-to items
+   */
+  async processBorrowToReturn(returnData) {
+    if (this.getState('loading')) return;
+    
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    this.updateState('success', null);
+
+    try {
+      const result = await window.ipcRenderer.invoke('inventory:process-borrow-to-return', returnData);
+
+      if (result.success) {
+        this.updateState('success', { message: 'Return processed successfully' });
+        // Reset form after successful return
+        this.updateState('return-borrowed-to-form', {
+          returnDate: new Date().toISOString().split('T')[0],
+          returnItems: [],
+          notes: '',
+          returnHistory: []
+        });
+        this.updateState('loading', false);
+        // Reload stock list to reflect updated inventory
+        try {
+          console.log('[InventoryVM] processBorrowToReturn calling loadStock');
+          await this.loadStock();
+          console.log('[InventoryVM] processBorrowToReturn loadStock done');
+        } catch (loadError) {
+          console.error('Error reloading stock after return:', loadError);
+        }
+        return result.return;
+      }
+
+      throw new Error(result.error || 'Failed to process return');
+    } catch (error) {
+      console.error('Error processing return:', error);
+      this.updateState('error', { message: error.message || 'Failed to process return' });
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  /**
+   * Get return status for a borrowed-from item (remaining to return, etc.).
+   * Pass { borrowFromId } when row is from borrowed-from list, or { borrowedInventoryId } when by inventory.
+   * Updates viewModel state with return status.
+   */
+  async getBorrowFromReturnStatus(opts = {}) {
+    try {
+      console.log('[InventoryVM] getBorrowFromReturnStatus called with opts:', opts);
+      const result = await window.ipcRenderer.invoke('inventory:get-borrow-from-return-status', opts);
+      console.log('[InventoryVM] getBorrowFromReturnStatus raw result:', JSON.stringify(result, null, 2));
+      
+      if (result && (result.success || result.ok)) {
+        const returnStatus = {
+          totalBorrowed: Number(result.totalBorrowed) || 0,
+          totalReturned: Number(result.totalReturned) || 0,
+          remaining: Number(result.remaining) || 0
+        };
+        console.log('[InventoryVM] Parsed returnStatus:', returnStatus);
+        
+        // Update viewModel state and trigger re-render
+        const form = this.getState('return-borrowed-form') || {};
+        this.updateState('loading', true);
+        this.updateState('return-borrowed-form', {
+          ...form,
+          returnStatus
+        });
+        
+        // Verify state was updated
+        const updatedForm = this.getState('return-borrowed-form');
+        console.log('[InventoryVM] State after update:', {
+          returnStatus: updatedForm?.returnStatus,
+          remaining: updatedForm?.returnStatus?.remaining
+        });
+        
+        // Complete re-render trigger
+        setTimeout(() => {
+          this.updateState('loading', false);
+        }, 0);
+        
+        return returnStatus;
+      }
+      
+      const errorMsg = result?.error || 'Failed to get return status';
+      console.error('[InventoryVM] getBorrowFromReturnStatus failed:', errorMsg, result);
+      throw new Error(errorMsg);
+    } catch (error) {
+      console.error('[InventoryVM] Error getting borrow from return status:', error);
+      const defaultStatus = { totalBorrowed: 0, totalReturned: 0, remaining: 0 };
+      const form = this.getState('return-borrowed-form') || {};
+      this.updateState('return-borrowed-form', {
+        ...form,
+        returnStatus: defaultStatus
+      });
+      // Trigger re-render even on error
+      setTimeout(() => {
+        this.updateState('loading', false);
+      }, 0);
+      return defaultStatus;
+    }
+  }
+
+  /**
+   * Load inventories by product_id (inventories table only). All have valid inventory id.
+   * Used by return-borrowed drawer for available stock.
+   * Updates viewModel state with available stocks.
+   */
+  async loadInventoriesByProduct(productId) {
+    try {
+      console.log('[InventoryVM] loadInventoriesByProduct called with productId:', productId);
+      // Trigger re-render by updating loading state
+      this.updateState('loading', true);
+      
+      const result = await window.ipcRenderer.invoke('inventory:get-inventories-by-product', productId);
+      console.log('[InventoryVM] loadInventoriesByProduct result:', result);
+      const items = (result.success || result.ok) ? (result.items || []) : [];
+      console.log('[InventoryVM] loadInventoriesByProduct items:', items.length, items);
+      
+      // Update both the old state (for backward compatibility) and new form state
+      this.updateState('inventory-by-product-list', items);
+      const form = this.getState('return-borrowed-form') || {};
+      this.updateState('return-borrowed-form', {
+        ...form,
+        availableStocks: items
+      });
+      
+      // Complete re-render trigger
+      setTimeout(() => {
+        this.updateState('loading', false);
+      }, 0);
+      
+      return items;
+    } catch (error) {
+      console.error('Error loading inventories by product:', error);
+      this.updateState('inventory-by-product-list', []);
+      const form = this.getState('return-borrowed-form') || {};
+      this.updateState('return-borrowed-form', {
+        ...form,
+        availableStocks: []
+      });
+      // Complete re-render trigger even on error
+      setTimeout(() => {
+        this.updateState('loading', false);
+      }, 0);
+      return [];
+    }
+  }
+
+  /**
+   * Process return of borrowed-from items (with GL adjustments)
+   * Accepts returnItems as array of {inventory_id, quantity}
+   * Backend accepts both {inventory_id, quantity} and {returningInventoryId, quantityReturned} formats
+   */
+  async processBorrowFromReturn(returnData) {
+    if (this.getState('loading')) return;
+
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    this.updateState('success', null);
+
+    try {
+      // Send data directly - backend handles both formats
+      // Frontend sends: {inventory_id, quantity}
+      // Backend accepts: {inventory_id, quantity} OR {returningInventoryId, quantityReturned}
+      const result = await window.ipcRenderer.invoke('inventory:process-borrow-from-return', returnData);
+      console.log('[InventoryVM] processBorrowFromReturn IPC result:', typeof result, Array.isArray(result), result && typeof result === 'object' ? Object.keys(result) : 'n/a');
+      const ok = result && (result.success === true || result.ok === true);
+
+      if (ok) {
+        this.updateState('success', { message: 'Borrow from return processed successfully' });
+        // Reset form after successful return
+        this.updateState('return-borrowed-form', {
+          returnDate: new Date().toISOString().split('T')[0],
+          returnQuantity: 0,
+          selectedStocks: [],
+          notes: '',
+          returnStatus: null,
+          availableStocks: []
+        });
+        this.updateState('loading', false);
+        try {
+          console.log('[InventoryVM] processBorrowFromReturn calling loadStock');
+          await this.loadStock();
+          console.log('[InventoryVM] processBorrowFromReturn loadStock done');
+        } catch (loadError) {
+          console.error('Error reloading stock after return:', loadError);
+        }
+        return;
+      }
+
+      const errMsg = (result && (result.error || result.message)) || 'Failed to process borrow from return';
+      const errStr = typeof errMsg === 'string' ? errMsg : (errMsg && errMsg.toString ? errMsg.toString() : 'Failed to process borrow from return');
+      throw new Error(errStr);
+    } catch (error) {
+      console.error('Error processing borrow from return:', error);
+      console.error('[InventoryVM] processBorrowFromReturn catch - error.message:', error?.message, 'error.stack:', error?.stack);
+      const errMessage = (error && error.message && typeof error.message === 'string') ? error.message : 'Failed to process borrow from return';
+      this.updateState('error', { message: errMessage });
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  /**
+   * Update return-borrowed-to form data (for complex data types)
+   * Triggers re-render by updating loading state
+   */
+  updateReturnBorrowedToForm(updates) {
+    this.updateState('return-borrowed-to-form', {
+      ...this.getState('return-borrowed-to-form'),
+      ...updates
+    });
+    // Trigger re-render
+    this.updateState('loading', true);
+    setTimeout(() => this.updateState('loading', false), 0);
+  }
+
+  /**
+   * Update return-borrowed form data (for complex data types)
+   * Triggers re-render by updating loading state
+   */
+  updateReturnBorrowedForm(key, value) {
+    const form = this.getState('return-borrowed-form') || {};
+    // Trigger re-render by updating loading state
+    this.updateState('loading', true);
+    this.updateState('return-borrowed-form', {
+      ...form,
+      [key]: value
+    });
+    // Complete re-render trigger
+    setTimeout(() => {
+      this.updateState('loading', false);
+    }, 0);
   }
 
   // Stock Details Form (for editing stock item details)
@@ -1378,12 +1724,15 @@ export class InventoryVM extends ViewModel {
     this.loadProducts();
   }
   setStockSort(column) {
-    console.log('setStockSort called:', column);
-    const tableConfig = this.getState('stock-table-config');
-    this.updateState('stock-table-config', {
-      ...tableConfig,
-      sortBy: column,
-      orderBy: tableConfig.orderBy === 'asc' ? 'desc' : 'asc'
+    const stockList = this.getState('stock-list');
+    const currentOrderBy = stockList.config?.orderBy || 'desc';
+    this.updateState('stock-list', {
+      ...stockList,
+      config: {
+        ...stockList.config,
+        sortBy: column,
+        orderBy: currentOrderBy === 'asc' ? 'desc' : 'asc'
+      }
     });
     this.loadStock();
   }

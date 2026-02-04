@@ -22,6 +22,24 @@ export class ProductsRepository {
   }
 
   /**
+   * Get default category for new products (e.g. bulk import). Prefer "supplies", else first.
+   */
+  async getDefaultCategory() {
+    const byName = await this.findCategoryByName('supplies')
+    if (byName) return byName
+    return this.knex('categories').select('id', 'name').limit(1).first()
+  }
+
+  /**
+   * Get default unit for new products (e.g. bulk import). Prefer "bottle", else first.
+   */
+  async getDefaultUnit() {
+    const byName = await this.findUnitByName('bottle')
+    if (byName) return byName
+    return this.knex('units').select('id', 'name').limit(1).first()
+  }
+
+  /**
    * Get all categories (for validation)
    */
   async getAllCategories() {

@@ -80,11 +80,16 @@ class InventoryManager {
   }
 
   /**
-   * Get Partners/Customers (only partner type)
+   * Get Partners/Customers
+   * @param {string} token - Auth token
+   * @param {string} customerType - Optional: 'supplier' (default for borrow-from), 'all' (for borrow-to), or any specific customer type
    */
-  async getPartners(token) {
+  async getPartners(token, customerType = 'supplier') {
     try {
-      const url = `${getApiUrl('/customers')}?customer_type=supplier&limit=1000&offset=0`;
+      // For borrow-to operations, we need all customers, not just suppliers
+      const url = customerType === 'all' 
+        ? `${getApiUrl('/customers')}?limit=1000&offset=0`
+        : `${getApiUrl('/customers')}?customer_type=${customerType}&limit=1000&offset=0`;
       console.log('[InventoryManager] getPartners - API URL:', url);
       
       const response = await fetch(url, {
@@ -758,6 +763,152 @@ class InventoryManager {
         success: false,
         error: error.message || 'Failed to return borrowed stock',
         details: error.details || null
+      };
+    }
+  }
+
+  /**
+   * Get return history for a borrow_to_inventory record
+   */
+  async getBorrowToReturnHistory(borrowToInventoryId, token) {
+    try {
+      const response = await this.apiRequest(`/inventories/borrow-to/${borrowToInventoryId}/returns`, {
+        method: 'GET',
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        history: response.history || [],
+        error: response.error || null
+      };
+    } catch (error) {
+      console.error('[InventoryManager] Error getting borrow to return history:', error);
+      return {
+        success: false,
+        history: [],
+        error: error.message || 'Failed to get return history'
+      };
+    }
+  }
+
+  /**
+   * Process return of borrowed-to items
+   */
+  async processBorrowToReturn(returnData, token) {
+    try {
+      const response = await this.apiRequest('/inventories/borrow-to/return', {
+        method: 'POST',
+        body: JSON.stringify(returnData),
+      }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        return: response.return || response.data || null,
+        error: response.error || null
+      };
+    } catch (error) {
+      console.error('[InventoryManager] Error processing borrow to return:', error);
+      return {
+        success: false,
+        return: null,
+        error: error.message || 'Failed to process return'
+      };
+    }
+  }
+
+  /**
+   * Get return status for a borrowed-from item (remaining to return, etc.).
+   * Pass { borrowFromId } when row is from borrowed-from list, or { borrowedInventoryId } when by inventory.
+   */
+  async getBorrowFromReturnStatus(opts, token) {
+    try {
+      // Always use borrowFromId endpoint, but pass borrowedInventoryId as query param if available
+      const borrowFromId = opts?.borrowFromId;
+      if (!borrowFromId) {
+        throw new Error('borrowFromId is required');
+      }
+      
+      const borrowedInventoryId = opts?.borrowedInventoryId;
+      let url = `/inventories/borrow-from/by-borrow/${borrowFromId}/return-status`;
+      
+      // Add borrowedInventoryId as query parameter if provided
+      if (borrowedInventoryId) {
+        url += `?borrowedInventoryId=${borrowedInventoryId}`;
+      }
+      
+      const response = await this.apiRequest(url, { method: 'GET' }, token);
+
+      return {
+        success: response.ok === true || response.success === true,
+        totalBorrowed: response.totalBorrowed ?? 0,
+        totalReturned: response.totalReturned ?? 0,
+        remaining: response.remaining ?? 0,
+        error: response.error || null
+      };
+    } catch (error) {
+      console.error('[InventoryManager] Error getting borrow from return status:', error);
+      return {
+        success: false,
+        totalBorrowed: 0,
+        totalReturned: 0,
+        remaining: 0,
+        error: error.message || 'Failed to get return status'
+      };
+    }
+  }
+
+  /**
+   * Get inventories by product_id (inventories table only). All have valid inventory id.
+   */
+  async getInventoriesByProduct(productId, token) {
+    try {
+      const response = await this.apiRequest(`/inventories/by-product/${productId}`, { method: 'GET' }, token);
+      return {
+        success: response.ok === true || response.success === true,
+        items: response.items || [],
+        error: response.error || null
+      };
+    } catch (error) {
+      console.error('[InventoryManager] Error getting inventories by product:', error);
+      return { success: false, items: [], error: error.message || 'Failed to get inventories by product' };
+    }
+  }
+
+  /**
+   * Process return of borrowed-from items (with GL adjustments)
+   * 
+   * @param {Object} returnData - Return data from frontend
+   * @param {number} returnData.borrowedInventoryId - ID of the borrowed inventory
+   * @param {Array} returnData.returnItems - Array of {inventory_id: number, quantity: number}
+   *   Backend also accepts {returningInventoryId, quantityReturned} format for backward compatibility
+   * @param {string} returnData.returnedOn - Return date (YYYY-MM-DD)
+   * @param {string} [returnData.note] - Optional note
+   * @param {string} token - Authentication token
+   * @returns {Promise<Object>} Result with success status and return details
+   */
+  async processBorrowFromReturn(returnData, token) {
+    try {
+      console.log('[InventoryManager] processBorrowFromReturn input:', typeof returnData, Array.isArray(returnData), JSON.stringify(returnData));
+      const response = await this.apiRequest('/inventories/borrow-from/return', {
+        method: 'POST',
+        body: JSON.stringify(returnData),
+      }, token);
+
+      const out = {
+        success: response.ok === true || response.success === true,
+        result: response.result || response.data || null,
+        error: response.error || null
+      };
+      console.log('[InventoryManager] processBorrowFromReturn response success:', out.success, 'result type:', typeof out.result, Array.isArray(out.result));
+      return out;
+    } catch (error) {
+      console.error('[InventoryManager] Error processing borrow from return:', error);
+      console.error('[InventoryManager] error.message:', error?.message);
+      console.error('[InventoryManager] error.stack:', error?.stack);
+      return {
+        success: false,
+        result: null,
+        error: error.message || 'Failed to process borrow from return'
       };
     }
   }

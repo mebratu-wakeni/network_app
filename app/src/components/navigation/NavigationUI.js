@@ -1,11 +1,14 @@
 const { Row, StatefulRow } = Liteframe;
 import { InventoryUI } from "../modules/inventory/Inventory.js";
 import { Inventory } from "../modules/inventory/Inventory_old.js";
+import { PurchaseUI } from "../modules/purchase/Purchase.js";
+import { SalesUI } from "../modules/sales/Sales.js";
 import ServerManagerUI from "../serverManager/ServerManagerUI.js";
 import { cleanupServerManager } from "../serverManager/ServerManagerVM.js";
 import UserProfile from "../users/profile/profile.js";
 import UsersTable from "../users/UsersUI.js";
 import { CustomersUI } from "../customers/CustomersUI.js";
+import { SettingsUI } from "../settings/SettingsUI.js";
 import { Card, CardHeader } from "../utils/Card.js";
 import ExampleCard from "../utils/example.js";
 import ProductsTable from "../utils/exampleTable.js";
@@ -35,11 +38,13 @@ export default function  NavigationUI(props) {
       }
       if (option.route === '/') return ExampleCard();
       if (option.route === '/inventory') return InventoryUI();
+      if (option.route === '/purchase') return PurchaseUI();
+      if (option.route === '/sales') return SalesUI();
       if (option.route === '/customers') return CustomersUI();
       if (option.route === '/users') return UsersTable();
-
+      if (option.route === '/settings') return SettingsUI();
       if (option.route === '/user-profile') return UserProfile();
-      
+
       return Row({ tagType: 'h2'}, 'Unspecified Route')
        // Replace with actual content
     });
@@ -49,9 +54,14 @@ export default function  NavigationUI(props) {
 
   const activeMenu = props.viewModel.getState('active-menu');
   const navCollapsed = props.getLocalState('navCollapsed');
-  
+  const auth = props.viewModel.getState('auth') || {};
+  const userRules = (auth.user && auth.user.rules) ? auth.user.rules : [];
+  const menuOptions = props.viewModel.menuOptions.filter(opt =>
+    !opt.requireRule || (Array.isArray(userRules) && userRules.includes(opt.requireRule))
+  );
+
   return Row({ tagType: 'ul', class: "space-y-2" }, [
-    ...props.viewModel.menuOptions.map(option => Row({ 
+    ...menuOptions.map(option => Row({ 
       tagType: 'li',
       class: navCollapsed ? 'overflow-x-hidden' : ''
     }, [

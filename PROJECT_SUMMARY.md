@@ -224,7 +224,7 @@ network-desktop-app/
 - Permission-based access control
 
 ### Stock Management Enhancements
-- Currency changed from "$" to "ETB" (Ethiopian Birr)
+- Currency changed from "$" to "Br" (Ethiopian Birr)
 - Date formatting helper: `dd/mm/yyyy` format
 - Removed "Total Value" column from stock table
 - Separate edit actions for details vs pricing

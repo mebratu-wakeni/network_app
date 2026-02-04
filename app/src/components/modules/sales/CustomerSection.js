@@ -1,0 +1,140 @@
+import { CardHeader, CardBody } from '../../utils/Card';
+import { Input } from '../../utils/Input';
+import { IonIcon } from '../../utils/Icon';
+import { DropdownSearch, DropdownSearchItem } from '../../utils/DropdownSearch';
+import Badge from '../../utils/Badge';
+import { formItem } from './ProductSection';
+
+const { Row } = Liteframe;
+
+function capitalizeCustomerType(type) {
+  if (!type) return 'Customer';
+  return type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+function getCustomerTypeBadgeColor(type) {
+  if (type === 'supplier') return 'info';
+  if (type === 'retailer') return 'success';
+  if (type === 'both') return 'warning';
+  return 'default';
+}
+
+export function CustomerSection(props) {
+  const customers = props.viewModel.getCustomerList();
+  const currentSale = props.viewModel.getState('current-sale') || {};
+  const searchQuery = props.viewModel.getState('customer-search-query') || '';
+  const isWithholding = currentSale.is_withholding;
+
+  return Row({ class: 'flex-5/9 flex flex-col min-h-0 overflow-hidden border border-gray-200 rounded-lg' }, [
+    CardHeader({
+      class: 'px-4 py-2 text-sm font-semibold text-gray-700 bg-gray-50 border-b border-gray-200 flex items-center justify-between flex-shrink-0'
+    }, [
+      Row({ class: 'flex items-center gap-2' }, [
+        IonIcon({ name: 'person-outline', class: 'text-lg' }),
+        'Customer',
+      ]),
+    ]),
+    CardBody({ class: 'p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-auto' }, [
+      SearchCustomer(props),
+      Row({ class: 'flex gap-4 items-center mb-6', events: { click: () => props.viewModel.toggleWithholding() } }, [
+        IonIcon({ name: `${isWithholding ? 'checkbox' : 'square-outline'}`, class: 'text-3xl select-none' }),
+        Row({ tagType: 'label', class: 'text-sm text-gray-500 font-medium' }, 'Withholding'),
+      ]),
+      isWithholding && formItem('Withhold Ref.', Input({
+        type: 'text',
+        value: currentSale.withhold_reference || '',
+        onChange: (e) => props.viewModel.updateCurrentSaleField('withhold_reference', e.target.value),
+        placeholder: 'Optional',
+        class: 'w-full',
+      })),
+      formItem('Invoice No.', Input({
+        type: 'text',
+        value: currentSale.invoice_no || '',
+        onChange: (e) => props.viewModel.updateCurrentSaleField('invoice_no', e.target.value),
+        class: 'w-full',
+      })),
+    ]),
+  ]);
+}
+
+function SearchCustomer(props) {
+  const currentSale = props.viewModel.getState('current-sale') || {};
+  const customerSearchQuery = props.viewModel.getState('customer-search-query') || '';
+  props.ensureLocalStateKey('showCustomerDropdown', false);
+  const showCustomerDropdown = props.getLocalState('showCustomerDropdown');
+  const filteredCustomers = props.viewModel.getState('customer-list') || [];
+
+  const displayValue = currentSale.customer_id == null || currentSale.customer_id === ''
+    ? 'Walk-in'
+    : (currentSale.customer?.name || currentSale.customer?.full_name || customerSearchQuery || 'Search customers...');
+
+  const handleCustomerSearch = (value) => {
+    props.viewModel.updateCustomerSearch(value);
+  };
+
+  const handleCustomerSelect = (customer) => {
+    props.viewModel.selectCustomer(customer);
+    props.viewModel.updateCustomerSearch(customer.name || customer.full_name || '');
+    props.setLocalState('showCustomerDropdown', false);
+  };
+
+  const handleWalkInSelect = () => {
+    props.viewModel.selectWalkIn();
+    props.viewModel.updateCustomerSearch('Walk-in');
+    props.setLocalState('showCustomerDropdown', false);
+  };
+
+  return DropdownSearch({
+    open: showCustomerDropdown,
+    value: showCustomerDropdown ? customerSearchQuery : displayValue,
+    placeholder: 'Search customers or select Walk-in...',
+    onInput: handleCustomerSearch,
+    onFocus: () => {
+      props.viewModel.loadCustomers('');
+      props.setLocalState('showCustomerDropdown', true);
+    },
+    getOpenState: () => props.getLocalState('showCustomerDropdown'),
+    setOpenState: () => props.setLocalState('showCustomerDropdown', false),
+    class: 'w-full relative',
+  }, [
+    DropdownSearchItem({
+      onSelect: handleWalkInSelect,
+      key: 'walk-in',
+      class: 'py-3 border-b border-gray-100',
+    }, [
+      Row({ class: 'flex items-center gap-2 font-medium text-gray-700' }, [
+        IonIcon({ name: 'walk-outline', class: 'text-lg' }),
+        'Walk-in',
+      ]),
+    ]),
+    ...filteredCustomers.map((customer) => {
+    const partnerChildren = [
+      Row({ class: 'flex items-center justify-between gap-2' }, [
+        Row({ class: 'font-semibold text-gray-900' }, customer.name || customer.full_name || 'Unknown'),
+        Badge({
+          label: capitalizeCustomerType(customer.customer_type),
+          tone: getCustomerTypeBadgeColor(customer.customer_type),
+          class: 'text-xs px-2 py-0.5',
+        }),
+      ]),
+      Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, [
+        ...(customer.contact_person ? [
+          Row({ class: 'flex items-center gap-1' }, [
+            IonIcon({ name: 'person-outline', class: 'text-xs' }),
+            customer.contact_person,
+          ]),
+        ] : []),
+        ...(customer.contact_person ? [Row({}, '•')] : []),
+        Row({}, customer.phone || customer.contact_number || 'N/A'),
+      ]),
+    ];
+    return DropdownSearchItem({
+      onSelect: () => handleCustomerSelect(customer),
+      key: customer.id,
+      class: 'py-3',
+    }, [
+      Row({ class: 'flex flex-col gap-1' }, partnerChildren),
+    ]);
+  }),
+  ]);
+}

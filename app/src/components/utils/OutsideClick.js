@@ -41,3 +41,20 @@ export function ManageDSOutsideClick({containerEl, getOpenState, setOpenState}) 
   };
 }
 
+/**
+ * One document listener for all DropdownSearch. If the clicked element is NOT inside
+ * an element with [data-dropdown-search], close the current open dropdown.
+ * getCurrentOpen() is invoked on each click and must return the open dropdown at that moment
+ * (e.g. a function that returns a ref's .current). Call once at app/module load.
+ */
+export function registerDropdownOutsideClickByTag(getCurrentOpen) {
+  function handleClick(e) {
+    if (e.target.closest && e.target.closest('[data-dropdown-search]')) return;
+    const current = getCurrentOpen();
+    if (current && current.getOpenState && current.getOpenState()) {
+      current.setOpenState();
+    }
+  }
+  document.addEventListener('click', handleClick, true);
+  return () => document.removeEventListener('click', handleClick, true);
+}

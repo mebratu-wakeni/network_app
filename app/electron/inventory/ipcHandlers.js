@@ -7,8 +7,8 @@ const inventoryManager = new InventoryManager();
 export function InventoryIpcHandlers() {
   
   // Partners IPC Handlers
-  ipcMain.handle('inventory:get-partners', async (event) => {
-    return await inventoryManager.getPartners(getToken());
+  ipcMain.handle('inventory:get-partners', async (event, customerType = 'supplier') => {
+    return await inventoryManager.getPartners(getToken(), customerType);
   });
 
   // Products IPC Handlers
@@ -83,6 +83,36 @@ export function InventoryIpcHandlers() {
   ipcMain.handle('inventory:return-borrowed-stock', async (event, returnData) => {
     const { stockId, ...returnInfo } = returnData;
     return await inventoryManager.returnBorrowedStock(stockId, returnInfo, getToken());
+  });
+
+  ipcMain.handle('inventory:get-borrow-to-return-history', async (event, borrowToInventoryId) => {
+    return await inventoryManager.getBorrowToReturnHistory(borrowToInventoryId, getToken());
+  });
+
+  ipcMain.handle('inventory:process-borrow-to-return', async (event, returnData) => {
+    return await inventoryManager.processBorrowToReturn(returnData, getToken());
+  });
+
+  ipcMain.handle('inventory:get-borrow-from-return-status', async (event, opts) => {
+    return await inventoryManager.getBorrowFromReturnStatus(opts || {}, getToken());
+  });
+
+  /**
+   * Process borrow from return
+   * Expected returnData format:
+   * {
+   *   borrowedInventoryId: number,
+   *   returnItems: Array<{inventory_id: number, quantity: number}>,
+   *   returnedOn: string (YYYY-MM-DD),
+   *   note?: string
+   * }
+   */
+  ipcMain.handle('inventory:process-borrow-from-return', async (event, returnData) => {
+    return await inventoryManager.processBorrowFromReturn(returnData, getToken());
+  });
+
+  ipcMain.handle('inventory:get-inventories-by-product', async (event, productId) => {
+    return await inventoryManager.getInventoriesByProduct(productId, getToken());
   });
 
   ipcMain.handle('inventory:bulk-import-stock', async (event, { stockItems, reason }) => {

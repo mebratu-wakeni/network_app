@@ -2,11 +2,14 @@ const { ViewModel, SharedStateManager } = Liteframe
 
 const MENU = [
   { title: 'Dashboard', route: '/', icon: "grid-outline" },
-  {title: 'Inventory', route: '/inventory', icon: "layers-outline" },
-  {title: 'Customers', route: '/customers', icon: "business-outline" },
-  {title: 'Server', route: '/server', icon: "server-outline" },
-  {title: 'Users', route: '/users', icon: "people-outline"},
-  { title: 'Profile', route: '/user-profile', icon: 'person-outline'}
+  { title: 'Inventory', route: '/inventory', icon: "layers-outline" },
+  { title: 'Purchase', route: '/purchase', icon: "cart-outline" },
+  { title: 'Sales', route: '/sales', icon: "pricetag-outline" },
+  { title: 'Customers', route: '/customers', icon: "business-outline" },
+  { title: 'Server', route: '/server', icon: "server-outline" },
+  { title: 'Users', route: '/users', icon: "people-outline" },
+  { title: 'Settings', route: '/settings', icon: 'settings-outline', requireRule: 'CanEditSettings' },
+  { title: 'Profile', route: '/user-profile', icon: 'person-outline' }
 ]
 
 class NavigationVM extends ViewModel {
@@ -61,9 +64,14 @@ class NavigationVM extends ViewModel {
     try {
       const result = await window.ipcRenderer.invoke('auth:login', loginForm)
       if (result && result.success) {
-        // store token (persisted by default)
         try { localStorage.setItem('authToken', result.token) } catch (e) { /* ignore */ }
-        this.updateState('auth', { ...auth, isAuthenticated: true, user: result.user, token: result.token, loading: false, error: null })
+        // Load full user with rules for menu/permission filtering
+        let userWithRules = result.user
+        try {
+          const meResult = await window.ipcRenderer.invoke('users:get-current-user')
+          if (meResult && (meResult.success || meResult.ok) && meResult.user) userWithRules = meResult.user
+        } catch (e) { /* keep result.user */ }
+        this.updateState('auth', { ...auth, isAuthenticated: true, user: userWithRules, token: result.token, loading: false, error: null })
         this.updateState('loading', false);
         return true
       }

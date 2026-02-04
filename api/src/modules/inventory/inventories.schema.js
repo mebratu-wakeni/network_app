@@ -84,8 +84,8 @@ export const adjustStockItemSchema = z.object({
   notes: z.string().trim().optional().nullable(),
   adjustmentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Adjustment date must be in YYYY-MM-DD format').optional(),
   adjustment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Adjustment date must be in YYYY-MM-DD format').optional(),
-  partnerId: z.number().int().positive().optional().nullable(),
-  partner_id: z.number().int().positive().optional().nullable()
+  partnerId: z.coerce.number().int().positive().optional().nullable(),
+  partner_id: z.coerce.number().int().positive().optional().nullable()
 })
 
 /**
@@ -124,6 +124,111 @@ export const borrowFromStockSchema = z.object({
     return purchasePrice !== undefined && purchasePrice > 0
   },
   { message: 'Purchase price is required and must be positive', path: ['purchasePrice'] }
+)
+
+/**
+ * Schema for return borrowed to stock request
+ */
+/**
+ * Schema for a single returned item in borrow-to return
+ * Each item can have different batch/expiry but must match product_id and unit_cost
+ */
+const borrowToReturnItemSchema = z.object({
+  product_id: z.coerce.number().int().positive('Product ID is required'),
+  unit_cost: z.coerce.number().positive('Unit cost is required and must be positive'),
+  batch_number: z.string().trim().optional().nullable(),
+  batch_no: z.string().trim().optional().nullable(),
+  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable(),
+  quantity_returned: z.coerce.number().int().positive('Quantity returned must be a positive integer'),
+  quantityReturned: z.coerce.number().int().positive('Quantity returned must be a positive integer').optional().nullable(),
+  location: z.string().trim().optional().nullable()
+}).refine(
+  (data) => {
+    const quantity = data.quantity_returned || data.quantityReturned
+    return quantity !== undefined && quantity > 0
+  },
+  { message: 'Quantity returned is required and must be positive', path: ['quantity_returned'] }
+)
+
+export const returnBorrowedToStockSchema = z.object({
+  borrowToInventoryId: z.coerce.number().int().positive('Borrow To Inventory ID is required'),
+  borrow_to_inventory_id: z.coerce.number().int().positive('Borrow To Inventory ID is required').optional().nullable(),
+  // Support both old format (single quantity) and new format (multiple items)
+  quantityReturned: z.coerce.number().int().positive('Quantity returned must be a positive integer').optional().nullable(),
+  quantity_returned: z.coerce.number().int().positive('Quantity returned must be a positive integer').optional().nullable(),
+  // New format: array of return items
+  returnItems: z.array(borrowToReturnItemSchema).min(1, 'At least one return item is required').optional().nullable(),
+  returnedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Returned date must be in YYYY-MM-DD format'),
+  returned_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Returned date must be in YYYY-MM-DD format').optional().nullable(),
+  notes: z.string().trim().optional().nullable(),
+  condition: z.enum(['good', 'damaged', 'expired', 'other']).optional().nullable()
+}).refine(
+  (data) => {
+    const borrowToId = data.borrowToInventoryId || data.borrow_to_inventory_id
+    return borrowToId !== undefined && borrowToId > 0
+  },
+  { message: 'Borrow To Inventory ID is required', path: ['borrowToInventoryId'] }
+).refine(
+  (data) => {
+    // Either returnItems (new format) or quantityReturned (old format) must be provided
+    const hasReturnItems = data.returnItems && Array.isArray(data.returnItems) && data.returnItems.length > 0
+    const hasQuantity = (data.quantityReturned || data.quantity_returned) > 0
+    return hasReturnItems || hasQuantity
+  },
+  { message: 'Either returnItems array or quantityReturned must be provided', path: ['returnItems'] }
+).refine(
+  (data) => {
+    const date = data.returnedDate || data.returned_date
+    return date !== undefined && date.trim() !== ''
+  },
+  { message: 'Returned date is required', path: ['returnedDate'] }
+)
+
+/**
+ * Schema for return borrowed from stock request
+ * Supports multiple return items in a single transaction
+ */
+const returnItemSchema = z.object({
+  // Accept both formats: {inventory_id, quantity} (from frontend) and {returningInventoryId, quantityReturned} (API format)
+  inventory_id: z.coerce.number().int().positive('Inventory ID is required').optional().nullable(),
+  returningInventoryId: z.coerce.number().int().positive('Returning Inventory ID is required').optional().nullable(),
+  returning_inventory_id: z.coerce.number().int().positive('Returning Inventory ID is required').optional().nullable(),
+  quantity: z.coerce.number().int().positive('Quantity returned must be a positive integer').optional().nullable(),
+  quantityReturned: z.coerce.number().int().positive('Quantity returned must be a positive integer').optional().nullable(),
+  quantity_returned: z.coerce.number().int().positive('Quantity returned must be a positive integer').optional().nullable()
+}).refine(
+  (data) => {
+    const returningId = data.inventory_id || data.returningInventoryId || data.returning_inventory_id
+    return returningId !== undefined && returningId > 0
+  },
+  { message: 'Returning Inventory ID is required (use inventory_id or returningInventoryId)', path: ['inventory_id'] }
+).refine(
+  (data) => {
+    const quantity = data.quantity || data.quantityReturned || data.quantity_returned
+    return quantity !== undefined && quantity > 0
+  },
+  { message: 'Quantity returned is required and must be positive (use quantity or quantityReturned)', path: ['quantity'] }
+)
+
+export const returnBorrowedFromStockSchema = z.object({
+  borrowedInventoryId: z.coerce.number().int().positive('Borrowed Inventory ID is required'),
+  borrowed_inventory_id: z.coerce.number().int().positive('Borrowed Inventory ID is required').optional().nullable(),
+  returnItems: z.array(returnItemSchema).min(1, 'At least one return item is required'),
+  returnedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Returned date must be in YYYY-MM-DD format'),
+  returned_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Returned date must be in YYYY-MM-DD format').optional().nullable(),
+  note: z.string().trim().optional().nullable()
+}).refine(
+  (data) => {
+    const borrowedId = data.borrowedInventoryId || data.borrowed_inventory_id
+    return borrowedId !== undefined && borrowedId > 0
+  },
+  { message: 'Borrowed Inventory ID is required', path: ['borrowedInventoryId'] }
+).refine(
+  (data) => {
+    const date = data.returnedOn || data.returned_on
+    return date !== undefined && date.trim() !== ''
+  },
+  { message: 'Returned date is required', path: ['returnedOn'] }
 )
 
 /**

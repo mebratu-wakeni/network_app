@@ -14017,12 +14017,14 @@ class InventoryManager {
     ];
   }
   /**
-   * Get Partners/Customers (only partner type)
+   * Get Partners/Customers
+   * @param {string} token - Auth token
+   * @param {string} customerType - Optional: 'supplier' (default for borrow-from), 'all' (for borrow-to), or any specific customer type
    */
-  async getPartners(token) {
+  async getPartners(token, customerType = "supplier") {
     var _a;
     try {
-      const url = `${getApiUrl("/customers")}?customer_type=supplier&limit=1000&offset=0`;
+      const url = customerType === "all" ? `${getApiUrl("/customers")}?limit=1000&offset=0` : `${getApiUrl("/customers")}?customer_type=${customerType}&limit=1000&offset=0`;
       console.log("[InventoryManager] getPartners - API URL:", url);
       const response = await fetch(url, {
         method: "GET",
@@ -14609,6 +14611,138 @@ class InventoryManager {
     }
   }
   /**
+   * Get return history for a borrow_to_inventory record
+   */
+  async getBorrowToReturnHistory(borrowToInventoryId, token) {
+    try {
+      const response = await this.apiRequest(`/inventories/borrow-to/${borrowToInventoryId}/returns`, {
+        method: "GET"
+      }, token);
+      return {
+        success: response.ok === true || response.success === true,
+        history: response.history || [],
+        error: response.error || null
+      };
+    } catch (error) {
+      console.error("[InventoryManager] Error getting borrow to return history:", error);
+      return {
+        success: false,
+        history: [],
+        error: error.message || "Failed to get return history"
+      };
+    }
+  }
+  /**
+   * Process return of borrowed-to items
+   */
+  async processBorrowToReturn(returnData, token) {
+    try {
+      const response = await this.apiRequest("/inventories/borrow-to/return", {
+        method: "POST",
+        body: JSON.stringify(returnData)
+      }, token);
+      return {
+        success: response.ok === true || response.success === true,
+        return: response.return || response.data || null,
+        error: response.error || null
+      };
+    } catch (error) {
+      console.error("[InventoryManager] Error processing borrow to return:", error);
+      return {
+        success: false,
+        return: null,
+        error: error.message || "Failed to process return"
+      };
+    }
+  }
+  /**
+   * Get return status for a borrowed-from item (remaining to return, etc.).
+   * Pass { borrowFromId } when row is from borrowed-from list, or { borrowedInventoryId } when by inventory.
+   */
+  async getBorrowFromReturnStatus(opts, token) {
+    try {
+      const borrowFromId = opts == null ? void 0 : opts.borrowFromId;
+      if (!borrowFromId) {
+        throw new Error("borrowFromId is required");
+      }
+      const borrowedInventoryId = opts == null ? void 0 : opts.borrowedInventoryId;
+      let url = `/inventories/borrow-from/by-borrow/${borrowFromId}/return-status`;
+      if (borrowedInventoryId) {
+        url += `?borrowedInventoryId=${borrowedInventoryId}`;
+      }
+      const response = await this.apiRequest(url, { method: "GET" }, token);
+      return {
+        success: response.ok === true || response.success === true,
+        totalBorrowed: response.totalBorrowed ?? 0,
+        totalReturned: response.totalReturned ?? 0,
+        remaining: response.remaining ?? 0,
+        error: response.error || null
+      };
+    } catch (error) {
+      console.error("[InventoryManager] Error getting borrow from return status:", error);
+      return {
+        success: false,
+        totalBorrowed: 0,
+        totalReturned: 0,
+        remaining: 0,
+        error: error.message || "Failed to get return status"
+      };
+    }
+  }
+  /**
+   * Get inventories by product_id (inventories table only). All have valid inventory id.
+   */
+  async getInventoriesByProduct(productId, token) {
+    try {
+      const response = await this.apiRequest(`/inventories/by-product/${productId}`, { method: "GET" }, token);
+      return {
+        success: response.ok === true || response.success === true,
+        items: response.items || [],
+        error: response.error || null
+      };
+    } catch (error) {
+      console.error("[InventoryManager] Error getting inventories by product:", error);
+      return { success: false, items: [], error: error.message || "Failed to get inventories by product" };
+    }
+  }
+  /**
+   * Process return of borrowed-from items (with GL adjustments)
+   * 
+   * @param {Object} returnData - Return data from frontend
+   * @param {number} returnData.borrowedInventoryId - ID of the borrowed inventory
+   * @param {Array} returnData.returnItems - Array of {inventory_id: number, quantity: number}
+   *   Backend also accepts {returningInventoryId, quantityReturned} format for backward compatibility
+   * @param {string} returnData.returnedOn - Return date (YYYY-MM-DD)
+   * @param {string} [returnData.note] - Optional note
+   * @param {string} token - Authentication token
+   * @returns {Promise<Object>} Result with success status and return details
+   */
+  async processBorrowFromReturn(returnData, token) {
+    try {
+      console.log("[InventoryManager] processBorrowFromReturn input:", typeof returnData, Array.isArray(returnData), JSON.stringify(returnData));
+      const response = await this.apiRequest("/inventories/borrow-from/return", {
+        method: "POST",
+        body: JSON.stringify(returnData)
+      }, token);
+      const out = {
+        success: response.ok === true || response.success === true,
+        result: response.result || response.data || null,
+        error: response.error || null
+      };
+      console.log("[InventoryManager] processBorrowFromReturn response success:", out.success, "result type:", typeof out.result, Array.isArray(out.result));
+      return out;
+    } catch (error) {
+      console.error("[InventoryManager] Error processing borrow from return:", error);
+      console.error("[InventoryManager] error.message:", error == null ? void 0 : error.message);
+      console.error("[InventoryManager] error.stack:", error == null ? void 0 : error.stack);
+      return {
+        success: false,
+        result: null,
+        error: error.message || "Failed to process borrow from return"
+      };
+    }
+  }
+  /**
    * Bulk import stock
    */
   async bulkImportStock(stockItems, reason, token) {
@@ -14766,8 +14900,8 @@ class InventoryManager {
 }
 const inventoryManager = new InventoryManager();
 function InventoryIpcHandlers() {
-  ipcMain.handle("inventory:get-partners", async (event) => {
-    return await inventoryManager.getPartners(getToken());
+  ipcMain.handle("inventory:get-partners", async (event, customerType = "supplier") => {
+    return await inventoryManager.getPartners(getToken(), customerType);
   });
   ipcMain.handle("inventory:get-products", async (event, searchParams) => {
     return await inventoryManager.getProducts(searchParams, getToken());
@@ -14823,6 +14957,21 @@ function InventoryIpcHandlers() {
   ipcMain.handle("inventory:return-borrowed-stock", async (event, returnData) => {
     const { stockId, ...returnInfo } = returnData;
     return await inventoryManager.returnBorrowedStock(stockId, returnInfo, getToken());
+  });
+  ipcMain.handle("inventory:get-borrow-to-return-history", async (event, borrowToInventoryId) => {
+    return await inventoryManager.getBorrowToReturnHistory(borrowToInventoryId, getToken());
+  });
+  ipcMain.handle("inventory:process-borrow-to-return", async (event, returnData) => {
+    return await inventoryManager.processBorrowToReturn(returnData, getToken());
+  });
+  ipcMain.handle("inventory:get-borrow-from-return-status", async (event, opts) => {
+    return await inventoryManager.getBorrowFromReturnStatus(opts || {}, getToken());
+  });
+  ipcMain.handle("inventory:process-borrow-from-return", async (event, returnData) => {
+    return await inventoryManager.processBorrowFromReturn(returnData, getToken());
+  });
+  ipcMain.handle("inventory:get-inventories-by-product", async (event, productId) => {
+    return await inventoryManager.getInventoriesByProduct(productId, getToken());
   });
   ipcMain.handle("inventory:bulk-import-stock", async (event, { stockItems, reason }) => {
     return await inventoryManager.bulkImportStock(stockItems, reason, getToken());
@@ -15071,6 +15220,827 @@ function CustomersIpcHandlers() {
     return await customersManager.exportCustomers(params, getToken());
   });
 }
+class PurchaseManager {
+  constructor() {
+    this.getAuthToken = () => {
+      return null;
+    };
+  }
+  /**
+   * Generic API request helper
+   */
+  async apiRequest(endpoint, options = {}, token) {
+    const url = getApiUrl(endpoint);
+    const headers = {
+      "Content-Type": "application/json",
+      ...options.headers
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    console.log(`[PurchaseManager] ${options.method || "GET"} ${url}`);
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers,
+      body: options.body
+    });
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseError) {
+      const text = await response.text();
+      console.error("[PurchaseManager] Failed to parse JSON:", text);
+      throw new Error(`Invalid JSON response: ${parseError.message}`);
+    }
+    if (!response.ok) {
+      console.error(`[PurchaseManager] Error (${response.status}):`, data);
+      const error = new Error(data.error || data.message || `HTTP ${response.status}`);
+      if (data.details) error.details = data.details;
+      throw error;
+    }
+    return data;
+  }
+  /**
+   * Get products for purchase dropdown/search
+   */
+  async getProducts(searchParams, token) {
+    try {
+      const { search = "", limit = 50 } = searchParams || {};
+      const url = `/purchases/products?search=${encodeURIComponent(search)}&limit=${limit}`;
+      const response = await this.apiRequest(url, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        products: response.products || []
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getProducts error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get suppliers for purchase dropdown/search
+   */
+  async getSuppliers(searchParams, token) {
+    try {
+      const { search = "", limit = 50 } = searchParams || {};
+      const url = `/purchases/suppliers?search=${encodeURIComponent(search)}&limit=${limit}`;
+      const response = await this.apiRequest(url, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        suppliers: response.suppliers || []
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getSuppliers error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get withhold percentage setting
+   */
+  async getWithholdPercentage(token) {
+    try {
+      const response = await this.apiRequest("/purchases/settings/withhold-percentage", { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        withhold_percentage: response.withhold_percentage,
+        setting_name: response.setting_name
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getWithholdPercentage error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Create purchase order
+   */
+  async createOrder(orderData, token) {
+    try {
+      const response = await this.apiRequest("/purchases/orders", {
+        method: "POST",
+        body: JSON.stringify(orderData)
+      }, token);
+      return {
+        success: response.ok === true,
+        purchase_order: response.purchase_order
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] createOrder error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get purchase orders list
+   */
+  async getOrders(searchParams, token) {
+    try {
+      const params = new URLSearchParams();
+      Object.keys(searchParams || {}).forEach((key) => {
+        if (searchParams[key] !== void 0 && searchParams[key] !== null) {
+          params.append(key, searchParams[key]);
+        }
+      });
+      const url = `/purchases/orders?${params.toString()}`;
+      const response = await this.apiRequest(url, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        orders: response.orders || [],
+        total: response.total || 0,
+        stats: response.stats || {}
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getOrders error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get purchase order details by ID
+   */
+  async getOrderById(orderId, token) {
+    try {
+      const response = await this.apiRequest(`/purchases/orders/${orderId}`, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        order: response.order
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getOrderById error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get order receipt
+   */
+  async getOrderReceipt(orderId, token) {
+    try {
+      const response = await this.apiRequest(`/purchases/orders/${orderId}/receipt`, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        receipt: response.receipt
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getOrderReceipt error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Record payment for purchase order
+   */
+  async payOrder(orderId, paymentData, token) {
+    try {
+      const response = await this.apiRequest(`/purchases/orders/${orderId}/pay`, {
+        method: "POST",
+        body: JSON.stringify(paymentData)
+      }, token);
+      return {
+        success: response.ok === true,
+        payment: response.payment
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] payOrder error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Reverse purchase order
+   */
+  async reverseOrder(orderId, reverseData, token) {
+    try {
+      const response = await this.apiRequest(`/purchases/orders/${orderId}/reverse`, {
+        method: "POST",
+        body: JSON.stringify(reverseData)
+      }, token);
+      return {
+        success: response.ok === true,
+        reversed_order: response.reversed_order
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] reverseOrder error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get payment history for order
+   */
+  async getPaymentHistory(orderId, token) {
+    try {
+      const response = await this.apiRequest(`/purchases/orders/${orderId}/payments`, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        payments: response.payments || [],
+        total_paid: response.total_paid || 0,
+        outstanding_balance: response.outstanding_balance || 0
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getPaymentHistory error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Create hold order: full current-order snapshot for UI restore.
+   */
+  async createHoldOrder(snapshot, token) {
+    try {
+      const response = await this.apiRequest("/purchases/hold-orders", {
+        method: "POST",
+        body: JSON.stringify(snapshot),
+        headers: { "Content-Type": "application/json" }
+      }, token);
+      return {
+        success: response.ok === true,
+        hold_order: response.hold_order
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] createHoldOrder error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get hold orders list
+   */
+  async getHoldOrders(searchParams, token) {
+    try {
+      const params = new URLSearchParams();
+      Object.keys(searchParams || {}).forEach((key) => {
+        if (searchParams[key] !== void 0 && searchParams[key] !== null) {
+          params.append(key, searchParams[key]);
+        }
+      });
+      const url = `/purchases/hold-orders?${params.toString()}`;
+      const response = await this.apiRequest(url, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        hold_orders: response.hold_orders || [],
+        total: response.total || 0
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getHoldOrders error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get hold order by ID
+   */
+  async getHoldOrderById(holdOrderId, token) {
+    try {
+      const response = await this.apiRequest(`/purchases/hold-orders/${holdOrderId}`, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        hold_order: response.hold_order
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getHoldOrderById error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Archive/delete hold order
+   */
+  async archiveHoldOrder(holdOrderId, token) {
+    try {
+      const response = await this.apiRequest(`/purchases/hold-orders/${holdOrderId}`, { method: "DELETE" }, token);
+      return {
+        success: response.ok === true,
+        message: response.message
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] archiveHoldOrder error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Bulk import purchases
+   */
+  async bulkImportPurchases(importData, token) {
+    try {
+      const response = await this.apiRequest("/purchases/import", {
+        method: "POST",
+        body: JSON.stringify(importData)
+      }, token);
+      return {
+        success: response.ok === true && response.success === true,
+        summary: response.summary || {},
+        results: response.results || []
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] bulkImportPurchases error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Import purchase orders from spreadsheet payload (supplier/product names resolved on server).
+   */
+  async importFromSpreadsheet(payload, token) {
+    try {
+      const response = await this.apiRequest("/purchases/import-from-spreadsheet", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }, token);
+      return {
+        success: response.ok === true && response.success === true,
+        summary: response.summary || {},
+        successful: response.successful || [],
+        failed: response.failed || []
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] importFromSpreadsheet error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Get purchase statistics
+   */
+  async getStats(searchParams, token) {
+    try {
+      const params = new URLSearchParams();
+      Object.keys(searchParams || {}).forEach((key) => {
+        if (searchParams[key] !== void 0 && searchParams[key] !== null) {
+          params.append(key, searchParams[key]);
+        }
+      });
+      const url = `/purchases/stats?${params.toString()}`;
+      const response = await this.apiRequest(url, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        stats: response.stats || {}
+      };
+    } catch (error) {
+      console.error("[PurchaseManager] getStats error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Export purchase orders to CSV
+   */
+  async exportPurchaseOrder(token) {
+    try {
+      const url = getApiUrl("/purchases/export");
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": token ? `Bearer ${token}` : "",
+          "Content-Type": "text/csv"
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to export purchase orders: ${response.statusText}`);
+      }
+      const csvContent = await response.text();
+      return { success: true, csvContent };
+    } catch (error) {
+      console.error("[PurchaseManager] exportPurchaseOrder error:", error);
+      return { success: false, error: error.message || "Failed to export purchase orders" };
+    }
+  }
+}
+const purchaseManager = new PurchaseManager();
+function PurchaseIpcHandlers() {
+  ipcMain.handle("purchase:get-products", async (event, searchParams) => {
+    return await purchaseManager.getProducts(searchParams, getToken());
+  });
+  ipcMain.handle("purchase:get-suppliers", async (event, searchParams) => {
+    return await purchaseManager.getSuppliers(searchParams, getToken());
+  });
+  ipcMain.handle("purchase:get-withhold-percentage", async (event) => {
+    return await purchaseManager.getWithholdPercentage(getToken());
+  });
+  ipcMain.handle("purchase:create-order", async (event, orderData) => {
+    return await purchaseManager.createOrder(orderData, getToken());
+  });
+  ipcMain.handle("purchase:get-orders", async (event, searchParams) => {
+    return await purchaseManager.getOrders(searchParams, getToken());
+  });
+  ipcMain.handle("purchase:get-order-by-id", async (event, orderId) => {
+    return await purchaseManager.getOrderById(orderId, getToken());
+  });
+  ipcMain.handle("purchase:get-order-receipt", async (event, orderId) => {
+    return await purchaseManager.getOrderReceipt(orderId, getToken());
+  });
+  ipcMain.handle("purchase:pay-order", async (event, { orderId, paymentData }) => {
+    return await purchaseManager.payOrder(orderId, paymentData, getToken());
+  });
+  ipcMain.handle("purchase:reverse-order", async (event, { orderId, reverseData }) => {
+    return await purchaseManager.reverseOrder(orderId, reverseData, getToken());
+  });
+  ipcMain.handle("purchase:get-payment-history", async (event, orderId) => {
+    return await purchaseManager.getPaymentHistory(orderId, getToken());
+  });
+  ipcMain.handle("purchase:create-hold-order", async (event, snapshot) => {
+    return await purchaseManager.createHoldOrder(snapshot, getToken());
+  });
+  ipcMain.handle("purchase:get-hold-orders", async (event, searchParams) => {
+    return await purchaseManager.getHoldOrders(searchParams, getToken());
+  });
+  ipcMain.handle("purchase:get-hold-order-by-id", async (event, holdOrderId) => {
+    return await purchaseManager.getHoldOrderById(holdOrderId, getToken());
+  });
+  ipcMain.handle("purchase:archive-hold-order", async (event, holdOrderId) => {
+    return await purchaseManager.archiveHoldOrder(holdOrderId, getToken());
+  });
+  ipcMain.handle("purchase:bulk-import", async (event, importData) => {
+    return await purchaseManager.bulkImportPurchases(importData, getToken());
+  });
+  ipcMain.handle("purchase:import-from-spreadsheet", async (event, payload) => {
+    return await purchaseManager.importFromSpreadsheet(payload, getToken());
+  });
+  ipcMain.handle("purchase:get-stats", async (event, searchParams) => {
+    return await purchaseManager.getStats(searchParams, getToken());
+  });
+  ipcMain.handle("purchase:export-purchase-order", async () => {
+    try {
+      return await purchaseManager.exportPurchaseOrder(getToken());
+    } catch (error) {
+      console.error("[Purchase IPC] export-purchase-order:", error);
+      return { success: false, error: error.message };
+    }
+  });
+}
+class SalesManager {
+  async apiRequest(endpoint, options = {}, token) {
+    console.log("[SalesManager] apiRequest:", endpoint, options);
+    const url = getApiUrl(endpoint);
+    const headers = { "Content-Type": "application/json", ...options.headers };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers,
+      body: options.body
+    });
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      const text = await response.text();
+      throw new Error((data == null ? void 0 : data.error) || (data == null ? void 0 : data.message) || `Invalid response: ${text}`);
+    }
+    if (!response.ok) {
+      const err = new Error((data == null ? void 0 : data.error) || (data == null ? void 0 : data.message) || `HTTP ${response.status}`);
+      if (data == null ? void 0 : data.details) err.details = data.details;
+      throw err;
+    }
+    return data;
+  }
+  async getWithholdPercentage(token) {
+    const response = await this.apiRequest("/sales/settings/withhold-percentage", { method: "GET" }, token);
+    return {
+      success: response.ok === true,
+      withhold_percentage: response.withhold_percentage,
+      setting_name: response.setting_name
+    };
+  }
+  async createOrder(orderData, token) {
+    const response = await this.apiRequest("/sales/orders", {
+      method: "POST",
+      body: JSON.stringify(orderData)
+    }, token);
+    return {
+      success: response.ok === true,
+      order: response.order
+    };
+  }
+  async getOrders(searchParams, token) {
+    const params = new URLSearchParams();
+    Object.keys(searchParams || {}).forEach((key) => {
+      if (searchParams[key] !== void 0 && searchParams[key] !== null) {
+        params.append(key, searchParams[key]);
+      }
+    });
+    const response = await this.apiRequest(`/sales/orders?${params.toString()}`, { method: "GET" }, token);
+    return {
+      success: response.ok === true,
+      orders: response.orders || [],
+      total: response.total || 0,
+      stats: response.stats || {}
+    };
+  }
+  async getOrderById(orderId, token) {
+    const response = await this.apiRequest(`/sales/orders/${orderId}`, { method: "GET" }, token);
+    return {
+      success: response.ok === true,
+      order: response.order,
+      items: response.items || []
+    };
+  }
+  async getOrderReceipt(orderId, token) {
+    try {
+      const response = await this.apiRequest(`/sales/orders/${orderId}/receipt`, { method: "GET" }, token);
+      return {
+        success: response.ok === true,
+        receipt: response.receipt
+      };
+    } catch (error) {
+      console.error("[SalesManager] getOrderReceipt error:", error);
+      throw error;
+    }
+  }
+  async payOrder(orderId, paymentData, token) {
+    const response = await this.apiRequest(`/sales/orders/${orderId}/pay`, {
+      method: "POST",
+      body: JSON.stringify(paymentData)
+    }, token);
+    return {
+      success: response.ok === true,
+      amount_paid: response.amount_paid,
+      payment_status: response.payment_status,
+      outstanding_balance: response.outstanding_balance
+    };
+  }
+  async confirmWithhold(orderId, body, token) {
+    const response = await this.apiRequest(`/sales/orders/${orderId}/withhold-confirmation`, {
+      method: "PATCH",
+      body: JSON.stringify(body || {})
+    }, token);
+    return { success: response.ok === true, order: response.order };
+  }
+  async rollbackWithhold(orderId, token) {
+    const response = await this.apiRequest(`/sales/orders/${orderId}/withhold-rollback`, {
+      method: "PATCH",
+      body: JSON.stringify({})
+    }, token);
+    return { success: response.ok === true, order: response.order };
+  }
+  async reverseOrder(orderId, reverseData, token) {
+    const response = await this.apiRequest(`/sales/orders/${orderId}/reverse`, {
+      method: "POST",
+      body: JSON.stringify(reverseData || {})
+    }, token);
+    return { success: response.ok === true, ...response };
+  }
+  async createHoldOrder(snapshot, token) {
+    const response = await this.apiRequest("/sales/hold-orders", {
+      method: "POST",
+      body: JSON.stringify(snapshot)
+    }, token);
+    return {
+      success: response.ok === true,
+      hold_order: response.hold_order
+    };
+  }
+  async getHoldOrders(searchParams, token) {
+    const params = new URLSearchParams();
+    Object.keys(searchParams || {}).forEach((key) => {
+      if (searchParams[key] !== void 0 && searchParams[key] !== null) {
+        params.append(key, searchParams[key]);
+      }
+    });
+    const response = await this.apiRequest(`/sales/hold-orders?${params.toString()}`, { method: "GET" }, token);
+    return {
+      success: response.ok === true,
+      hold_orders: response.hold_orders || [],
+      total: response.total || 0
+    };
+  }
+  async getHoldOrderById(holdOrderId, token) {
+    const response = await this.apiRequest(`/sales/hold-orders/${holdOrderId}`, { method: "GET" }, token);
+    return {
+      success: response.ok === true,
+      hold_order: response.hold_order
+    };
+  }
+  async archiveHoldOrder(holdOrderId, token) {
+    await this.apiRequest(`/sales/hold-orders/${holdOrderId}`, { method: "DELETE" }, token);
+    return { success: true };
+  }
+  async exportSalesOrder(token) {
+    try {
+      const url = getApiUrl("/sales/orders/export");
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": token ? `Bearer ${token}` : "",
+          "Content-Type": "text/csv"
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to export sales orders: ${response.statusText}`);
+      }
+      const csvContent = await response.text();
+      return {
+        success: true,
+        csvContent
+      };
+    } catch (error) {
+      console.error("[SalesManager] exportSalesOrder error:", error);
+      return {
+        success: false,
+        error: error.message || "Failed to export sales orders"
+      };
+    }
+  }
+}
+const salesManager = new SalesManager();
+function normalizeDate(v) {
+  if (v == null || v === "") return (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  if (typeof v === "string" && v.includes("T")) return v.split("T")[0];
+  if (v instanceof Date) return v.toISOString().split("T")[0];
+  return String(v).slice(0, 10);
+}
+function SalesIpcHandlers() {
+  ipcMain.handle("sales:get-products", async (_event, _searchParams) => {
+    return { success: true, products: [] };
+  });
+  ipcMain.handle("sales:get-customers", async (_event, _searchParams) => {
+    return { success: true, customers: [] };
+  });
+  ipcMain.handle("sales:get-withhold-percentage", async () => {
+    try {
+      return await salesManager.getWithholdPercentage(getToken());
+    } catch (error) {
+      console.error("[Sales IPC] get-withhold-percentage:", error);
+      return { success: false, withhold_percentage: null, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:get-orders", async (_event, searchParams) => {
+    try {
+      return await salesManager.getOrders(searchParams, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] get-orders:", error);
+      return { success: false, orders: [], total: 0, stats: {}, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:get-order-by-id", async (_event, orderId) => {
+    try {
+      const result = await salesManager.getOrderById(orderId, getToken());
+      return { success: result.success, order: result.order, items: result.items };
+    } catch (error) {
+      console.error("[Sales IPC] get-order-by-id:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:get-order-receipt", async (_event, orderId) => {
+    try {
+      return await salesManager.getOrderReceipt(orderId, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] get-order-receipt:", error);
+      return { success: false, receipt: null, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:get-hold-orders", async (_event, searchParams) => {
+    try {
+      return await salesManager.getHoldOrders(searchParams, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] get-hold-orders:", error);
+      return { success: false, hold_orders: [], total: 0, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:get-hold-order-by-id", async (_event, holdOrderId) => {
+    try {
+      return await salesManager.getHoldOrderById(holdOrderId, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] get-hold-order-by-id:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:create-hold-order", async (_event, snapshot) => {
+    try {
+      return await salesManager.createHoldOrder(snapshot, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] create-hold-order:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:archive-hold-order", async (_event, holdOrderId) => {
+    try {
+      await salesManager.archiveHoldOrder(holdOrderId, getToken());
+      return { success: true };
+    } catch (error) {
+      console.error("[Sales IPC] archive-hold-order:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:process-sale", async (_event, payload) => {
+    var _a;
+    try {
+      const { currentSale, totals } = payload || {};
+      if (!currentSale || !currentSale.items || currentSale.items.length === 0) {
+        return { success: false, error: "Customer and at least one item are required" };
+      }
+      const order_date = normalizeDate(currentSale.sale_date || currentSale.order_date);
+      const payment_type = currentSale.payment_mode || currentSale.payment_type || "cash";
+      const withhold_percentage = currentSale.is_withholding && (totals == null ? void 0 : totals.withhold_percentage) != null ? Number(totals.withhold_percentage) : null;
+      let amount_paid = currentSale.first_payment != null ? Number(currentSale.first_payment) : null;
+      if (payment_type === "cash") amount_paid = (totals == null ? void 0 : totals.net_amount) ?? 0;
+      if (payment_type === "cheque" && ((_a = currentSale.cheque_details) == null ? void 0 : _a.amount) != null) amount_paid = Number(currentSale.cheque_details.amount);
+      const orderData = {
+        customer_id: currentSale.customer_id != null && currentSale.customer_id !== "" ? Number(currentSale.customer_id) : null,
+        order_date,
+        invoice_no: currentSale.invoice_no || null,
+        remark: currentSale.remark || (currentSale.withhold_reference ? `Withhold ref: ${currentSale.withhold_reference}` : null),
+        payment_type,
+        withhold_percentage,
+        amount_paid: amount_paid ?? 0,
+        cheque_details: payment_type === "cheque" && currentSale.cheque_details ? {
+          bank_name: currentSale.cheque_details.bank_name || "",
+          cheque_number: currentSale.cheque_details.cheque_no || currentSale.cheque_details.cheque_number || "",
+          cheque_date: normalizeDate(currentSale.cheque_details.cheque_date),
+          amount: Number(currentSale.cheque_details.amount)
+        } : null,
+        items: currentSale.items.map((item) => ({
+          product_id: Number(item.product_id),
+          inventory_id: Number(item.inventory_id),
+          quantity: Math.max(1, Math.floor(Number(item.quantity))),
+          unit_price: Number(item.unit_price)
+        }))
+      };
+      const result = await salesManager.createOrder(orderData, getToken());
+      return result;
+    } catch (error) {
+      console.error("[Sales IPC] process-sale:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:pay-order", async (_event, { orderId, ...paymentData }) => {
+    try {
+      return await salesManager.payOrder(orderId, paymentData, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] pay-order:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:confirm-withhold", async (_event, { orderId, sales_invoice_no }) => {
+    try {
+      return await salesManager.confirmWithhold(orderId, { sales_invoice_no }, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] confirm-withhold:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:rollback-withhold", async (_event, orderId) => {
+    try {
+      return await salesManager.rollbackWithhold(orderId, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] rollback-withhold:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:reverse-order", async (_event, { orderId, reason }) => {
+    try {
+      return await salesManager.reverseOrder(orderId, { reason }, getToken());
+    } catch (error) {
+      console.error("[Sales IPC] reverse-order:", error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("sales:export-sales-order", async (_event) => {
+    try {
+      return await salesManager.exportSalesOrder(getToken());
+    } catch (error) {
+      console.error("[Sales IPC] export-sales-order:", error);
+      return { success: false, error: error.message };
+    }
+  });
+}
+class SettingsManager {
+  async apiRequest(endpoint, options = {}, token) {
+    const url = getApiUrl(endpoint);
+    const headers = { "Content-Type": "application/json", ...options.headers };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers,
+      body: options.body
+    });
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      const text = await response.text();
+      throw new Error(`Invalid JSON: ${text}`);
+    }
+    if (!response.ok) {
+      const err = new Error(data.error || data.message || `HTTP ${response.status}`);
+      if (data.details) err.details = data.details;
+      throw err;
+    }
+    return data;
+  }
+  async getSettings(token) {
+    const data = await this.apiRequest("/settings", { method: "GET" }, token);
+    return {
+      success: data.ok === true,
+      settings: data.settings || {}
+    };
+  }
+  async updateSettings(payload, token) {
+    const data = await this.apiRequest("/settings", {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }, token);
+    return {
+      success: data.ok === true,
+      settings: data.settings || {}
+    };
+  }
+}
+const settingsManager = new SettingsManager();
+function SettingsIpcHandlers() {
+  ipcMain.handle("settings:get", async (event) => {
+    return await settingsManager.getSettings(getToken());
+  });
+  ipcMain.handle("settings:update", async (event, payload) => {
+    return await settingsManager.updateSettings(payload, getToken());
+  });
+}
 createRequire(import.meta.url);
 const __dirname = path$2.dirname(fileURLToPath$1(import.meta.url));
 process.env.APP_ROOT = path$2.join(__dirname, "..");
@@ -15141,6 +16111,9 @@ ipcMain.handle("auth:login", async (event, credentials) => {
 UserIpcHandlers();
 InventoryIpcHandlers();
 CustomersIpcHandlers();
+PurchaseIpcHandlers();
+SalesIpcHandlers();
+SettingsIpcHandlers();
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();

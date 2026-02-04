@@ -56,6 +56,15 @@ export class InventoriesService {
   }
 
   /**
+   * Get inventories by product_id (inventories table only). All have valid inventory id.
+   * @param {number} productId
+   * @returns {Promise<Array>}
+   */
+  async findInventoriesByProduct(productId) {
+    return this.repository.findInventoriesByProduct(productId)
+  }
+
+  /**
    * Export stock/inventories to CSV
    * @param {Object} params - { limit, offset, search, filter, sortBy, orderBy }
    * @returns {string} CSV formatted string
@@ -167,7 +176,8 @@ export class InventoriesService {
       unitCost: parseFloat(updated.purchase_price),
       sellingPrice: updated.selling_price ? parseFloat(updated.selling_price) : null,
       expiryDate: updated.expiry_date,
-      batchNumber: updated.batch_no
+      batchNumber: updated.batch_no,
+      location: updated.location
     }
   }
 
@@ -230,5 +240,44 @@ export class InventoriesService {
       inventoryId: borrowFromRecord.inventory_id,
       inventoryCode: borrowFromRecord.inventory_code
     }
+  }
+
+  /**
+   * Get return history for a borrow_to_inventory record
+   * @param {number} borrowToInventoryId - ID from borrow_to_inventories table
+   * @returns {Array} Array of return records
+   */
+  async getBorrowToReturnHistory(borrowToInventoryId) {
+    return await this.repository.getBorrowToReturnHistory(borrowToInventoryId)
+  }
+
+  /**
+   * Process return of borrowed-to items
+   * @param {Object} returnData - Return data
+   * @param {number} userId - User ID processing the return
+   * @returns {Object} Created return record with inventory info
+   */
+  async processBorrowToReturn(returnData, userId = null) {
+    return await this.repository.processBorrowToReturn(returnData, userId)
+  }
+
+  /**
+   * Get return status for a borrowed-from item (total borrowed, total returned, remaining).
+   * @param {Object} opts - { borrowFromId?: number, borrowedInventoryId?: number }
+   * @returns {Object} { totalBorrowed, totalReturned, remaining }
+   */
+  async getBorrowFromReturnStatus(opts) {
+    return await this.repository.getBorrowFromReturnStatus(opts)
+  }
+
+  /**
+   * Process return of borrowed-from items with GL adjustments
+   * Implements "high-water mark" logic for price adjustments
+   * @param {Object} returnData - Return data
+   * @param {number} userId - User ID processing the return
+   * @returns {Object} Result of the operation
+   */
+  async processBorrowFromReturn(returnData, userId = null) {
+    return await this.repository.processBorrowFromReturn(returnData, userId)
   }
 }
