@@ -11,16 +11,43 @@ function normalizeSaleDate(value) {
 }
 
 const DEFAULT_CURRENT_SALE = {
+  // Customer
   customer_id: null,
   customer: null,
-  sale_date: new Date().toISOString().split('T')[0],
-  invoice_no: '',
-  payment_mode: 'cash',
+  
+  // Order details (matching sales_orders table)
+  order_date: new Date().toISOString().split('T')[0], // Maps to order_date in DB
+  sale_date: new Date().toISOString().split('T')[0], // Alias for UI consistency
+  invoice_no: '', // Government/tax authority reference
+  remark: '', // Notes/remarks
+  
+  // Payment (matching sales_orders table)
+  payment_type: 'cash', // Maps to payment_type in DB (required, default 'cash')
+  payment_mode: 'cash', // Alias for UI consistency
+  payment_status: 'unpaid', // 'paid' | 'partial' | 'unpaid' (computed, not user-set)
+  
+  // Withholding (matching sales_orders table)
   is_withholding: false,
-  withhold_reference: '',
-  first_payment: null,
-  cheque_details: null,
+  withhold_percentage: null, // From settings when applicable
+  withhold_amount: null, // Computed
+  withhold_reference: '', // Stored in remark field
+  sales_invoice_no: null, // Set when confirming withhold
+  withhold_confirmation: false, // Set when confirming withhold
+  withhold_settled: false, // Set when withhold is settled
+  
+  // Financial (matching sales_orders table - computed, not user-set)
+  total_amount: 0, // Computed from items
+  amount_paid: 0, // Computed based on payment_mode
+  received_amount: 0, // Computed: total_amount - withhold_amount
+  
+  // Payment details (for credit/cheque)
+  first_payment: null, // For credit payment mode
+  cheque_details: null, // For cheque payment mode
+  
+  // Items
   items: [],
+  
+  // UI state
   error: null,
 };
 
@@ -257,12 +284,31 @@ export class SalesVM extends ViewModel {
 
   updateCurrentSaleField(field, value) {
     const currentSale = this.getState('current-sale') || {};
-    this.updateState('current-sale', { ...currentSale, [field]: value });
+    const updates = { [field]: value };
+    
+    // Keep aliases in sync with DB field names
+    if (field === 'sale_date') {
+      updates.order_date = value; // Keep order_date in sync (DB field)
+    } else if (field === 'order_date') {
+      updates.sale_date = value; // Keep sale_date in sync (UI alias)
+    } else if (field === 'payment_mode') {
+      updates.payment_type = value; // Keep payment_type in sync (DB field)
+    } else if (field === 'payment_type') {
+      updates.payment_mode = value; // Keep payment_mode in sync (UI alias)
+    }
+    
+    this.updateState('current-sale', { ...currentSale, ...updates });
     this.updateState('loading', false);
   }
 
   toggleWithholding() {
     const currentSale = this.getState('current-sale') || {};
+    // Walk-in customers cannot have withholding
+    const isWalkIn = currentSale.customer_id == null || currentSale.customer_id === '';
+    if (isWalkIn) {
+      // Cannot enable withholding for walk-in - keep it disabled
+      return;
+    }
     const isWithholding = !currentSale.is_withholding;
     this.updateState('current-sale', {
       ...currentSale,
@@ -302,9 +348,9 @@ export class SalesVM extends ViewModel {
     if (paymentMode === 'cash') {
       amountPaid = netAmount;
     } else if (paymentMode === 'credit') {
-      amountPaid = Number(currentSale.first_payment ?? 0);
+      amountPaid = Number(currentSale.first_payment != null ? currentSale.first_payment : 0);
     } else if (paymentMode === 'cheque') {
-      amountPaid = Number(currentSale.cheque_details?.amount ?? 0);
+      amountPaid = Number((currentSale.cheque_details && currentSale.cheque_details.amount != null) ? currentSale.cheque_details.amount : 0);
     }
     const outstanding = Math.max(0, netAmount - amountPaid);
 
@@ -403,13 +449,27 @@ export class SalesVM extends ViewModel {
 
   selectCustomer(customer) {
     const currentSale = this.getState('current-sale') || {};
-    this.updateState('current-sale', { ...currentSale, customer_id: customer.id, customer });
+    this.updateState('current-sale', { 
+      ...currentSale, 
+      customer_id: customer.id, 
+      customer,
+      // Reset withhold confirmation fields when customer changes
+      sales_invoice_no: null,
+      withhold_confirmation: false
+    });
     this.updateState('selected-customer', customer);
   }
 
   selectWalkIn() {
     const currentSale = this.getState('current-sale') || {};
-    this.updateState('current-sale', { ...currentSale, customer_id: null, customer: null });
+    // Walk-in customers cannot have withholding - disable it
+    this.updateState('current-sale', { 
+      ...currentSale, 
+      customer_id: null, 
+      customer: null,
+      is_withholding: false,
+      withhold_reference: ''
+    });
     this.updateState('selected-customer', null);
   }
 
@@ -482,17 +542,13 @@ export class SalesVM extends ViewModel {
   async updateHoldOrderTableConfig(updates) {
     const config = this.getState('hold-order-table-config') || {};
     this.updateState('hold-order-table-config', { ...config, ...updates });
-    if (this.getState('loading')) return;
-    this.updateState('loading', true);
-    try {
-      await this.loadHoldOrders();
-    } finally {
-      this.updateState('loading', false);
-    }
+    // Always trigger loadHoldOrders - it will handle loading state internally
+    await this.loadHoldOrders();
   }
 
   async loadSalesOrders() {
-    if (this.getState('loading')) return;
+    // Remove loading guard - allow filters/search/pagination to always trigger reload
+    // Multiple concurrent requests are fine - the last one will set the final state
     this.updateState('loading', true);
     try {
       const config = this.getState('sales-order-table-config') || {};
@@ -502,8 +558,8 @@ export class SalesVM extends ViewModel {
         search: config.search,
         status: config.status,
         customer_id: config.customer_id,
-        payment_type: config.payment_type ?? config.payment_mode,
-        payment_mode: config.payment_type ?? config.payment_mode,
+        payment_type: config.payment_type || config.payment_mode,
+        payment_mode: config.payment_type || config.payment_mode,
         date_from: config.date_from,
         date_to: config.date_to,
         stat_filter: config.stat_filter,
@@ -524,7 +580,8 @@ export class SalesVM extends ViewModel {
   }
 
   async loadHoldOrders() {
-    if (this.getState('loading')) return;
+    // Remove loading guard - allow pagination/filter/search to always trigger reload
+    // Multiple concurrent requests are fine - the last one will set the final state
     this.updateState('loading', true);
     try {
       const config = this.getState('hold-order-table-config') || {};
@@ -574,17 +631,85 @@ export class SalesVM extends ViewModel {
         const snapshot = holdOrder.snapshot || holdOrder;
         const items = Array.isArray(snapshot.items) ? snapshot.items : (typeof holdOrder.items === 'string' ? (() => { try { return JSON.parse(holdOrder.items); } catch (e) { return []; } })() : (holdOrder.items || []));
         const chequeDetails = snapshot.cheque_details == null ? null : (typeof snapshot.cheque_details === 'string' ? (() => { try { return JSON.parse(snapshot.cheque_details); } catch (e) { return null; } })() : snapshot.cheque_details);
+        
+        // Use customer from snapshot if available, otherwise use customer_name from join
+        const customerFromSnapshot = snapshot.customer || (snapshot.current_sale && snapshot.current_sale.customer);
+        const customerName = (customerFromSnapshot && (customerFromSnapshot.name || customerFromSnapshot.full_name)) || holdOrder.customer_name || '';
+        const customerId = (customerFromSnapshot && customerFromSnapshot.id) || snapshot.customer_id || holdOrder.customer_id || null;
+        
+        const customerForSelect = customerId
+          ? {
+              id: customerId,
+              name: customerName,
+              full_name: customerName,
+              ...(customerFromSnapshot || {}) // Include any other customer props from snapshot
+            }
+          : null;
+
+        // Ensure customer is in customer-list (confirmation modal reads from there)
+        if (customerForSelect) {
+          const currentCustomerList = this.getState('customer-list') || [];
+          const customerExists = currentCustomerList.some(c => c.id === customerId);
+          if (!customerExists) {
+            // Add customer to the list so confirmation modal can find it
+            this.updateState('customer-list', [...currentCustomerList, customerForSelect]);
+          } else {
+            // Update existing customer in list with any additional props from snapshot
+            const updatedList = currentCustomerList.map(c =>
+              c.id === customerId ? { ...c, ...customerForSelect } : c
+            );
+            this.updateState('customer-list', updatedList);
+          }
+        }
+
+        this.updateState('customer-search-query', customerName || (customerId == null ? 'Walk-in' : ''));
+        this.updateState('selected-customer', customerForSelect);
+
+        // Walk-in customers cannot have withholding
+        const isWalkIn = customerId == null || customerId === '';
+        const snapshotWithholding = (snapshot.withhold_percentage != null || holdOrder.withhold_percentage != null) && Number(snapshot.withhold_percentage || holdOrder.withhold_percentage || 0) > 0;
+        
+        const orderDate = normalizeSaleDate(snapshot.sale_date || snapshot.order_date || holdOrder.order_date);
+        const paymentMode = snapshot.payment_mode || snapshot.payment_type || holdOrder.payment_mode || 'cash';
+        
         const currentSale = {
-          customer_id: snapshot.customer_id ?? holdOrder.customer_id ?? null,
-          customer: null,
-          sale_date: normalizeSaleDate(snapshot.sale_date ?? snapshot.order_date ?? holdOrder.order_date),
-          invoice_no: snapshot.invoice_no ?? holdOrder.invoice_no ?? '',
-          payment_mode: snapshot.payment_mode ?? snapshot.payment_type ?? holdOrder.payment_mode ?? 'cash',
-          is_withholding: (snapshot.withhold_percentage ?? holdOrder.withhold_percentage) != null && Number(snapshot.withhold_percentage ?? holdOrder.withhold_percentage) > 0,
-          withhold_reference: snapshot.withhold_reference ?? '',
-          first_payment: snapshot.first_payment ?? holdOrder.first_payment ?? null,
+          // Customer
+          customer_id: customerId,
+          customer: customerForSelect,
+          
+          // Order details (matching sales_orders table)
+          order_date: orderDate,
+          sale_date: orderDate, // Alias for UI consistency
+          invoice_no: snapshot.invoice_no || holdOrder.invoice_no || '',
+          remark: snapshot.remark || '',
+          
+          // Payment (matching sales_orders table)
+          payment_type: paymentMode,
+          payment_mode: paymentMode, // Alias for UI consistency
+          payment_status: 'unpaid', // Will be computed on checkout
+          
+          // Withholding (matching sales_orders table)
+          is_withholding: isWalkIn ? false : snapshotWithholding,
+          withhold_percentage: snapshot.withhold_percentage != null ? Number(snapshot.withhold_percentage) : null,
+          withhold_amount: null, // Will be computed
+          withhold_reference: isWalkIn ? '' : (snapshot.withhold_reference || ''),
+          sales_invoice_no: null, // Set when confirming withhold
+          withhold_confirmation: false,
+          withhold_settled: false,
+          
+          // Financial (will be computed)
+          total_amount: 0,
+          amount_paid: 0,
+          received_amount: 0,
+          
+          // Payment details
+          first_payment: snapshot.first_payment != null ? snapshot.first_payment : (holdOrder.first_payment != null ? holdOrder.first_payment : null),
           cheque_details: chequeDetails,
+          
+          // Items
           items,
+          
+          // UI state
           error: null,
         };
         this.updateState('current-sale', currentSale);

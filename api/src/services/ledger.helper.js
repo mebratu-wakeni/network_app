@@ -48,6 +48,28 @@ export class LedgerHelper {
   }
 
   /**
+   * Get current balance for multiple accounts (latest ledger row per account by id).
+   * Balance can be positive or negative depending on account nature (e.g. AP may be negative when we owe).
+   * @param {string[]} accountCodes - Account codes (e.g. ['5100', '1300', '6100', '3100', '1200'])
+   * @param {Object} trx - Knex transaction (optional)
+   * @returns {Promise<Object>} { accountCode: balance (number), ... }
+   */
+  async getCurrentBalances(accountCodes, trx = null) {
+    const db = trx || this.knex
+    if (!accountCodes || accountCodes.length === 0) return {}
+
+    const result = {}
+    for (const code of accountCodes) {
+      const lastEntry = await db('account_ledger')
+        .where('account_code', code)
+        .orderBy('id', 'desc')
+        .first()
+      result[code] = lastEntry ? parseFloat(lastEntry.balance || 0) : 0
+    }
+    return result
+  }
+
+  /**
    * Post a double-entry transaction to the account ledger
    * Creates separate rows for each account (matching reference implementation)
    * @param {Object} transactionData - Transaction data
@@ -281,6 +303,7 @@ export class LedgerHelper {
    * @param {Date|string} params.transactionDate - Transaction date
    * @param {string} params.reason - Adjustment reason
    * @param {string} params.referenceNumber - Reference number (optional)
+   * @param {number} params.referenceId - borrow_to_inventories id (optional; defaults to inventoryId)
    * @param {string} params.memo - Additional notes (optional)
    * @param {number} params.createdBy - User ID (optional)
    * @param {Object} trx - Knex transaction (optional)
@@ -295,6 +318,7 @@ export class LedgerHelper {
       transactionDate,
       reason,
       referenceNumber = null,
+      referenceId = null,
       memo = null,
       createdBy = null
     } = params
@@ -322,7 +346,7 @@ export class LedgerHelper {
       transaction_date: transactionDate,
       reference_no: referenceNumber || `BORROW-TO-${inventoryId}`,
       reference_table: 'borrow_to_inventories',
-      reference_id: inventoryId,
+      reference_id: referenceId != null ? referenceId : inventoryId,
       description: description,
       transaction_type: 'borrow_to',
       entries: entries,
@@ -797,6 +821,62 @@ export class LedgerHelper {
       reference_id: paymentId,
       description: description,
       transaction_type: 'purchase_payment',
+      entries: entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record payment against sales order (customer pays on account)
+   * DR Cash (1100), CR Accounts Receivable (1200)
+   * @param {Object} params - Transaction parameters
+   * @param {number} params.salesOrderId - Sales order ID
+   * @param {number} params.paymentId - Payment record ID (sales_payments.id)
+   * @param {number} params.amount - Payment amount
+   * @param {string} params.paymentMethod - Payment method ('cash' or 'cheque')
+   * @param {Date|string} params.transactionDate - Transaction date
+   * @param {string} params.referenceNumber - Reference number (e.g. receipt_no)
+   * @param {string} params.memo - Optional memo
+   * @param {number} params.createdBy - User ID (optional)
+   * @param {Object} trx - Knex transaction (optional)
+   * @returns {Promise<Object>} Created ledger entries
+   */
+  async recordSalesPayment(params, trx = null) {
+    const {
+      salesOrderId,
+      paymentId,
+      amount,
+      paymentMethod,
+      transactionDate,
+      referenceNumber = null,
+      memo = null,
+      createdBy = null
+    } = params
+
+    const description = `Sales Payment (${paymentMethod}) - ${referenceNumber || `SO-${salesOrderId}`}${memo ? ` - ${memo}` : ''}`
+
+    const entries = [
+      {
+        account_code: '1100', // Cash/Bank
+        debit: amount,
+        credit: 0,
+        description: description
+      },
+      {
+        account_code: '1200', // Accounts Receivable
+        debit: 0,
+        credit: amount,
+        description: description
+      }
+    ]
+
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber ? `PAY-${referenceNumber}` : `PAY-SO-${paymentId}`,
+      reference_table: 'sales_payments',
+      reference_id: paymentId,
+      description: description,
+      transaction_type: 'sales_payment',
       entries: entries,
       created_by: createdBy
     }, trx)

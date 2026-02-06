@@ -9,7 +9,9 @@
     "dev": "nodemon --watch src --exec \"node src/index.js\"",
     "migrate": "knex --knexfile db/knexfile.js migrate:latest",
     "rollback": "knex --knexfile db/knexfile.js migrate:rollback",
-    "seed": "knex --knexfile db/knexfile.js seed:run"
+    "seed": "knex --knexfile db/knexfile.js seed:run",
+    "db:reset": "node scripts/reset-db.js",
+    "db:reset:seed": "node scripts/reset-db.js --seed"
   },
   "keywords": [],
   "author": "",

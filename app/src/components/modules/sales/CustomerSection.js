@@ -24,6 +24,8 @@ export function CustomerSection(props) {
   const currentSale = props.viewModel.getState('current-sale') || {};
   const searchQuery = props.viewModel.getState('customer-search-query') || '';
   const isWithholding = currentSale.is_withholding;
+  // Walk-in customers cannot have withholding
+  const isWalkIn = currentSale.customer_id == null || currentSale.customer_id === '';
 
   return Row({ class: 'flex-5/9 flex flex-col min-h-0 overflow-hidden border border-gray-200 rounded-lg' }, [
     CardHeader({
@@ -36,14 +38,15 @@ export function CustomerSection(props) {
     ]),
     CardBody({ class: 'p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-auto' }, [
       SearchCustomer(props),
-      Row({ class: 'flex gap-4 items-center mb-6', events: { click: () => props.viewModel.toggleWithholding() } }, [
+      // Only show withholding checkbox if not walk-in
+      !isWalkIn && Row({ class: 'flex gap-4 items-center mb-6', events: { click: () => props.viewModel.toggleWithholding() } }, [
         IonIcon({ name: `${isWithholding ? 'checkbox' : 'square-outline'}`, class: 'text-3xl select-none' }),
         Row({ tagType: 'label', class: 'text-sm text-gray-500 font-medium' }, 'Withholding'),
       ]),
-      isWithholding && formItem('Withhold Ref.', Input({
+      isWithholding && !isWalkIn && formItem('Withhold Ref.', Input({
         type: 'text',
-        value: currentSale.withhold_reference || '',
-        onChange: (e) => props.viewModel.updateCurrentSaleField('withhold_reference', e.target.value),
+        value: currentSale.sales_invoice_no || '',
+        onChange: (e) => props.viewModel.updateCurrentSaleField('sales_invoice_no', e.target.value),
         placeholder: 'Optional',
         class: 'w-full',
       })),

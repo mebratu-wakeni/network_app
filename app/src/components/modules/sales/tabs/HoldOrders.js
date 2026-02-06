@@ -72,7 +72,7 @@ export function HoldOrders(props) {
       Button({ variant: currentFilter === 'archived' ? 'primary' : 'outline', class: FILTER_BTN_CLASS, onClick: () => handleFilterClick('archived') }, 'Archived'),
     ]),
     Row({ class: 'flex items-center justify-between gap-4 px-4 py-4 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
-      Row({ class: 'flex-1 min-w-[200px] max-w-md' }, [Input({ type: 'text', placeholder: 'Search hold orders...', value: props.getLocalState('searchInput') || '', onChange: handleSearchChange, class: 'w-full' })]),
+      Row({ class: 'flex-1 min-w-[200px] max-w-md' }, [Input({ type: 'text', placeholder: 'Search hold orders...', value: props.getLocalState('searchInput') || '', onInput: handleSearchChange, class: 'w-full' })]),
       Row({ class: 'flex items-center gap-4' }, [
         Row({ tagType: 'p', class: 'text-sm text-gray-400 text-nowrap' }, 'Rows per page'),
         SelectRelative({ name: 'hold-order-limit', onChange: (e) => handleSetLimit(parseInt(e.target.value, 10)), value: paginationLimit }, SelectOptions({ options: ['10', '25', '50', '100'], selectedOption: String(paginationLimit) })),

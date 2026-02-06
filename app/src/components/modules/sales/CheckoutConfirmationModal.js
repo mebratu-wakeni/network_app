@@ -46,6 +46,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
   const items = currentSale.items || [];
   const itemCount = items.length;
   const isWithholding = currentSale.is_withholding;
+  const withholdRef = currentSale.sales_invoice_no || '';
   const withholdPct = viewModel.getState('withhold-percentage');
   const amountPaid =
     paymentMode === 'credit'
@@ -100,6 +101,8 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
         Row({ class: 'font-medium text-gray-900' }, currentSale.sale_date || currentSale.order_date || '—'),
         Row({ class: 'text-gray-500' }, 'Invoice No.'),
         Row({ class: 'font-medium text-gray-900' }, currentSale.invoice_no || '—'),
+        Row({ class: 'text-gray-500' }, 'Withhold Ref.'),
+        Row({ class: 'font-medium text-gray-900' }, withholdRef || 'Not confirmed'),
         Row({ class: 'text-gray-500' }, 'Payment'),
         Row({ class: 'font-medium text-gray-900' }, paymentLabel),
         Row({ class: 'text-gray-500' }, 'Items'),

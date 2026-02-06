@@ -13,6 +13,7 @@ import { Card, CardHeader } from "../utils/Card.js";
 import ExampleCard from "../utils/example.js";
 import ProductsTable from "../utils/exampleTable.js";
 import NavigationVM from "./NavigationVM.js";
+import { DashboardUI } from "../dashboard/DashboardUI.js";
 
 // Route cleanup registry: maps route paths to their cleanup functions
 // Add routes here that need cleanup when navigating away
@@ -36,7 +37,7 @@ export default function  NavigationUI(props) {
       if (option.route === '/server') {
         return ServerManagerUI();
       }
-      if (option.route === '/') return ExampleCard();
+      if (option.route === '/') return DashboardUI({ router });
       if (option.route === '/inventory') return InventoryUI();
       if (option.route === '/purchase') return PurchaseUI();
       if (option.route === '/sales') return SalesUI();

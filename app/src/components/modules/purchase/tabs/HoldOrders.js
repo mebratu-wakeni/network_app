@@ -110,7 +110,7 @@ export function HoldOrders(props) {
           type: 'text',
           placeholder: 'Search hold orders...',
           value: props.getLocalState('searchInput') || '',
-          onChange: handleSearchChange,
+          onInput: handleSearchChange,
           class: 'w-full'
         }),
       ]),

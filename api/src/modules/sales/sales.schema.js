@@ -21,6 +21,7 @@ export const createSalesOrderSchema = z.object({
   customer_id: z.number().int().positive().optional().nullable(), // null = walk-in
   order_date: isoDate,
   invoice_no: z.string().trim().optional().nullable(),
+  sales_invoice_no: z.string().trim().optional().nullable(),
   remark: z.string().trim().optional().nullable(),
   payment_type: z.enum(['cash', 'credit', 'cheque']),
   withhold_percentage: z.number().nonnegative().optional().nullable(),

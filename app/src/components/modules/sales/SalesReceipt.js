@@ -65,10 +65,12 @@ export function SalesReceipt(receiptData, delegator = Liteframe.mainDelegator, i
         children: [
           Row({ tagType: 'span', classNames: ['receipt-doc-title'], children: ['Sales Receipt'], delegator }),
           Row({ tagType: 'span', classNames: ['receipt-meta-sep'], children: [' | '], delegator }),
-          Row({ tagType: 'span', children: ['No: ', Row({ tagType: 'strong', children: [receiptData.receiptNo ?? ''], delegator })], delegator }),
+          Row({ tagType: 'span', children: ['Receipt No: ', Row({ tagType: 'strong', children: [receiptData.receiptNo ?? ''], delegator })], delegator }),
+          Row({ tagType: 'span', classNames: ['receipt-meta-sep'], children: [' | '], delegator }),
+          Row({ tagType: 'span', children: ['Invoice No: ', Row({ tagType: 'strong', children: [receiptData.invoiceNo || 'N/A'], delegator })], delegator }),
           Row({ tagType: 'span', classNames: ['receipt-meta-sep'], children: [' | '], delegator }),
           Row({ tagType: 'span', children: [`Date: ${receiptData.dateIssued ?? ''}`], delegator }),
-        ],
+        ].filter(Boolean),
         delegator,
       }),
     ],
@@ -124,10 +126,12 @@ export function SalesReceipt(receiptData, delegator = Liteframe.mainDelegator, i
   // --- ORDER & PAYMENT (one compact line) ---
   const orderLine = joinNonEmpty([
     orderDetails.orderDate && `Date: ${orderDetails.orderDate}`,
-    orderDetails.paymentMode && `Payment: ${orderDetails.paymentMode}`,
-    orderDetails.withholdTaxInfo && orderDetails.withholdTaxInfo !== 'N/A' ? `Withhold: ${orderDetails.withholdTaxInfo}` : null,
-    orderDetails.status && `Status: ${orderDetails.status}`,
-    orderDetails.referenceSO && `Ref: ${orderDetails.referenceSO}`,
+    // orderDetails.invoiceNo && `Invoice No: ${orderDetails.invoiceNo}`,
+    orderDetails.hasWithhold ? `Withhold Ref: ${orderDetails.salesInvoiceNo ?? '--'}` : null,
+    orderDetails.paymentMode && `${orderDetails.paymentMode}`,
+    // orderDetails.withholdTaxInfo && orderDetails.withholdTaxInfo !== 'N/A' ? `Withhold: ${orderDetails.withholdTaxInfo}` : null,
+    orderDetails.status && `${orderDetails.status}`,
+    // orderDetails.referenceSO && `Ref: ${orderDetails.referenceSO}`,
   ], ' · ');
 
   const orderDetailsSection = Row({

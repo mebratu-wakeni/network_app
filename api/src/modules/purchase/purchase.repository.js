@@ -373,39 +373,42 @@ export class PurchaseRepository {
         }, trx)
       }
 
-      // 6) Create ledger entries based on payment mode
-      if (order.payment_mode === 'cash') {
-        await this.ledgerHelper.recordPurchaseCash({
-          purchaseOrderId: orderId,
-          totalAmount: order.total_amount,
-          withholdAmount: order.withhold_amount || 0,
-          transactionDate: order.order_date,
-          referenceNumber: order.receipt_no,
-          memo: order.remark || null,
-          createdBy: userId
-        }, trx)
-      } else if (order.payment_mode === 'credit') {
-        await this.ledgerHelper.recordPurchaseCredit({
-          purchaseOrderId: orderId,
-          totalAmount: order.total_amount,
-          withholdAmount: order.withhold_amount || 0,
-          firstPayment: initialPayment?.amount || 0,
-          transactionDate: order.order_date,
-          referenceNumber: order.receipt_no,
-          memo: order.remark || null,
-          createdBy: userId
-        }, trx)
-      } else if (order.payment_mode === 'cheque') {
-        await this.ledgerHelper.recordPurchaseCheque({
-          purchaseOrderId: orderId,
-          totalAmount: order.total_amount,
-          withholdAmount: order.withhold_amount || 0,
-          chequeAmount: initialPayment?.amount || 0,
-          transactionDate: order.order_date,
-          referenceNumber: order.receipt_no,
-          memo: order.remark || null,
-          createdBy: userId
-        }, trx)
+      // 6) Create ledger entries based on payment mode (when account_ledger exists)
+      const hasLedger = await trx.schema.hasTable('account_ledger')
+      if (hasLedger) {
+        if (order.payment_mode === 'cash') {
+          await this.ledgerHelper.recordPurchaseCash({
+            purchaseOrderId: orderId,
+            totalAmount: order.total_amount,
+            withholdAmount: order.withhold_amount || 0,
+            transactionDate: order.order_date,
+            referenceNumber: order.receipt_no,
+            memo: order.remark || null,
+            createdBy: userId
+          }, trx)
+        } else if (order.payment_mode === 'credit') {
+          await this.ledgerHelper.recordPurchaseCredit({
+            purchaseOrderId: orderId,
+            totalAmount: order.total_amount,
+            withholdAmount: order.withhold_amount || 0,
+            firstPayment: initialPayment?.amount || 0,
+            transactionDate: order.order_date,
+            referenceNumber: order.receipt_no,
+            memo: order.remark || null,
+            createdBy: userId
+          }, trx)
+        } else if (order.payment_mode === 'cheque') {
+          await this.ledgerHelper.recordPurchaseCheque({
+            purchaseOrderId: orderId,
+            totalAmount: order.total_amount,
+            withholdAmount: order.withhold_amount || 0,
+            chequeAmount: initialPayment?.amount || 0,
+            transactionDate: order.order_date,
+            referenceNumber: order.receipt_no,
+            memo: order.remark || null,
+            createdBy: userId
+          }, trx)
+        }
       }
 
       return {
@@ -726,7 +729,7 @@ export class PurchaseRepository {
         })
         .returning('*')
 
-      // Update order payment_status + amount_paid
+      // Update order: amount_paid = sum total of all payments; payment_status from remaining balance
       let paymentStatus = 'paid'
       if (remaining > 0.009 && newTotalPaid > 0) {
         paymentStatus = 'partial'
@@ -737,22 +740,24 @@ export class PurchaseRepository {
       await trx('purchase_orders')
         .where({ id: orderId })
         .update({
-          amount_paid: newTotalPaid,
+          amount_paid: newTotalPaid, // sum of all purchase_payments for this order
           payment_status: paymentStatus,
           last_updated: trx.fn.now()
         })
 
-      // Create ledger entry for payment
-      await this.ledgerHelper.recordPurchasePayment({
-        purchaseOrderId: orderId,
-        paymentId: payment.id,
-        amount: paymentData.amount,
-        paymentMethod: paymentData.payment_method,
-        transactionDate: paymentData.payment_date,
-        referenceNumber: order.receipt_no,
-        memo: paymentData.note || null,
-        createdBy: userId
-      }, trx)
+      const hasLedger = await trx.schema.hasTable('account_ledger')
+      if (hasLedger) {
+        await this.ledgerHelper.recordPurchasePayment({
+          purchaseOrderId: orderId,
+          paymentId: payment.id,
+          amount: paymentData.amount,
+          paymentMethod: paymentData.payment_method,
+          transactionDate: paymentData.payment_date,
+          referenceNumber: order.receipt_no,
+          memo: paymentData.note || null,
+          createdBy: userId
+        }, trx)
+      }
 
       return {
         payment,
@@ -857,8 +862,8 @@ export class PurchaseRepository {
         }
       }
 
-      // Reverse ledger entries
-      if (reverse_ledger) {
+      const hasLedger = await trx.schema.hasTable('account_ledger')
+      if (reverse_ledger && hasLedger) {
         await this.ledgerHelper.reversePurchaseOrder({
           purchaseOrderId: orderId,
           transactionDate: new Date().toISOString().split('T')[0],

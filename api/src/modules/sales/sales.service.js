@@ -15,7 +15,9 @@ export class SalesService {
       customer_id,
       order_date,
       invoice_no,
+      sales_invoice_no,
       remark,
+      withhold_reference,
       payment_type,
       withhold_percentage,
       amount_paid,
@@ -54,11 +56,20 @@ export class SalesService {
 
     const receipt_no = await this.repository.generateNextSalesReceiptNumber()
 
+    // Store withhold_reference in remark field if withholding is applied
+    let finalRemark = remark ?? null;
+    if (withhold_reference && withhold_reference.trim()) {
+      finalRemark = finalRemark 
+        ? `${finalRemark}\nWithhold Ref: ${withhold_reference.trim()}`
+        : `Withhold Ref: ${withhold_reference.trim()}`;
+    }
+
     const orderPayload = {
       customer_id: customer_id ?? null,
       order_date,
       invoice_no: invoice_no ?? null,
-      remark: remark ?? null,
+      sales_invoice_no: sales_invoice_no ?? null,
+      remark: finalRemark,
       payment_type,
       payment_status,
       total_amount,

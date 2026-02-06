@@ -98,11 +98,11 @@ export function SalesIpcHandlers() {
   ipcMain.handle('sales:process-sale', async (_event, payload) => {
     try {
       const { currentSale, totals } = payload || {}
-      if (!currentSale || !currentSale.items || currentSale.items.length === 0) {
+      if (!currentSale.customer_id || !currentSale.items || currentSale.items.length === 0) {
         return { success: false, error: 'Customer and at least one item are required' }
       }
 
-      const order_date = normalizeDate(currentSale.sale_date || currentSale.order_date)
+      const order_date = normalizeDate(currentSale.order_date || currentSale.sale_date)
       const payment_type = currentSale.payment_mode || currentSale.payment_type || 'cash'
       const withhold_percentage = currentSale.is_withholding && totals?.withhold_percentage != null ? Number(totals.withhold_percentage) : null
       let amount_paid = currentSale.first_payment != null ? Number(currentSale.first_payment) : null
@@ -113,7 +113,8 @@ export function SalesIpcHandlers() {
         customer_id: currentSale.customer_id != null && currentSale.customer_id !== '' ? Number(currentSale.customer_id) : null,
         order_date,
         invoice_no: currentSale.invoice_no || null,
-        remark: currentSale.remark || (currentSale.withhold_reference ? `Withhold ref: ${currentSale.withhold_reference}` : null),
+        sales_invoice_no: currentSale.sales_invoice_no || null,
+        remark: currentSale.remark || null,
         payment_type,
         withhold_percentage,
         amount_paid: amount_paid ?? 0,

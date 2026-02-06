@@ -15912,10 +15912,10 @@ function SalesIpcHandlers() {
     var _a;
     try {
       const { currentSale, totals } = payload || {};
-      if (!currentSale || !currentSale.items || currentSale.items.length === 0) {
+      if (!currentSale.customer_id || !currentSale.items || currentSale.items.length === 0) {
         return { success: false, error: "Customer and at least one item are required" };
       }
-      const order_date = normalizeDate(currentSale.sale_date || currentSale.order_date);
+      const order_date = normalizeDate(currentSale.order_date || currentSale.sale_date);
       const payment_type = currentSale.payment_mode || currentSale.payment_type || "cash";
       const withhold_percentage = currentSale.is_withholding && (totals == null ? void 0 : totals.withhold_percentage) != null ? Number(totals.withhold_percentage) : null;
       let amount_paid = currentSale.first_payment != null ? Number(currentSale.first_payment) : null;
@@ -15925,7 +15925,8 @@ function SalesIpcHandlers() {
         customer_id: currentSale.customer_id != null && currentSale.customer_id !== "" ? Number(currentSale.customer_id) : null,
         order_date,
         invoice_no: currentSale.invoice_no || null,
-        remark: currentSale.remark || (currentSale.withhold_reference ? `Withhold ref: ${currentSale.withhold_reference}` : null),
+        sales_invoice_no: currentSale.sales_invoice_no || null,
+        remark: currentSale.remark || null,
         payment_type,
         withhold_percentage,
         amount_paid: amount_paid ?? 0,
@@ -16041,6 +16042,33 @@ function SettingsIpcHandlers() {
     return await settingsManager.updateSettings(payload, getToken());
   });
 }
+class DashboardManager {
+  async getLedgerBalances(token) {
+    const url = getApiUrl("/ledger/balances");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const response = await fetch(url, { method: "GET", headers });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+    return {
+      success: true,
+      balances: data.balances || {}
+    };
+  }
+}
+const dashboardManager = new DashboardManager();
+function DashboardIpcHandlers() {
+  ipcMain.handle("dashboard:get-ledger-balances", async () => {
+    try {
+      return await dashboardManager.getLedgerBalances(getToken());
+    } catch (error) {
+      console.error("[Dashboard IPC] get-ledger-balances:", error);
+      return { success: false, balances: {}, error: error.message };
+    }
+  });
+}
 createRequire(import.meta.url);
 const __dirname = path$2.dirname(fileURLToPath$1(import.meta.url));
 process.env.APP_ROOT = path$2.join(__dirname, "..");
@@ -16114,6 +16142,7 @@ CustomersIpcHandlers();
 PurchaseIpcHandlers();
 SalesIpcHandlers();
 SettingsIpcHandlers();
+DashboardIpcHandlers();
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();

@@ -213,9 +213,11 @@ function PaymentSettings(props) {
   const currentSale = props.viewModel.getState('current-sale') || {};
   const paymentMode = (currentSale.payment_mode || 'cash').toString();
   const paymentModeDisplay = paymentMode.charAt(0).toUpperCase() + paymentMode.slice(1);
+
   const handlePaymentModeChange = (e) => {
     const val = e.target.value.trim().toLowerCase();
-    props.viewModel.updateCurrentSaleField('payment_mode', val);
+    props.viewModel.updateCurrentSaleField('payment_mode', val);  
+    props.viewModel.updateCurrentSaleField('payment_type', val);
     if (val !== 'cheque') {
       props.viewModel.updateCurrentSaleField('cheque_details', null);
     } else {

@@ -1240,29 +1240,76 @@ export class InventoriesRepository {
         partnerId: partnerIdValue
       }, trx)
 
+      let borrowToRecordId = null
       // If reason is "Borrow To" and we're subtracting stock, create borrow_to_inventories record
       if (isBorrowTo && quantityOut > 0 && partnerIdValue) {
-        // Check if borrow_to_inventories table exists (for migration safety)
-        const tableExists = await this.knex.schema.hasTable('borrow_to_inventories')
-        
-        if (tableExists) {
-          await trx('borrow_to_inventories').insert({
-            product_id: product.id,
-            partner_id: partnerIdValue,
-            source_inventory_id: inventoryId,
-            batch_no: inventory.batch_no,
-            expiry_date: inventory.expiry_date,
-            unit_cost: inventory.purchase_price,
-            selling_price: inventory.selling_price,
-            quantity: quantityOut,
-            lent_date: transactionDate,
-            status: 'active',
-            notes: notes || null,
-            created_by: userId,
-            created_at: trx.fn.now(),
-            last_updated: trx.fn.now(),
-            sync_status: 'pending'
-          })
+        const borrowToTableExists = await trx.schema.hasTable('borrow_to_inventories')
+        if (borrowToTableExists) {
+          const [borrowToRecord] = await trx('borrow_to_inventories')
+            .insert({
+              product_id: product.id,
+              partner_id: partnerIdValue,
+              source_inventory_id: inventoryId,
+              batch_no: inventory.batch_no,
+              expiry_date: inventory.expiry_date,
+              unit_cost: inventory.purchase_price,
+              selling_price: inventory.selling_price,
+              quantity: quantityOut,
+              lent_date: transactionDate,
+              status: 'active',
+              notes: notes || null,
+              created_by: userId,
+              created_at: trx.fn.now(),
+              last_updated: trx.fn.now(),
+              sync_status: 'pending'
+            })
+            .returning('id')
+          borrowToRecordId = borrowToRecord?.id ?? borrowToRecord
+        }
+      }
+
+      // Ledger: post GL entries when account_ledger exists
+      const ledgerTableExists = await trx.schema.hasTable('account_ledger')
+      if (ledgerTableExists) {
+        const unitCost = parseFloat(inventory.purchase_price) || 0
+        const refNo = `ADJ-${inventoryId}-${Date.now()}`
+        if (quantityIn > 0) {
+          await this.ledgerHelper.recordStockAdjustmentAdd({
+            inventoryId,
+            quantity: quantityIn,
+            unitCost,
+            transactionDate,
+            reason: reason || 'Adjustment',
+            referenceNumber: refNo,
+            memo: notes,
+            createdBy: userId
+          }, trx)
+        } else if (quantityOut > 0) {
+          if (isBorrowTo && partnerIdValue) {
+            await this.ledgerHelper.recordStockAdjustmentSubtractBorrowTo({
+              inventoryId,
+              quantity: quantityOut,
+              unitCost,
+              partnerId: partnerIdValue,
+              transactionDate,
+              reason: reason || 'Borrow To',
+              referenceNumber: borrowToRecordId != null ? `BORROW-TO-${borrowToRecordId}` : undefined,
+              referenceId: borrowToRecordId,
+              memo: notes,
+              createdBy: userId
+            }, trx)
+          } else {
+            await this.ledgerHelper.recordStockAdjustmentSubtract({
+              inventoryId,
+              quantity: quantityOut,
+              unitCost,
+              transactionDate,
+              reason: reason || 'Adjustment',
+              referenceNumber: refNo,
+              memo: notes,
+              createdBy: userId
+            }, trx)
+          }
         }
       }
 
@@ -1710,6 +1757,22 @@ export class InventoriesRepository {
             created_at: trx.fn.now(),
             last_updated: trx.fn.now()
           })
+
+        // Ledger: DR Inventory (1300), CR Accounts Receivable (1200) when account_ledger exists
+        const ledgerTableExists = await trx.schema.hasTable('account_ledger')
+        if (ledgerTableExists) {
+          await this.ledgerHelper.recordReturnBorrowedTo({
+            inventoryId,
+            returnId: returnRecord.id,
+            quantity: item.quantity_returned,
+            unitCost: parseFloat(item.unit_cost) || 0,
+            partnerId: borrowToRecord.partner_id,
+            transactionDate: returnDate,
+            referenceNumber: `RETURN-TO-${returnRecord.id}`,
+            memo: notes,
+            createdBy: userId
+          }, trx)
+        }
 
         // Update opening balance for next item
         currentOpeningBalance = finalBalance

@@ -59,6 +59,7 @@ export class SalesRepository {
           customer_id: order.customer_id ?? null,
           order_date: order.order_date,
           invoice_no: order.invoice_no ?? null,
+          sales_invoice_no: order.withhold_confirmation ? order.sales_invoice_no : null,
           remark: order.remark ?? null,
           payment_type: order.payment_type,
           payment_status: order.payment_status,
@@ -324,6 +325,7 @@ export class SalesRepository {
       'so.withhold_confirmation',
       'so.withhold_settled',
       'so.sales_invoice_no',
+      'so.remark',
       netRaw,
       outstandingRaw
     )
@@ -441,40 +443,76 @@ export class SalesRepository {
     const { limit = 20, offset = 0, search, filter, sort_by = 'created_at', order_by = 'desc' } = params
     const q = this.knex('sales_hold_orders as ho').leftJoin('customers as c', 'ho.customer_id', 'c.id')
 
-    if (filter === 'archived') q.andWhere('ho.is_archive', true)
-    else if (filter === 'active') q.andWhere('ho.is_archive', false)
+    // Apply filter first - ensure filter is a string and matches exactly (case-insensitive)
+    const filterValue = typeof filter === 'string' ? filter.trim().toLowerCase() : (filter ? String(filter).toLowerCase() : null)
+    if (filterValue === 'active') {
+      q.where('ho.is_archive', false)
+    } else if (filterValue === 'archived') {
+      q.where('ho.is_archive', true)
+    }
+    // filter === 'all' or undefined or null: no is_archive filter
 
-    if (search) {
-      const term = `%${search}%`
-      q.andWhereILike('c.name', term)
+    // Then apply search if provided
+    const searchTrimmed = typeof search === 'string' ? search.trim() : ''
+    if (searchTrimmed) {
+      const term = `%${searchTrimmed}%`
+      q.andWhere(builder => {
+        builder.whereILike('c.name', term)
+      })
     }
 
-    const totalRow = await q.clone().count('* as count').first()
+    const totalRow = await q.clone().clearSelect().clearOrder().countDistinct({ count: 'ho.id' }).first()
     const total = Number(totalRow?.count || 0)
 
-    const allowedSort = ['created_at', 'order_date', 'total_amount', 'id']
-    const sortCol = allowedSort.includes(sort_by) ? sort_by : 'created_at'
+    const sortColMap = {
+      created_at: 'ho.created_at',
+      order_date: 'ho.order_date',
+      sale_date: 'ho.order_date',
+      customer_name: 'c.name',
+      total_amount: 'ho.total_amount',
+      id: 'ho.id'
+    }
+    const sortCol = sortColMap[sort_by] || 'ho.created_at'
     const sortDir = order_by === 'asc' ? 'asc' : 'desc'
 
     const hold_orders = await q
-      .select('ho.id', 'ho.customer_id', 'ho.order_date', 'ho.total_amount', 'ho.payment_type', 'ho.is_archive', 'ho.encoder_fullname', 'ho.created_at', 'c.name as customer_name')
-      .orderBy(`ho.${sortCol}`, sortDir)
+      .select('ho.id', 'ho.customer_id', 'ho.order_date', 'ho.total_amount', 'ho.payment_type', 'ho.is_archive', 'ho.encoder_fullname', 'ho.created_at', 'ho.snapshot', 'c.name as customer_name')
+      .orderBy(sortCol, sortDir)
       .limit(limit)
       .offset(offset)
 
-    return { hold_orders, total }
+    // Add items_count by parsing snapshot.items
+    const hold_orders_with_count = hold_orders.map(h => {
+      let itemsCount = 0
+      try {
+        const snapshot = typeof h.snapshot === 'string' ? JSON.parse(h.snapshot) : (h.snapshot || {})
+        const items = snapshot.items || []
+        itemsCount = Array.isArray(items) ? items.length : 0
+      } catch (e) {
+        // ignore parse errors
+      }
+      const { snapshot, ...rest } = h
+      return { ...rest, items_count: itemsCount, net_amount: Number(h.total_amount || 0) }
+    })
+
+    return { hold_orders: hold_orders_with_count, total }
   }
 
   /**
    * Get one hold order by ID (full snapshot for restore).
+   * Joins with customers to get customer_name for UI display.
    */
   async getHoldOrderById(holdOrderId) {
     const hasTable = await this.knex.schema.hasTable('sales_hold_orders')
     if (!hasTable) return null
-    const row = await this.knex('sales_hold_orders').where('id', holdOrderId).first()
+    const row = await this.knex('sales_hold_orders as ho')
+      .leftJoin('customers as c', 'ho.customer_id', 'c.id')
+      .where('ho.id', holdOrderId)
+      .select('ho.*', 'c.name as customer_name')
+      .first()
     if (!row) return null
     const snapshot = typeof row.snapshot === 'string' ? JSON.parse(row.snapshot) : row.snapshot
-    return { ...row, snapshot }
+    return { ...row, snapshot, customer_name: row.customer_name || null }
   }
 
   /**
@@ -488,70 +526,104 @@ export class SalesRepository {
   }
 
   /**
-   * Record payment on a sales order (increase amount_paid, update payment_status).
-   * Optionally insert into sales_payments when table exists (supports cheque details).
+   * Record payment on a sales order. Updates amount_paid to the sum total of all payments (from sales_payments when table exists).
+   * Inserts into sales_payments when table exists; posts ledger entry (DR Cash, CR AR) when account_ledger exists.
    */
   async recordPayment(orderId, paymentData, userId = null) {
-    const amount = Number(paymentData.amount)
-    const order = await this.knex('sales_orders').where({ id: orderId }).first()
-    if (!order) {
-      const err = new Error('Sales order not found')
-      err.status = 404
-      throw err
-    }
-    if (order.is_reversed) {
-      const err = new Error('Cannot pay a reversed order')
-      err.status = 400
-      throw err
-    }
-    const totalAmount = Number(order.total_amount || 0)
-    const withholdAmount = Number(order.withhold_amount || 0)
-    const netAmount = totalAmount - withholdAmount
-    const currentPaid = Number(order.amount_paid || 0)
-    const newPaid = currentPaid + amount
-    if (newPaid > netAmount + 0.01) {
-      const err = new Error('Payment would exceed amount due')
-      err.status = 400
-      throw err
-    }
-    if (amount <= 0) {
-      const err = new Error('Payment amount must be greater than zero')
-      err.status = 400
-      throw err
-    }
-    let payment_status = 'unpaid'
-    if (newPaid >= netAmount - 0.009) payment_status = 'paid'
-    else if (newPaid > 0) payment_status = 'partial'
+    return this.knex.transaction(async (trx) => {
+      const amount = Number(paymentData.amount)
+      const order = await trx('sales_orders').where({ id: orderId }).first()
+      if (!order) {
+        const err = new Error('Sales order not found')
+        err.status = 404
+        throw err
+      }
+      if (order.is_reversed) {
+        const err = new Error('Cannot pay a reversed order')
+        err.status = 400
+        throw err
+      }
+      const totalAmount = Number(order.total_amount || 0)
+      const withholdAmount = Number(order.withhold_amount || 0)
+      const netAmount = totalAmount - withholdAmount
 
-    const hasPaymentsTable = await this.knex.schema.hasTable('sales_payments')
-    if (hasPaymentsTable) {
-      await this.knex('sales_payments').insert({
-        sales_order_id: orderId,
-        payment_date: paymentData.payment_date || new Date().toISOString().split('T')[0],
-        amount,
-        payment_method: paymentData.payment_method || 'cash',
-        note: paymentData.note || null,
-        cheque_no: paymentData.cheque_no || null,
-        bank_name: paymentData.bank_name || null,
-        cheque_date: paymentData.cheque_date || null,
-        last_updated: this.knex.fn.now(),
-        sync_status: 'pending',
-      })
-    }
+      const hasPaymentsTable = await trx.schema.hasTable('sales_payments')
+      let alreadyPaid = 0
+      if (hasPaymentsTable) {
+        const paymentsAgg = await trx('sales_payments')
+          .where('sales_order_id', orderId)
+          .sum({ total_paid: 'amount' })
+          .first()
+        alreadyPaid = Number(paymentsAgg?.total_paid || 0)
+      } else {
+        alreadyPaid = Number(order.amount_paid || 0)
+      }
+      const newPaid = alreadyPaid + amount
 
-    await this.knex('sales_orders')
-      .where({ id: orderId })
-      .update({
+      if (newPaid > netAmount + 0.01) {
+        const err = new Error('Payment would exceed amount due')
+        err.status = 400
+        throw err
+      }
+      if (amount <= 0) {
+        const err = new Error('Payment amount must be greater than zero')
+        err.status = 400
+        throw err
+      }
+      let payment_status = 'unpaid'
+      if (newPaid >= netAmount - 0.009) payment_status = 'paid'
+      else if (newPaid > 0) payment_status = 'partial'
+
+      const paymentDate = paymentData.payment_date || new Date().toISOString().split('T')[0]
+      let paymentId = orderId // fallback for ledger reference when no sales_payments row
+
+      if (hasPaymentsTable) {
+        const [payment] = await trx('sales_payments')
+          .insert({
+            sales_order_id: orderId,
+            payment_date: paymentDate,
+            amount,
+            payment_method: paymentData.payment_method || 'cash',
+            note: paymentData.note || null,
+            cheque_no: paymentData.cheque_no || null,
+            bank_name: paymentData.bank_name || null,
+            cheque_date: paymentData.cheque_date || null,
+            last_updated: trx.fn.now(),
+            sync_status: 'pending',
+          })
+          .returning('*')
+        if (payment && payment.id) paymentId = payment.id
+      }
+
+      // amount_paid = sum total of all payments (after insert; when no payments table, newPaid = order.amount_paid + amount)
+      await trx('sales_orders')
+        .where({ id: orderId })
+        .update({
+          amount_paid: newPaid,
+          payment_status,
+          last_updated: trx.fn.now()
+        })
+
+      const hasLedger = await trx.schema.hasTable('account_ledger')
+      if (hasLedger) {
+        await this.ledgerHelper.recordSalesPayment({
+          salesOrderId: orderId,
+          paymentId,
+          amount,
+          paymentMethod: paymentData.payment_method || 'cash',
+          transactionDate: paymentDate,
+          referenceNumber: order.receipt_no || null,
+          memo: paymentData.note || null,
+          createdBy: userId
+        }, trx)
+      }
+
+      return {
         amount_paid: newPaid,
         payment_status,
-        last_updated: this.knex.fn.now()
-      })
-
-    return {
-      amount_paid: newPaid,
-      payment_status,
-      outstanding_balance: Math.max(0, netAmount - newPaid)
-    }
+        outstanding_balance: Math.max(0, netAmount - newPaid)
+      }
+    })
   }
 
   /**
@@ -736,6 +808,7 @@ export class SalesRepository {
       .select(
         'so.id',
         'so.receipt_no',
+        'so.invoice_no',
         'so.order_date',
         'so.total_amount',
         'so.withhold_percentage',
@@ -745,6 +818,9 @@ export class SalesRepository {
         'so.payment_status',
         'so.encoder_fullname',
         'so.customer_id',
+        'so.remark',
+        'so.sales_invoice_no',
+        'so.withhold_confirmation',
         'c.name as customer_name',
         'c.address as customer_address',
         'c.phone as customer_phone',
@@ -780,6 +856,15 @@ export class SalesRepository {
     const amountPaid = Number(order.amount_paid ?? 0)
     const remainingBalance = Math.max(0, netAmount - amountPaid)
 
+    // Extract withhold_reference from remark if present
+    let withhold_reference = null;
+    if (order.remark) {
+      const match = order.remark.match(/Withhold Ref:\s*(.+?)(?:\n|$)/i);
+      if (match) {
+        withhold_reference = match[1].trim();
+      }
+    }
+
     const order_meta = {
       order_date: order.order_date,
       payment_type: order.payment_type,
@@ -795,6 +880,10 @@ export class SalesRepository {
       withhold_percentage: order.withhold_percentage != null ? Number(order.withhold_percentage) : null,
       withhold_amount: withholdAmount,
       net_amount: netAmount,
+      invoice_no: order.invoice_no || null,
+      withhold_reference: withhold_reference,
+      sales_invoice_no: order.sales_invoice_no || null,
+      withhold_confirmation: order.withhold_confirmation || false,
     }
 
     const order_items = items.map((it) => ({

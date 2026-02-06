@@ -28,12 +28,22 @@ export function buildReceiptData(receipt, settings) {
   const companyName = (settings.company_name || '').trim() || 'Company';
   const paymentStatus = payment && payment.remaining_balance > 0.01 ? 'PARTIAL' : (meta.payment_status || 'PAID');
   const withholdPct = meta.withhold_percentage != null ? Number(meta.withhold_percentage) : null;
-  const withholdInfo = withholdPct != null && (meta.withhold_amount || 0) > 0
-    ? `${withholdPct}% withheld`
-    : 'N/A';
+  const hasWithhold = withholdPct != null && (meta.withhold_amount || 0) > 0;
+  const isConfirmed = meta.withhold_confirmation === true;
+  const withholdRef = meta.sales_invoice_no || null;
+  let withholdInfo = 'N/A';
+  if (hasWithhold) {
+    const parts = [`${withholdPct}% withheld`];
+    // Show withhold_reference when withhold is confirmed
+    if (isConfirmed && meta.sales_invoice_no) {
+      parts.push(`Withhold Ref: ${meta.sales_invoice_no}`);
+    }
+    withholdInfo = parts.join(' · ');
+  }
 
   const receiptData = {
     receiptNo: receipt.receipt_no ?? '',
+    invoiceNo: meta.invoice_no || null,
     dateIssued: formatDateDDMMYYYY(meta.order_date),
     fromCompany: {
       businessName: companyName,
@@ -51,9 +61,13 @@ export function buildReceiptData(receipt, settings) {
     },
     orderDetails: {
       orderDate: formatDateDDMMYYYY(meta.order_date),
+      invoiceNo: meta.invoice_no || null,
       paymentMode: (meta.payment_type || '').replace(/\b\w/g, (c) => c.toUpperCase()),
+      salesInvoiceNo: withholdRef,
+      isConfirmed: isConfirmed,
+      hasWithhold: hasWithhold,
       withholdTaxInfo: withholdInfo,
-      status: `${paymentStatus} COMPLETED`,
+      status: `${paymentStatus.toUpperCase()}`,
       referenceSO: (meta.reference_so || receipt.receipt_no) ?? '',
     },
     items: (receipt.order_items || []).map((it) => ({
@@ -138,7 +152,7 @@ function ReceiptModalContent({ receipt, settings, handleClose, delegator }) {
 
   const receiptContainer = SalesReceipt(receiptData, delegator, false);
 
-  const printWrapper = document.createElement('div');
+  const printWrapper =  document.createElement('div');
   printWrapper.id = 'receipt-print-area';
   printWrapper.className = 'receipt-print-area';
   printWrapper.appendChild(receiptContainer);
