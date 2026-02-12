@@ -28,6 +28,8 @@ export function Products(props) {
   const loading = props.viewModel.getState('loading');
   const productList = props.viewModel.getProductList();
   const searchQuery = props.viewModel.getState('product-search-query');
+  const productFilter = props.viewModel.getState('product-filter') || 'all';
+  const productStats = props.viewModel.getState('product-stats') || { outOfStock: 0, lowStock: 0 };
   
   // Get drawer state from viewModel
   const selectedProduct = props.viewModel.getState('selected-product');
@@ -154,6 +156,25 @@ export function Products(props) {
       ])
     ]),
 
+    // Product filter: All | Out of stock | Low stock (by bin card balance)
+    Row({ class: 'flex items-center gap-2 px-6 py-2 border-b border-gray-100 bg-gray-50 flex-shrink-0 flex-wrap' }, [
+      Button({
+        variant: productFilter === 'all' ? 'primary' : 'outline',
+        class: 'text-xs py-0.5 px-2 min-h-0',
+        onClick: () => props.viewModel.setProductFilter('all')
+      }, 'All'),
+      Button({
+        variant: productFilter === 'out-of-stock' ? 'primary' : 'outline',
+        class: 'text-xs py-0.5 px-2 min-h-0',
+        onClick: () => props.viewModel.setProductFilter('out-of-stock')
+      }, `Out of Stock (${(productStats.outOfStock || 0).toLocaleString()})`),
+      Button({
+        variant: productFilter === 'low-stock' ? 'primary' : 'outline',
+        class: 'text-xs py-0.5 px-2 min-h-0',
+        onClick: () => props.viewModel.setProductFilter('low-stock')
+      }, `Low Stock (${(productStats.lowStock || 0).toLocaleString()})`)
+    ]),
+
     // Search and Pagination Section
     Row({ class: 'flex items-center justify-between gap-6 px-6 py-4 border-b border-gray-200 bg-gray-50' }, [
       Row({ class: 'flex-1 max-w-md' }, [
@@ -236,6 +257,16 @@ export function Products(props) {
   ])
 }
 
+const LOW_STOCK_THRESHOLD_DEFAULT = 50; // Match API default; later: system_settings or per-product
+
+const statusBadgeClass = 'w-fit inline-flex px-2 py-1 rounded-full text-xs font-medium';
+function getProductStatusBadge(balance, lowThreshold = LOW_STOCK_THRESHOLD_DEFAULT) {
+  const qty = balance != null ? Number(balance) : 0;
+  if (qty === 0) return Row({ class: `${statusBadgeClass} bg-red-100 text-red-700` }, 'Out of Stock');
+  if (qty < lowThreshold) return Row({ class: `${statusBadgeClass} bg-orange-100 text-orange-700` }, 'Low Stock');
+  return Row({ class: `${statusBadgeClass} bg-green-100 text-green-700` }, 'In Stock');
+}
+
 function ProductTable(props) {
   const productList = props.viewModel.getProductList();
   props.ensureLocalStateKey('actionId', null);
@@ -254,8 +285,6 @@ function ProductTable(props) {
   
   return Table({ 
     class: 'flex-1 flex flex-col min-h-0', 
-    getOpenActionState: () => props.getLocalState('actionId'), 
-    setOpenActionState: () => props.setLocalState('actionId', null)  
   }, [
     TableHeader({ class: 'sticky top-0 z-10' }, [ // 'sticky top-12 z-10 mb-10'
       TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('id') }, [
@@ -274,6 +303,11 @@ function ProductTable(props) {
         'Unit',
         sortIcon('unit')
       ]),
+      TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('balance') }, [
+        'Balance',
+        sortIcon('balance')
+      ]),
+      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Status'),
       TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase tracking-wide' }, "Action"),      
     ]),
     TableBody({ class: 'flex-1 overflow-y-auto'}, 
@@ -282,6 +316,8 @@ function ProductTable(props) {
         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.description || row.name),
         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.category),
         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.unit),
+        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-medium' }, (row.balance != null ? row.balance : 0).toLocaleString()),
+        TableDCell({ class: 'px-4 py-3 text-sm' }, getProductStatusBadge(row.balance, row.low_stock_threshold)),
         ActionDropdown({
           actionId: row.id,
           open: row.id === actionId,

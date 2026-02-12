@@ -15,21 +15,32 @@ import { showAlert } from '../../utils/ModalHelpers';
 
 const { Row, StatefulRow } = Liteframe;
 
-export function PurchaseUI() {
+export function PurchaseUI(props = {}) {
+  const { router, navigationVM } = props;
   const viewModel = new PurchaseVM();
 
-  const render = (props) => {
-    const leftPanelCollapsed = props.viewModel.getState('left-panel-collapsed');
+  const render = (renderProps) => {
+    const mergedProps = { ...renderProps, router, navigationVM };
+    const leftPanelCollapsed = mergedProps.viewModel.getState('left-panel-collapsed');
 
-    props.ensureLocalStateKey('isExpanded', false);
+    mergedProps.ensureLocalStateKey('isExpanded', false);
+
+    // Handle cross-module navigation: open Order History with specific order (from PayablesTab)
+    const pendingOpen = navigationVM?.getState?.('pending-purchase-open');
+    if (pendingOpen && mergedProps.viewModel.getActiveTab() !== 'order-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateTab('order-history');
+        mergedProps.setLocalState('isExpanded', true);
+      }, 0);
+    }
     
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden'}, [
       CardHeader({ 
         class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0' 
       }, 'Purchase Management'),
       CardBody({ class: 'p-6 flex flex-row h-full overflow-hidden gap-4'}, [
-        LeftPanel(props),
-        RightPanel(props)
+        LeftPanel(mergedProps),
+        RightPanel(mergedProps)
       ]),
     ])
   } 
@@ -37,7 +48,7 @@ export function PurchaseUI() {
   return StatefulRow({ 
     class: 'w-full h-full overflow-hidden', 
     viewModel, 
-    stateKeys: ['loading'] 
+    stateKeys: ['loading', 'purchase-tab'] 
   }, render)
 }
 
@@ -121,15 +132,15 @@ function PurchaseTabs(props) {
 }
 
 function PurchaseTabContents(props) {
-  // const activeTab = props.getLocalState('purchase-tab');
   const activeTab = props.viewModel.getActiveTab();
+  const pendingOpen = props.navigationVM?.getState?.('pending-purchase-open');
 
   const tabContent = () => {
     switch(activeTab) {
       case 'current-order':
         return CurrentOrder(props);
       case 'order-history':
-        return OrderHistory(props);
+        return OrderHistory({ ...props, pendingPurchaseOpen: pendingOpen });
       case 'hold-orders':
         return HoldOrders(props);
       default:

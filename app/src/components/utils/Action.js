@@ -1,7 +1,17 @@
 import { twMerge } from 'tailwind-merge';
 import { IonIcon } from './Icon';
+import { registerActionDropdownOutsideClickByTag } from './OutsideClick';
 
 const { Row } = Liteframe;
+
+/** Current open ActionDropdown ref; updated by each ActionDropdown when it is open. One listener uses this. */
+const currentOpenRef = { current: null };
+
+let actionDropdownOutsideClickRegistered = false;
+if (!actionDropdownOutsideClickRegistered) {
+  registerActionDropdownOutsideClickByTag(() => currentOpenRef.current);
+  actionDropdownOutsideClickRegistered = true;
+}
 
 function ActionDropdown(props, children) {
   const {
@@ -38,9 +48,9 @@ function ActionDropdown(props, children) {
     menuClass
   );
 
-  return Row({
+  const container = Row({
     class: rootClass,
-    attributes: { 'data-action-id': actionId }
+    attributes: { 'data-action-id': actionId, 'data-action-dropdown': '' }
   }, [
     Row({
       tagType: 'button',
@@ -57,6 +67,15 @@ function ActionDropdown(props, children) {
 
     open && Row({ class: menuBaseClass }, children)
   ]);
+
+  if (open) {
+    currentOpenRef.current = {
+      getOpenState: () => true,
+      setOpenState: () => onToggle()
+    };
+  }
+
+  return container;
 }
 
 

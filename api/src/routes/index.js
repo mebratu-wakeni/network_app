@@ -10,6 +10,7 @@ import purchases from '../modules/purchase/purchase.routes.js'
 import sales from '../modules/sales/sales.routes.js'
 import settings from '../modules/settings/settings.routes.js'
 import ledger from '../modules/ledger/ledger.routes.js'
+import financial from '../modules/financial/financial.routes.js'
 
 const router = Router()
 
@@ -35,6 +36,7 @@ router.use('/purchases', purchases)
 router.use('/sales', sales)
 router.use('/settings', settings)
 router.use('/ledger', ledger)
+router.use('/financial', financial)
 
 export default router
 

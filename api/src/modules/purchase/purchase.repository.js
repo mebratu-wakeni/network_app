@@ -175,11 +175,13 @@ export class PurchaseRepository {
    * Get withhold percentage from system_settings
    */
   async getWithholdPercentageSetting() {
+    const hasTable = await this.knex.schema.hasTable('system_settings')
+    if (!hasTable) return null
     const setting = await this.knex('system_settings')
       .where({ setting_key: 'withhold_percentage' })
       .first()
 
-    if (!setting || setting.setting_value == null) return null
+    if (!setting || setting.setting_value == null || setting.setting_value === '') return null
 
     const numeric = Number(setting.setting_value)
     return Number.isFinite(numeric) ? numeric : null
@@ -197,6 +199,25 @@ export class PurchaseRepository {
         initialPayment, // optional
         receiptSnapshot // { snapshot_data, order_meta, order_items, order_payment }
       } = payload
+
+      // 0) Cash balance validation: prevent negative cash for cash purchases
+      if (order.payment_mode === 'cash') {
+        const netAmount = Number(order.total_amount || 0) - Number(order.withhold_amount || 0)
+        if (netAmount > 0) {
+          const hasLedger = await trx.schema.hasTable('account_ledger')
+          if (hasLedger) {
+            const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+            const cashBalance = Number(balances['1100'] ?? 0)
+            if (cashBalance < netAmount) {
+              const err = new Error(
+                `Insufficient cash balance. Current cash: ${cashBalance.toFixed(2)}. Required: ${netAmount.toFixed(2)}.`
+              )
+              err.status = 400
+              throw err
+            }
+          }
+        }
+      }
 
       // 1) Insert order
       const [insertedOrder] = await trx('purchase_orders')
@@ -708,6 +729,22 @@ export class PurchaseRepository {
         const error = new Error('Payment amount must be greater than zero')
         error.status = 400
         throw error
+      }
+
+      // Cash balance validation: prevent negative cash for cash payments
+      if (paymentData.payment_method === 'cash') {
+        const hasLedger = await trx.schema.hasTable('account_ledger')
+        if (hasLedger) {
+          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+          const cashBalance = Number(balances['1100'] ?? 0)
+          if (cashBalance < paymentData.amount) {
+            const err = new Error(
+              `Insufficient cash balance. Current cash: ${cashBalance.toFixed(2)}. Payment amount: ${paymentData.amount.toFixed(2)}.`
+            )
+            err.status = 400
+            throw err
+          }
+        }
       }
 
       // Insert payment row

@@ -301,8 +301,6 @@ function CustomerTable(props) {
   return Table({ 
     class: 'flex-1 min-h-0', 
     id: 'customers-table',
-    getOpenActionState: () => props.getLocalState('actionId'),
-    setOpenActionState: () => props.setLocalState('actionId', null)
   }, [
     TableHeader({class: 'sticky top-0 z-10 bg-white'}, [
       TableHCell({ 

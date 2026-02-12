@@ -33,7 +33,7 @@ export class ProductsService {
     const products = result.products || []
     
     // CSV Headers
-    const headers = ['Product Code', 'Name', 'Description', 'Category', 'Unit', 'Created At', 'Last Updated']
+    const headers = ['Product Code', 'Name', 'Description', 'Category', 'Unit', 'Balance', 'Created At', 'Last Updated']
     
     // Convert products to CSV rows
     const rows = products.map(product => {
@@ -53,6 +53,7 @@ export class ProductsService {
         escapeCSV(product.description || ''),
         escapeCSV(product.category || ''),
         escapeCSV(product.unit || ''),
+        escapeCSV(product.balance != null ? product.balance : ''),
         escapeCSV(product.created_at || ''),
         escapeCSV(product.last_updated || '')
       ].join(',')
@@ -385,7 +386,8 @@ export class ProductsService {
       description: data.description?.trim() || null,
       category_id: data.category_id || existing.category_id,
       unit_id: data.unit_id || existing.unit_id,
-      remark: data.remark?.trim() || null
+      remark: data.remark?.trim() || null,
+      expiry_threshold: data.expiry_threshold != null ? data.expiry_threshold : (existing.expiry_threshold != null ? existing.expiry_threshold : 30)
     }
 
     const result = await this.repository.update(id, updateData)

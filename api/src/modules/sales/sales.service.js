@@ -57,18 +57,23 @@ export class SalesService {
     const receipt_no = await this.repository.generateNextSalesReceiptNumber()
 
     // Store withhold_reference in remark field if withholding is applied
-    let finalRemark = remark ?? null;
-    if (withhold_reference && withhold_reference.trim()) {
-      finalRemark = finalRemark 
-        ? `${finalRemark}\nWithhold Ref: ${withhold_reference.trim()}`
-        : `Withhold Ref: ${withhold_reference.trim()}`;
+    const hasWithholdRef = withhold_reference && String(withhold_reference).trim()
+    const withholdRefTrimmed = hasWithholdRef ? String(withhold_reference).trim() : null
+    let finalRemark = remark ?? null
+    if (withholdRefTrimmed) {
+      finalRemark = finalRemark
+        ? `${finalRemark}\nWithhold Ref: ${withholdRefTrimmed}`
+        : `Withhold Ref: ${withholdRefTrimmed}`
     }
+
+    // When withhold_reference is filled, order is considered withhold confirmed
+    const withholdConfirmed = !!withholdRefTrimmed
 
     const orderPayload = {
       customer_id: customer_id ?? null,
       order_date,
       invoice_no: invoice_no ?? null,
-      sales_invoice_no: sales_invoice_no ?? null,
+      sales_invoice_no: withholdConfirmed ? withholdRefTrimmed : (sales_invoice_no ?? null),
       remark: finalRemark,
       payment_type,
       payment_status,
@@ -78,8 +83,7 @@ export class SalesService {
       withhold_amount: withhold_amount || null,
       received_amount,
       withhold_settled: false,
-      withhold_confirmation: false,
-      sales_invoice_no: null,
+      withhold_confirmation: withholdConfirmed,
       receipt_no,
       status: 'completed',
       is_reversed: false,

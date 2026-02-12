@@ -40,6 +40,8 @@ export class InventoryVM extends ViewModel {
       sortBy: 'id',
       orderBy: 'desc'
     });
+    this.setState('product-filter', 'all'); // 'all' | 'out-of-stock' | 'low-stock'
+    this.setState('product-stats', { outOfStock: 0, lowStock: 0 });
     this.setState('product-search-query', '');
     this.setState('product-form', {
       name: '',
@@ -206,17 +208,22 @@ export class InventoryVM extends ViewModel {
       const tableConfig = this.getState('product-table-config');
       const searchQuery = this.getState('product-search-query');
       
+      const productFilter = this.getState('product-filter') || 'all';
       const result = await window.ipcRenderer.invoke('inventory:get-products', {
         limit: tableConfig.limit,
         offset: tableConfig.offset,
         search: searchQuery,
         sortBy: tableConfig.sortBy,
-        orderBy: tableConfig.orderBy
+        orderBy: tableConfig.orderBy,
+        filter: productFilter
       });
 
       if (result.success) {
         this.updateState('product-list', result.products || []);
         this.updateState('product-total-count', result.total || 0);
+        if (result.stats) {
+          this.updateState('product-stats', result.stats);
+        }
         return result.products;
       }
 
@@ -323,6 +330,7 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Borrowed from stock created successfully' });
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -579,6 +587,27 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Product updated successfully' });
+        // Update selected product and form with saved data so the drawer shows DB values (e.g. expiry_threshold)
+        const updated = result.product || result.data;
+        if (updated) {
+          const prev = this.getState('selected-product');
+          if (prev && prev.id === productId) {
+            this.updateState('selected-product', { ...prev, ...updated });
+          }
+          const form = this.getState('product-details-form');
+          const expiryThreshold = updated.expiry_threshold ?? updated.expiryThreshold;
+          this.updateState('product-details-form', {
+            ...form,
+            name: updated.name ?? form.name,
+            description: updated.description ?? form.description,
+            category: updated.category ?? form.category,
+            category_id: updated.category_id ?? form.category_id,
+            unit: updated.unit ?? form.unit,
+            unit_id: updated.unit_id ?? form.unit_id,
+            remark: updated.remark ?? form.remark,
+            expiry_threshold: expiryThreshold != null ? expiryThreshold : (form.expiry_threshold ?? 30)
+          });
+        }
         // Set loading to false so loadProducts() can run
         this.updateState('loading', false);
         // Reload products list
@@ -668,7 +697,7 @@ export class InventoryVM extends ViewModel {
         this.updateState('success', { 
           message: `Successfully imported ${result.summary?.successful || 0} stock item(s)` 
         });
-        // Reload stock list
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -787,7 +816,8 @@ export class InventoryVM extends ViewModel {
           total: typeof result.total === 'number' ? result.total : 0,
           filter: filter,
           search: search,
-          stats: safeStats
+          stats: safeStats,
+          dataType: result.dataType || null
         });
         return result.stock;
       }
@@ -861,7 +891,8 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Stock adjusted successfully' });
-        // Reload stock list and stats
+        // Allow loadStock to run (it early-returns when loading is true)
+        this.updateState('loading', false);
         await this.loadStock();
         return result.stock;
       }
@@ -891,7 +922,7 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Stock transferred successfully' });
-        // Reload stock list
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -921,7 +952,7 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Borrowed stock returned successfully' });
-        // Reload stock list
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -1172,12 +1203,19 @@ export class InventoryVM extends ViewModel {
     
     // Initialize form based on drawer type
     if (drawerType === 'view-details' && stockItem) {
+      let expiryForInput = null;
+      if (stockItem.expiryDate != null && stockItem.expiryDate !== '') {
+        try {
+          const d = new Date(stockItem.expiryDate);
+          if (!isNaN(d.getTime())) expiryForInput = d.toISOString().split('T')[0];
+        } catch (_) { /* leave null */ }
+      }
       this.updateState('stock-details-form', {
         inventoryCode: stockItem.inventoryCode || stockItem.id?.toString() || '',
         productCode: stockItem.productCode || '',
         quantity: stockItem.quantity || 0,
         batchNo: stockItem.batchNumber || stockItem.batchNo || '',
-        expiryDate: stockItem.expiryDate || null,
+        expiryDate: expiryForInput,
         unitCost: stockItem.unitCost || 0,
         sellingPrice: stockItem.sellingPrice || 0
       });
@@ -1260,14 +1298,19 @@ export class InventoryVM extends ViewModel {
     this.updateState('product-details-edit-mode', editMode);
     this.updateState('loading', true); // Trigger re-render
     if (!editMode) {
-      // Reset form to original product values
+      // Reset form to current selected product (including expiry_threshold so it doesn't revert to 30)
       const product = this.getState('selected-product');
       if (product) {
+        const expiryThreshold = product.expiry_threshold ?? product.expiryThreshold;
         this.updateState('product-details-form', {
           name: product.name || '',
           description: product.description || '',
           category: product.category || '',
-          unit: product.unit || ''
+          category_id: product.category_id ?? null,
+          unit: product.unit || '',
+          unit_id: product.unit_id ?? null,
+          remark: product.remark || '',
+          expiry_threshold: expiryThreshold != null ? expiryThreshold : 30
         });
       }
     }
@@ -1628,15 +1671,22 @@ export class InventoryVM extends ViewModel {
     this.updateState('stock-details-edit-mode', editMode);
     this.updateState('loading', true); // Trigger re-render
     if (!editMode) {
-      // Reset form to original stock item values
+      // Reset form to original stock item values (expiryDate as YYYY-MM-DD for date input)
       const stockItem = this.getState('selected-stock-item');
       if (stockItem) {
+        let expiryForInput = null;
+        if (stockItem.expiryDate != null && stockItem.expiryDate !== '') {
+          try {
+            const d = new Date(stockItem.expiryDate);
+            if (!isNaN(d.getTime())) expiryForInput = d.toISOString().split('T')[0];
+          } catch (_) { /* leave null */ }
+        }
         this.updateState('stock-details-form', {
           inventoryCode: stockItem.inventoryCode || stockItem.id?.toString() || '',
           productCode: stockItem.productCode || '',
           quantity: stockItem.quantity || 0,
           batchNo: stockItem.batchNumber || stockItem.batchNo || '',
-          expiryDate: stockItem.expiryDate || null,
+          expiryDate: expiryForInput,
           unitCost: stockItem.unitCost || 0,
           sellingPrice: stockItem.sellingPrice || 0
         });
@@ -1690,16 +1740,24 @@ export class InventoryVM extends ViewModel {
             ...currentStockItem,
             ...result.stock
           });
-          // Also update the form with the new values
+          // Also update the form with the new values (expiryDate as YYYY-MM-DD for date input)
           const form = this.getState('stock-details-form');
+          let expiryForInput = form.expiryDate ?? null;
+          if (result.stock.expiryDate != null && result.stock.expiryDate !== '') {
+            try {
+              const d = new Date(result.stock.expiryDate);
+              if (!isNaN(d.getTime())) expiryForInput = d.toISOString().split('T')[0];
+            } catch (_) { /* keep form value */ }
+          }
           this.updateState('stock-details-form', {
             ...form,
             ...result.stock,
             batchNo: result.stock.batchNumber || result.stock.batchNo || form.batchNo,
-            expiryDate: result.stock.expiryDate !== undefined ? result.stock.expiryDate : form.expiryDate
+            expiryDate: result.stock.expiryDate !== undefined ? expiryForInput : form.expiryDate
           });
         }
-        // Reload stock list
+        // Allow loadStock to run (it early-returns when loading is true)
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -1723,6 +1781,14 @@ export class InventoryVM extends ViewModel {
     });
     this.loadProducts();
   }
+
+  setProductFilter(filter) {
+    this.updateState('product-filter', filter);
+    const tableConfig = this.getState('product-table-config');
+    this.updateState('product-table-config', { ...tableConfig, offset: 0 });
+    this.loadProducts();
+  }
+
   setStockSort(column) {
     const stockList = this.getState('stock-list');
     const currentOrderBy = stockList.config?.orderBy || 'desc';

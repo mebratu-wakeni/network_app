@@ -68,6 +68,18 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
   const handleComplete = async () => {
     if (loading) return;
     try {
+      // Cash balance validation: ensure sufficient funds before processing cash purchase
+      if (paymentMode === 'cash' && netAmount > 0) {
+        const ledgerRes = await window.ipcRenderer?.invoke?.('dashboard:get-ledger-balances');
+        const cashBalance = ledgerRes?.balances?.['1100'] != null ? Number(ledgerRes.balances['1100']) : 0;
+        if (cashBalance < netAmount) {
+          showAlert({
+            message: `Insufficient cash balance. Current cash: Br ${financeFormat(cashBalance)}. Required: Br ${financeFormat(netAmount)}.`,
+            variant: 'error',
+          });
+          return;
+        }
+      }
       const order = await viewModel.processOrder();
       handleClose();
       showAlert({ message: 'Purchase order completed successfully.', variant: 'success' });

@@ -95,8 +95,6 @@ export function HoldOrders(props) {
           : Row({ class: 'flex-1 flex flex-col min-h-0 min-w-full border border-gray-200 rounded-lg overflow-hidden' }, [
               Table({
                 class: 'flex-1 min-h-0 min-w-full overflow-hidden',
-                getOpenActionState: () => props.getLocalState('actionId'),
-                setOpenActionState: () => props.setLocalState('actionId', null),
               }, [
                 TableHeader({}, [
                   TableRow({}, [

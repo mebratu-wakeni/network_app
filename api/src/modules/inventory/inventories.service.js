@@ -108,9 +108,10 @@ export class InventoriesService {
       }
     }
     
-    // Helper function to get status
+    // Helper function to get status (low stock = product total quantity < threshold)
     const getStatus = (item) => {
-      if (item.quantity === 0) return 'Out of Stock'
+      const productTotal = item.productTotalQuantity != null ? item.productTotalQuantity : item.quantity
+      if (productTotal === 0) return 'Out of Stock'
       if (item.expiryDate) {
         const expiry = new Date(item.expiryDate)
         const today = new Date()
@@ -120,7 +121,7 @@ export class InventoriesService {
         thresholdDate.setDate(today.getDate() + expiryThreshold)
         if (expiry <= thresholdDate) return 'Expiring Soon'
       }
-      if (item.quantity < 50) return 'Low Stock'
+      if (productTotal < 50) return 'Low Stock'
       return 'In Stock'
     }
     

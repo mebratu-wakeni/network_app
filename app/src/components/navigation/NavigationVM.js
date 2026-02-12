@@ -1,10 +1,12 @@
 const { ViewModel, SharedStateManager } = Liteframe
+import { permissionChecker } from '../utils/PermissionChecker'
 
 const MENU = [
   { title: 'Dashboard', route: '/', icon: "grid-outline" },
   { title: 'Inventory', route: '/inventory', icon: "layers-outline" },
   { title: 'Purchase', route: '/purchase', icon: "cart-outline" },
   { title: 'Sales', route: '/sales', icon: "pricetag-outline" },
+  { title: 'Financial', route: '/financial', icon: "wallet-outline" },
   { title: 'Customers', route: '/customers', icon: "business-outline" },
   { title: 'Server', route: '/server', icon: "server-outline" },
   { title: 'Users', route: '/users', icon: "people-outline" },
@@ -23,6 +25,10 @@ class NavigationVM extends ViewModel {
   initializeState() {
     this.setState('active-menu', 'Dashboard');
     this.setState('loading', false);
+    // Cross-module: ReceivablesTab -> Sales (View in Sales / Make Payment)
+    this.setState('pending-sales-open', null);
+    // Cross-module: PayablesTab -> Purchase (View in Purchase / Make Payment)
+    this.setState('pending-purchase-open', null);
 
     // Auth state
     this.setState('auth', {
@@ -72,7 +78,8 @@ class NavigationVM extends ViewModel {
           if (meResult && (meResult.success || meResult.ok) && meResult.user) userWithRules = meResult.user
         } catch (e) { /* keep result.user */ }
         this.updateState('auth', { ...auth, isAuthenticated: true, user: userWithRules, token: result.token, loading: false, error: null })
-        this.updateState('loading', false);
+        this.updateState('loading', false)
+        permissionChecker.setUserRules(userWithRules?.rules || result?.user?.rules || [])
         return true
       }
       throw new Error(result.error || 'Login failed')
@@ -97,14 +104,13 @@ class NavigationVM extends ViewModel {
   }
 
   // Try to restore session from localStorage token (optimistic)
-  tryRestoreAuth() {
+  async tryRestoreAuth() {
     try {
       const token = localStorage.getItem('authToken')
       if (token) {
-        // Restore token into in-memory auth state. We remain optimistic about authentication;
-        // callers can validate the token by calling an auth:me endpoint later.
         const auth = this.getState('auth') || {}
         this.updateState('auth', { ...auth, isAuthenticated: true, token })
+        await permissionChecker.loadPermissions()
         return true
       }
     } catch (e) { /* ignore */ }

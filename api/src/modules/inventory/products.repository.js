@@ -116,15 +116,53 @@ export class ProductsRepository {
     return maxNum
   }
 
+  /** Default low-stock threshold (bin card balance). Later: system_settings or per-product. */
+  static get DEFAULT_LOW_STOCK_THRESHOLD() { return 50 }
+
   /**
-   * Find all products with pagination, search, and sorting
-   * @param {Object} params - { limit, offset, search, sortBy, orderBy }
-   * @returns {Object} - { products, total }
+   * Get product stock stats (out-of-stock and low-stock counts) from bin card balances.
+   * No bin card post for a product = 0 balance = out of stock.
+   */
+  async getProductStockStats() {
+    const hasBinCards = await this.knex.schema.hasTable('bin_cards')
+    if (!hasBinCards) {
+      return { outOfStock: 0, lowStock: 0 }
+    }
+    const threshold = ProductsRepository.DEFAULT_LOW_STOCK_THRESHOLD
+    const bcSubquery = this.knex.raw(
+      `(SELECT DISTINCT ON (product_id) product_id, balance FROM bin_cards ORDER BY product_id, id DESC) AS bc`
+    )
+    const row = await this.knex('products')
+      .leftJoin(bcSubquery, 'products.id', 'bc.product_id')
+      .select(
+        this.knex.raw('SUM(CASE WHEN COALESCE(bc.balance, 0) = 0 THEN 1 ELSE 0 END)::int AS out_of_stock'),
+        this.knex.raw('SUM(CASE WHEN COALESCE(bc.balance, 0) > 0 AND COALESCE(bc.balance, 0) < ? THEN 1 ELSE 0 END)::int AS low_stock', [threshold])
+      )
+      .first()
+    return {
+      outOfStock: parseInt(row?.out_of_stock || 0, 10),
+      lowStock: parseInt(row?.low_stock || 0, 10)
+    }
+  }
+
+  /**
+   * Find all products with pagination, search, sorting, and optional stock filter.
+   * Balance = latest bin card balance per product; no bin card post means 0.
+   * @param {Object} params - { limit, offset, search, sortBy, orderBy, filter }
+   * @param {string} params.filter - 'all' | 'out-of-stock' | 'low-stock'
+   * @returns {Object} - { products, total, stats? }
    */
   async findAll(params = {}) {
-    const { limit = 10, offset = 0, search = '', sortBy = 'id', orderBy = 'desc' } = params
-    
-    // Base query with joins for category and unit names
+    const { limit = 10, offset = 0, search = '', sortBy = 'id', orderBy = 'desc', filter = 'all' } = params
+    const threshold = ProductsRepository.DEFAULT_LOW_STOCK_THRESHOLD
+
+    const hasBinCards = await this.knex.schema.hasTable('bin_cards')
+    const bcSubquery = hasBinCards
+      ? this.knex.raw(
+          `(SELECT DISTINCT ON (product_id) product_id, balance FROM bin_cards ORDER BY product_id, id DESC) AS bc`
+        )
+      : null
+
     let query = this.knex('products')
       .select(
         'products.*',
@@ -133,49 +171,63 @@ export class ProductsRepository {
       )
       .leftJoin('categories', 'products.category_id', 'categories.id')
       .leftJoin('units', 'products.unit_id', 'units.id')
-    
-    // Apply search filter (search in name, product_code, category, unit)
+
+    if (bcSubquery) {
+      query = query
+        .leftJoin(bcSubquery, 'products.id', 'bc.product_id')
+        .select(this.knex.raw('COALESCE(bc.balance, 0)::int AS balance'))
+    } else {
+      query = query.select(this.knex.raw('0 AS balance'))
+    }
+
     if (search && search.trim()) {
       const searchTerm = `%${search.trim()}%`
-      query = query.where(function() {
+      query = query.where(function () {
         this.whereRaw('LOWER(products.name) LIKE ?', [searchTerm.toLowerCase()])
           .orWhereRaw('LOWER(products.product_code) LIKE ?', [searchTerm.toLowerCase()])
           .orWhereRaw('LOWER(categories.name) LIKE ?', [searchTerm.toLowerCase()])
           .orWhereRaw('LOWER(units.name) LIKE ?', [searchTerm.toLowerCase()])
       })
     }
-    
-    // Get total count before pagination (count distinct products to handle joins correctly)
+
+    if (hasBinCards && filter === 'out-of-stock') {
+      query = query.whereRaw('COALESCE(bc.balance, 0) = 0')
+    } else if (hasBinCards && filter === 'low-stock') {
+      query = query.whereRaw('COALESCE(bc.balance, 0) > 0 AND COALESCE(bc.balance, 0) < ?', [threshold])
+    }
+
     const countQuery = query.clone().clearSelect().clearOrder().countDistinct('products.id as total').first()
     const { total } = await countQuery
-    
-    // Apply sorting
-    const validSortBy = ['id', 'product_code', 'name', 'category', 'unit', 'created_at', 'last_updated']
+
+    const validSortBy = ['id', 'product_code', 'name', 'category', 'unit', 'balance', 'created_at', 'last_updated']
     const validOrderBy = ['asc', 'desc']
     const sortColumn = validSortBy.includes(sortBy) ? sortBy : 'id'
     const order = validOrderBy.includes(orderBy.toLowerCase()) ? orderBy.toLowerCase() : 'desc'
-    
-    // Map sortBy to actual column names
     const sortColumnMap = {
-      'id': 'products.id',
-      'product_code': 'products.product_code',
-      'name': 'products.name',
-      'category': 'categories.name',
-      'unit': 'units.name',
-      'created_at': 'products.created_at',
-      'last_updated': 'products.last_updated'
+      id: 'products.id',
+      product_code: 'products.product_code',
+      name: 'products.name',
+      category: 'categories.name',
+      unit: 'units.name',
+      balance: hasBinCards ? this.knex.raw('COALESCE(bc.balance, 0)') : 'products.id',
+      created_at: 'products.created_at',
+      last_updated: 'products.last_updated'
     }
-    
     query = query.orderBy(sortColumnMap[sortColumn] || 'products.id', order)
-    
-    // Apply pagination
     query = query.limit(limit).offset(offset)
-    
-    const products = await query
-    
+
+    const rows = await query
+    const products = rows.map((p) => ({
+      ...p,
+      balance: parseInt(p.balance || 0, 10)
+    }))
+
+    const stats = await this.getProductStockStats()
+
     return {
       products,
-      total: parseInt(total, 10) || 0
+      total: parseInt(total, 10) || 0,
+      stats
     }
   }
 
@@ -218,7 +270,7 @@ export class ProductsRepository {
         ...data,
         last_updated: this.knex.fn.now()
       })
-      .returning(['id', 'product_code', 'name', 'description', 'category_id', 'unit_id', 'remark', 'created_at', 'last_updated'])
+      .returning(['id', 'product_code', 'name', 'description', 'category_id', 'unit_id', 'remark', 'expiry_threshold', 'created_at', 'last_updated'])
   }
 
   /**

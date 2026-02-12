@@ -23,7 +23,7 @@ export class UsersController {
         return next(error)
       }
 
-      // Return current user with their rules
+      // Return current user with their rules and avatar (for header/profile)
       res.json({
         ok: true,
         user: {
@@ -31,6 +31,7 @@ export class UsersController {
           email: req.user.email,
           display_name: req.user.display_name,
           is_active: req.user.is_active,
+          avatar_url: req.user.avatar_url || null,
           rules: req.user.rules || []
         }
       })

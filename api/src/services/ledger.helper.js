@@ -78,7 +78,7 @@ export class LedgerHelper {
    */
   async postGLTransaction(transactionData, trx = null) {
     const {
-      transaction_date,
+      transaction_date: rawTransactionDate,
       reference_no,
       reference_table,
       reference_id,
@@ -90,6 +90,18 @@ export class LedgerHelper {
     } = transactionData
 
     const db = trx || this.knex
+
+    // Normalize transaction_date to YYYY-MM-DD string (DB may return Date object)
+    let transaction_date
+    if (rawTransactionDate == null) {
+      transaction_date = null
+    } else if (typeof rawTransactionDate === 'string') {
+      transaction_date = rawTransactionDate.length >= 10 ? rawTransactionDate.slice(0, 10) : rawTransactionDate
+    } else if (rawTransactionDate instanceof Date) {
+      transaction_date = rawTransactionDate.toISOString().split('T')[0]
+    } else {
+      transaction_date = String(rawTransactionDate).slice(0, 10)
+    }
 
     // Validate required fields
     if (!transaction_date || !entries || !Array.isArray(entries) || entries.length === 0) {
@@ -1048,6 +1060,243 @@ export class LedgerHelper {
       description: description,
       transaction_type: 'sale',
       entries: entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record expense: DR Operating Expenses (6200), CR Cash (1100) or CR AP (3100)
+   */
+  async recordExpense(params, trx = null) {
+    const {
+      expenseId,
+      amount,
+      paymentMethod,
+      transactionDate,
+      description,
+      referenceNumber = null,
+      createdBy = null
+    } = params
+
+    const entries =
+      paymentMethod === 'credit'
+        ? [
+            { account_code: '6200', debit: amount, credit: 0, description },
+            { account_code: '3100', debit: 0, credit: amount, description }
+          ]
+        : [
+            { account_code: '6200', debit: amount, credit: 0, description },
+            { account_code: '1100', debit: 0, credit: amount, description }
+          ]
+
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `EXP-${expenseId}`,
+      reference_table: 'expenses',
+      reference_id: expenseId,
+      description,
+      transaction_type: 'expense',
+      entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Reverse deposit ledger entries
+   * @param {Object} params - { depositId, transactionDate, reason, createdBy }
+   */
+  async reverseDeposit(params, trx = null) {
+    const { depositId, transactionDate, reason, referenceNumber = null, createdBy = null } = params
+    const db = trx || this.knex
+    const entries = await db('account_ledger')
+      .where({ reference_table: 'deposits', reference_id: depositId, transaction_type: 'deposit' })
+      .orderBy('id', 'asc')
+    if (entries.length === 0) return { success: true, message: 'No ledger entries to reverse', entries: [] }
+    const accountGroups = {}
+    entries.forEach((entry) => {
+      const code = entry.account_code
+      if (!accountGroups[code]) accountGroups[code] = { debit: 0, credit: 0 }
+      accountGroups[code].debit += parseFloat(entry.debit || 0)
+      accountGroups[code].credit += parseFloat(entry.credit || 0)
+    })
+    const reverseEntries = Object.keys(accountGroups).map((accountCode) => {
+      const g = accountGroups[accountCode]
+      return {
+        account_code: accountCode,
+        debit: g.credit,
+        credit: g.debit,
+        description: `REVERSAL: Deposit - ${reason}`
+      }
+    })
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `DEP-REV-${depositId}`,
+      reference_table: 'deposits',
+      reference_id: depositId,
+      description: `Deposit Reversal - ${reason}`,
+      transaction_type: 'deposit_reversal',
+      entries: reverseEntries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record deposit/contribution: DR Cash (1100), CR Owner's Capital (4100) or Opening Balance (4300)
+   */
+  async recordDeposit(params, trx = null) {
+    const {
+      depositId,
+      amount,
+      accountCode = '4100', // 4100 Owner's Capital or 4300 Opening Balance
+      transactionDate,
+      description,
+      referenceNumber = null,
+      createdBy = null
+    } = params
+
+    const entries = [
+      { account_code: '1100', debit: amount, credit: 0, description },
+      { account_code: accountCode, debit: 0, credit: amount, description }
+    ]
+
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `DEP-${depositId}`,
+      reference_table: 'deposits',
+      reference_id: depositId,
+      description,
+      transaction_type: 'deposit',
+      entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record cash loan receivable (lend): DR Loans Receivable (1210), CR Cash (1100)
+   * When lending cash to a partner, loans receivable increases and cash decreases.
+   */
+  async recordCashLoanReceivable(params, trx = null) {
+    const { loanId, amount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const entries = [
+      { account_code: '1210', debit: amount, credit: 0, description },  // DR Loans Receivable – amount owed by partner
+      { account_code: '1100', debit: 0, credit: amount, description }  // CR Cash – cash disbursed
+    ]
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `LOAN-REC-${loanId}`,
+      reference_table: 'cash_loans_receivable',
+      reference_id: loanId,
+      description,
+      transaction_type: 'cash_loan_receivable',
+      entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record cash loan receivable return: DR Cash (1100), CR Loans Receivable (1210)
+   * When partner returns cash, cash increases and loans receivable decreases.
+   */
+  async recordCashLoanReceivableReturn(params, trx = null) {
+    const { loanId, returnAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const entries = [
+      { account_code: '1100', debit: returnAmount, credit: 0, description },  // DR Cash – receive cash
+      { account_code: '1210', debit: 0, credit: returnAmount, description }  // CR Loans Receivable – reduce receivable
+    ]
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `LOAN-REC-RET-${loanId}`,
+      reference_table: 'cash_loans_receivable',
+      reference_id: loanId,
+      description,
+      transaction_type: 'cash_loan_receivable_return',
+      entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record cash loan payable (borrow): DR Cash (1100), CR Loans Payable (3300)
+   */
+  async recordCashLoanPayable(params, trx = null) {
+    const { loanId, amount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const entries = [
+      { account_code: '1100', debit: amount, credit: 0, description },
+      { account_code: '3300', debit: 0, credit: amount, description }
+    ]
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `LOAN-PAY-${loanId}`,
+      reference_table: 'cash_loans_payable',
+      reference_id: loanId,
+      description,
+      transaction_type: 'cash_loan_payable',
+      entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record cash loan payable repayment: DR Loans Payable (3300), CR Cash (1100)
+   */
+  async recordCashLoanPayableRepayment(params, trx = null) {
+    const { repaymentAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const entries = [
+      { account_code: '3300', debit: repaymentAmount, credit: 0, description },
+      { account_code: '1100', debit: 0, credit: repaymentAmount, description }
+    ]
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `LOAN-PAY-REP`,
+      reference_table: 'cash_loans_payable',
+      reference_id: null,
+      description,
+      transaction_type: 'cash_loan_payable_repayment',
+      entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record withhold receivable settlement: DR Cash (1100), CR Withhold Receivable (1250)
+   * When settling withholds with tax authority, cash is received and withhold receivable is cleared.
+   */
+  async recordWithholdReceivableSettlement(params, trx = null) {
+    const { settlementId, totalAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const entries = [
+      { account_code: '1100', debit: totalAmount, credit: 0, description },  // DR Cash – receive from tax authority
+      { account_code: '1250', debit: 0, credit: totalAmount, description }  // CR Withhold Receivable – clear receivable
+    ]
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `WITHHOLD-REC-SET-${settlementId}`,
+      reference_table: 'withhold_receivable_settlements',
+      reference_id: settlementId,
+      description,
+      transaction_type: 'withhold_receivable_settlement',
+      entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Record withhold payable settlement: DR Withhold Payable (3210), CR Cash (1100)
+   * When remitting withheld tax to the tax authority, we clear the liability and pay cash.
+   */
+  async recordWithholdPayableSettlement(params, trx = null) {
+    const { settlementId, totalAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const entries = [
+      { account_code: '3210', debit: totalAmount, credit: 0, description },  // DR Withhold Payable – clear liability
+      { account_code: '1100', debit: 0, credit: totalAmount, description }  // CR Cash – payment to tax authority
+    ]
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `WITHHOLD-PAY-SET-${settlementId}`,
+      reference_table: 'withhold_payable_settlements',
+      reference_id: settlementId,
+      description,
+      transaction_type: 'withhold_payable_settlement',
+      entries,
       created_by: createdBy
     }, trx)
   }

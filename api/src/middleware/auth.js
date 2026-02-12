@@ -25,6 +25,7 @@ export const authenticate = async (req, res, next) => {
         email: 'dev@localhost',
         display_name: 'Development User',
         is_active: true,
+        avatar_url: null,
         rules: ['admin'] // Grant all permissions in dev
       }
       return next()
@@ -70,12 +71,13 @@ export const authenticate = async (req, res, next) => {
     // Load effective rules
     const effectiveRules = await permissionsService.getEffectiveRules(user.id)
     
-    // Attach user and rules to request
+    // Attach user and rules to request (include avatar_url for header/profile)
     req.user = {
       id: user.id,
       email: user.email,
       display_name: user.display_name,
       is_active: user.is_active,
+      avatar_url: user.avatar_url || null,
       rules: Array.from(effectiveRules)
     }
 

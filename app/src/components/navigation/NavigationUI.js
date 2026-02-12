@@ -9,6 +9,7 @@ import UserProfile from "../users/profile/profile.js";
 import UsersTable from "../users/UsersUI.js";
 import { CustomersUI } from "../customers/CustomersUI.js";
 import { SettingsUI } from "../settings/SettingsUI.js";
+import { FinancialUI } from "../modules/financial/Financial.js";
 import { Card, CardHeader } from "../utils/Card.js";
 import ExampleCard from "../utils/example.js";
 import ProductsTable from "../utils/exampleTable.js";
@@ -39,8 +40,9 @@ export default function  NavigationUI(props) {
       }
       if (option.route === '/') return DashboardUI({ router });
       if (option.route === '/inventory') return InventoryUI();
-      if (option.route === '/purchase') return PurchaseUI();
-      if (option.route === '/sales') return SalesUI();
+      if (option.route === '/purchase') return PurchaseUI({ router, navigationVM: props.viewModel });
+      if (option.route === '/sales') return SalesUI({ router, navigationVM: props.viewModel });
+      if (option.route === '/financial') return FinancialUI({ router, navigationVM: props.viewModel });
       if (option.route === '/customers') return CustomersUI();
       if (option.route === '/users') return UsersTable();
       if (option.route === '/settings') return SettingsUI();

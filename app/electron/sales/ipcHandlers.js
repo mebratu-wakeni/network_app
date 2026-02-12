@@ -115,6 +115,7 @@ export function SalesIpcHandlers() {
         invoice_no: currentSale.invoice_no || null,
         sales_invoice_no: currentSale.sales_invoice_no || null,
         remark: currentSale.remark || null,
+        withhold_reference: (currentSale.withhold_reference || '').trim() || null,
         payment_type,
         withhold_percentage,
         amount_paid: amount_paid ?? 0,

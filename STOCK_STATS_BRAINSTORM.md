@@ -37,14 +37,21 @@ This document outlines aggregate statistics necessary for effective stock manage
 - **Use Case**: Critical alerts, reorder triggers
 
 ### Low Stock
-- **Description**: Products below reorder point/threshold
-- **Calculation**: `COUNT(*) WHERE quantity <= reorder_point`
+- **Description**: Products whose **total quantity** (sum of all batches for that product) is below a threshold
+- **Calculation**: Per product: `SUM(quantity)` across batches; count products where `total_quantity > 0 AND total_quantity < threshold`
 - **Use Case**: Proactive restocking alerts
+- **Threshold**: Default 50; later: configurable in system_settings and/or per-product override
 
 ### Overstock
 - **Description**: Products exceeding maximum stock level
 - **Calculation**: `COUNT(*) WHERE quantity > max_stock_level`
 - **Use Case**: Capital optimization, storage management
+
+### Thresholds (implementation notes)
+- **Low stock threshold**: Quantity below which a product is "low stock". Default 50. Later: `system_settings` and/or per-product field.
+- **Expiry threshold (days)**: Per product (`products.expiry_threshold`). Days before expiry to treat as "expiring soon". Default 30.
+- **High value threshold**: Unit cost above which an item is "high value". Later: system setting.
+- **High stock threshold**: Quantity above which a product is "overstock". Later: system setting.
 
 ### Stock Turnover Rate
 - **Description**: How quickly inventory is sold/used

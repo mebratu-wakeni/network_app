@@ -247,7 +247,8 @@ class InventoryManager {
       return {
         success: response.ok === true || response.success === true,
         products: response.products || response.data || [],
-        total: response.total || 0
+        total: response.total || 0,
+        stats: response.stats || { outOfStock: 0, lowStock: 0 }
       };
     } catch (error) {
       // Fallback to mock data when API is not available
@@ -273,7 +274,8 @@ class InventoryManager {
       return {
         success: true,
         products: paginated,
-        total: total
+        total: total,
+        stats: { outOfStock: 0, lowStock: 0 }
       };
     }
   }

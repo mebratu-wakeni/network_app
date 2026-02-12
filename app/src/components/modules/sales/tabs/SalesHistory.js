@@ -16,11 +16,39 @@ const FILTER_SMALL_CLASS = 'text-xs py-1 px-2 min-h-0';
 const SELECT_SMALL_CLASS = 'text-xs py-1 pl-2 pr-6 min-h-0';
 
 export function SalesHistory(props) {
+  const { pendingSalesOpen, navigationVM } = props
+  props.ensureLocalStateKey('pendingSalesOpenProcessed', false)
+  const processed = props.getLocalState('pendingSalesOpenProcessed')
+
+  // Cross-module: open drawer when navigated from ReceivablesTab (View in Sales / Make Payment)
+  props.ensureLocalStateKey('drawerOrderId', null)
+  props.ensureLocalStateKey('showOrderDrawer', false)
+
+  if (pendingSalesOpen && !processed) {
+    props.setLocalState('pendingSalesOpenProcessed', true)
+    const openFromPending = async () => {
+      try {
+        await props.viewModel.loadOrderDetails(pendingSalesOpen.orderId)
+        props.setLocalState('drawerOrderId', pendingSalesOpen.orderId)
+        props.setLocalState('drawerContentType', pendingSalesOpen.contentType === 'payment' ? 'payment' : 'details')
+        requestAnimationFrame(() => props.setLocalState('showOrderDrawer', true))
+      } catch (error) {
+        await showAlert({ message: error.message || 'Failed to load order details', variant: 'error' })
+        props.setLocalState('pendingSalesOpenProcessed', false)
+      } finally {
+        if (navigationVM) navigationVM.updateState('pending-sales-open', null)
+      }
+    }
+    openFromPending()
+  } else if (!pendingSalesOpen && processed) {
+    props.setLocalState('pendingSalesOpenProcessed', false)
+  }
+
   return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
     SalesHistoryStatsAndFilters(props),
     SalesHistoryTableSection(props),
     props.getLocalState('drawerOrderId') && salesOrderDetailsDrawer(props),
-  ]);
+  ])
 }
 
 function SalesHistoryStatsAndFilters(props) {
@@ -335,7 +363,7 @@ function SalesHistoryTableSection(props) {
       : orders.length === 0
         ? Row({ class: 'p-8 text-center text-gray-500' }, 'No sales found')
         : Row({ class: 'flex-1 flex flex-col min-h-0 border border-gray-200 rounded-lg overflow-hidden px-4 py-4' }, [
-            Table({ class: 'flex-1 min-w-full overflow-hidden', getOpenActionState: () => props.getLocalState('actionId'), setOpenActionState: () => props.setLocalState('actionId', null) }, [
+            Table({ class: 'flex-1 min-w-full overflow-hidden' }, [
               TableHeader({}, [
                 TableRow({}, [
                   TableHCell({ class: 'text-nowrap', onClick: () => handleSortChange('receipt_no') }, [

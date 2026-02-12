@@ -22,7 +22,7 @@ export function App() {
     return MainLayout(props, main, router);
   };
 
-  return StatefulRow({id: 'App', stateKeys: ['loading'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open'], viewModel: navigationVM }, render);
   
 }
 

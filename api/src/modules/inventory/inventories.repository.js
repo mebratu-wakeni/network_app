@@ -102,6 +102,53 @@ export class InventoriesRepository {
   }
 
   /**
+   * Get default category id for auto-created products (supplies or first category).
+   * @param {Object} trx - Optional knex transaction
+   */
+  async getDefaultCategoryId(trx = null) {
+    const db = trx || this.knex
+    const byName = await db('categories').whereRaw('LOWER(name) = ?', ['supplies']).select('id').first()
+    if (byName) return byName.id
+    const first = await db('categories').select('id').limit(1).first()
+    return first ? first.id : null
+  }
+
+  /**
+   * Get default unit id for auto-created products (bottle or first unit).
+   * @param {Object} trx - Optional knex transaction
+   */
+  async getDefaultUnitId(trx = null) {
+    const db = trx || this.knex
+    const byName = await db('units').whereRaw('LOWER(name) = ?', ['bottle']).select('id').first()
+    if (byName) return byName.id
+    const first = await db('units').select('id').limit(1).first()
+    return first ? first.id : null
+  }
+
+  /**
+   * Get next available product code (PRD0001, PRD0002, ...) for auto-created products.
+   * @param {Object} trx - Optional knex transaction
+   */
+  async getNextProductCode(trx = null) {
+    const db = trx || this.knex
+    const products = await db('products')
+      .select('product_code')
+      .whereNotNull('product_code')
+      .where('product_code', 'like', 'PRD%')
+      .orderBy('id', 'desc')
+      .limit(1000)
+    let maxNum = 0
+    for (const p of products) {
+      const code = p.product_code
+      if (code && code.startsWith('PRD')) {
+        const num = parseInt(code.substring(3), 10)
+        if (!isNaN(num) && num > maxNum) maxNum = num
+      }
+    }
+    return `PRD${String(maxNum + 1).padStart(4, '0')}`
+  }
+
+  /**
    * Find existing inventory record by product and variation details
    * Checks for existing record with same product_id, batch_no, expiry_date, purchase_price
    */
@@ -242,16 +289,42 @@ export class InventoriesRepository {
         await this.knex.transaction(async (trx) => {
           // Find product by code or name
           let product = null
-          if (item.product_code) {
-            product = await this.findProductByCode(item.product_code)
+          if (item.product_code && String(item.product_code).trim()) {
+            product = await trx('products').where({ product_code: String(item.product_code).trim() }).first()
           }
-          
           if (!product && item.product_name) {
-            product = await this.findProductByName(item.product_name)
+            product = await trx('products')
+              .whereRaw('LOWER(name) = LOWER(?)', [item.product_name.trim()])
+              .first()
           }
 
+          // If product not found, create it so stock import works without pre-importing products
           if (!product) {
-            throw new Error(`Product not found: ${item.product_code || item.product_name}`)
+            const categoryId = await this.getDefaultCategoryId(trx)
+            const unitId = await this.getDefaultUnitId(trx)
+            if (categoryId == null || unitId == null) {
+              throw new Error('Cannot auto-create product: no categories or units in database. Import products first or add a category and unit.')
+            }
+            let productCode = (item.product_code && String(item.product_code).trim()) ? String(item.product_code).trim() : null
+            if (productCode) {
+              const existingByCode = await trx('products').where({ product_code: productCode }).first()
+              if (existingByCode) product = existingByCode
+            }
+            if (!product) {
+              if (!productCode) productCode = await this.getNextProductCode(trx)
+              const [created] = await trx('products')
+                .insert({
+                  name: item.product_name.trim(),
+                  product_code: productCode,
+                  category_id: categoryId,
+                  unit_id: unitId,
+                  description: null,
+                  remark: null,
+                  sync_status: 'pending'
+                })
+                .returning('*')
+              product = created
+            }
           }
 
           // Check if inventory record already exists with same variation
@@ -366,12 +439,42 @@ export class InventoriesRepository {
     }
   }
 
+  /** Default low-stock threshold: total quantity (across all batches) below this = low stock. Later: system_settings or per-product. */
+  static get DEFAULT_LOW_STOCK_THRESHOLD() { return 50 }
+  /** Default high-value threshold (unit cost). Later: system_settings. */
+  static get DEFAULT_HIGH_VALUE_THRESHOLD() { return 1000 }
+  /** Default expiry threshold (days). Per-product expiry_threshold overrides this. */
+  static get DEFAULT_EXPIRY_THRESHOLD() { return 30 }
+
   /**
    * Calculate constant stats from ALL inventory items (regardless of filter)
-   * Stats are calculated from all inventory items and remain constant regardless of filter
+   * Low stock = count of PRODUCTS whose total quantity (sum of all batches) < threshold.
+   * Out of stock = count of products with zero total quantity.
    * @returns {Object} Statistics object matching frontend expectations
    */
   async calculateConstantStats() {
+    const today = new Date()
+    const todayStr = today.toISOString().split('T')[0]
+    const DEFAULT_EXPIRY_THRESHOLD = InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD
+    const HIGH_VALUE_THRESHOLD = InventoriesRepository.DEFAULT_HIGH_VALUE_THRESHOLD
+    const LOW_STOCK_THRESHOLD = InventoriesRepository.DEFAULT_LOW_STOCK_THRESHOLD
+
+    // Product-level totals: total quantity per product (sum across batches)
+    const productTotals = await this.knex('inventories')
+      .select('product_id')
+      .sum('quantity as total_quantity')
+      .groupBy('product_id')
+
+    const productTotalById = new Map()
+    let outOfStock = 0
+    let lowStock = 0
+    productTotals.forEach(row => {
+      const total = parseInt(row.total_quantity || 0, 10)
+      productTotalById.set(Number(row.product_id), total)
+      if (total === 0) outOfStock++
+      else if (total < LOW_STOCK_THRESHOLD) lowStock++
+    })
+
     const allInventory = await this.knex('inventories')
       .select(
         'inventories.quantity',
@@ -381,14 +484,7 @@ export class InventoriesRepository {
       )
       .leftJoin('products', 'inventories.product_id', 'products.id')
 
-    const today = new Date()
-    const todayStr = today.toISOString().split('T')[0]
-    const DEFAULT_EXPIRY_THRESHOLD = 30
-    const HIGH_VALUE_THRESHOLD = 1000
-
     let total = 0
-    let outOfStock = 0
-    let lowStock = 0
     let expiringSoon = 0
     let expired = 0
     let highValue = 0
@@ -400,40 +496,23 @@ export class InventoriesRepository {
       total++
       const quantity = parseInt(item.quantity || 0, 10)
       const purchasePrice = parseFloat(item.purchase_price || 0)
-      
-      // Calculate total cost (quantity * purchase_price)
       totalCost += quantity * purchasePrice
       totalQuantity += quantity
-      
-      if (quantity > 0) {
-        itemsWithStock++
-      }
-      
-      if (quantity === 0) {
-        outOfStock++
-      } else if (quantity > 0 && quantity < 50) {
-        lowStock++
-      }
-      
-      if (purchasePrice >= HIGH_VALUE_THRESHOLD) {
-        highValue++
-      }
-      
+      if (quantity > 0) itemsWithStock++
+
+      if (purchasePrice >= HIGH_VALUE_THRESHOLD) highValue++
+
+      // Only batches with a valid expiry_date count as expired or expiring soon; null expiry is excluded
       if (item.expiry_date) {
         const expiry = new Date(item.expiry_date)
         const expiryDateStr = expiry.toISOString().split('T')[0]
         const expiryThreshold = item.expiry_threshold || DEFAULT_EXPIRY_THRESHOLD
-        
-        if (expiryDateStr < todayStr) {
-          expired++
-        } else {
+        if (expiryDateStr < todayStr) expired++
+        else {
           const thresholdDate = new Date(today)
           thresholdDate.setDate(today.getDate() + expiryThreshold)
           const thresholdDateStr = thresholdDate.toISOString().split('T')[0]
-          
-          if (expiryDateStr <= thresholdDateStr) {
-            expiringSoon++
-          }
+          if (expiryDateStr <= thresholdDateStr) expiringSoon++
         }
       }
     })
@@ -861,21 +940,31 @@ export class InventoriesRepository {
       }
     }
 
-    // Base query with joins for product and category/unit names
-    // Note: expiry_threshold column may not exist if migration hasn't been run
-    // We'll default to 30 in the transformation code
+    // Subquery: total quantity per product (sum across all batches)
+    const productTotalsSubquery = this.knex('inventories')
+      .select('product_id')
+      .sum('quantity as product_total')
+      .groupBy('product_id')
+      .as('product_totals')
+
+    // Base query with joins for product, category, unit, and product total quantity
+    // Exclude zero-quantity rows so the stock table only shows batches that have stock
     let query = this.knex('inventories')
       .select(
         'inventories.*',
         'products.product_code',
         'products.name as product_name',
         'products.description as product_description',
+        'products.expiry_threshold as product_expiry_threshold',
         'categories.name as category',
-        'units.name as unit'
+        'units.name as unit',
+        'product_totals.product_total'
       )
       .leftJoin('products', 'inventories.product_id', 'products.id')
       .leftJoin('categories', 'products.category_id', 'categories.id')
       .leftJoin('units', 'products.unit_id', 'units.id')
+      .leftJoin(productTotalsSubquery, 'inventories.product_id', 'product_totals.product_id')
+      .where('inventories.quantity', '>', 0)
 
     // Apply search filter
     if (search && search.trim()) {
@@ -889,29 +978,29 @@ export class InventoriesRepository {
       })
     }
 
+    const LOW_STOCK_THRESHOLD = InventoriesRepository.DEFAULT_LOW_STOCK_THRESHOLD
+    const HIGH_VALUE_THRESHOLD = InventoriesRepository.DEFAULT_HIGH_VALUE_THRESHOLD
+
     // Apply other filters (not borrowed-from/borrowed-to, those are handled above)
     if (filter !== 'all' && filter !== 'borrowed-from' && filter !== 'borrowed-to') {
       const today = new Date()
       const todayStr = today.toISOString().split('T')[0]
-      const HIGH_VALUE_THRESHOLD = 1000
 
       query = query.where(function() {
         if (filter === 'out-of-stock') {
           this.where('inventories.quantity', 0)
-        } else if (filter === 'low-stock') {
-          this.where('inventories.quantity', '>', 0)
-            .where('inventories.quantity', '<', 50)
         } else if (filter === 'expired') {
+          // Only batches with a valid expiry_date; null expiry is excluded
           this.whereNotNull('inventories.expiry_date')
             .where('inventories.expiry_date', '<', todayStr)
         } else if (filter === 'expiring-soon') {
-          // Get products with expiry_threshold
+          // Only batches with valid expiry_date; use product-level expiry_threshold (days)
           this.whereNotNull('inventories.expiry_date')
             .where('inventories.expiry_date', '>=', todayStr)
-            .where(function() {
-              // Use default 30 days (expiry_threshold column may not exist if migration hasn't been run)
-              this.whereRaw(`inventories.expiry_date <= (?::date + INTERVAL '30 days')`, [todayStr])
-            })
+            .whereRaw(
+              `inventories.expiry_date <= (?::date + (COALESCE(products.expiry_threshold, ?) || ' days')::interval)`,
+              [todayStr, InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD]
+            )
         } else if (filter === 'high-value') {
           this.where('inventories.purchase_price', '>=', HIGH_VALUE_THRESHOLD)
         }
@@ -948,27 +1037,34 @@ export class InventoriesRepository {
 
     const stock = await query
 
-    // Transform to frontend format
-    const transformedStock = stock.map(item => ({
-      id: item.id,
-      productId: item.product_id,
-      inventoryCode: item.inventory_code,
-      productCode: item.product_code,
-      name: item.product_name,
-      category: item.category,
-      location: item.location,
-      quantity: parseInt(item.quantity, 10),
-      unit: item.unit,
-      unitCost: parseFloat(item.purchase_price),
-      sellingPrice: item.selling_price ? parseFloat(item.selling_price) : null,
-      expiryDate: item.expiry_date,
-      batchNumber: item.batch_no,
-      status: item.quantity === 0 ? 'out-of-stock' : (item.quantity < 50 ? 'low-stock' : 'active'),
-      expiry_threshold: item.expiry_threshold || 30,
-      product: {
-        expiry_threshold: item.expiry_threshold || 30
+    // Transform to frontend format. Status and low-stock are based on product total quantity (all batches).
+    const transformedStock = stock.map(item => {
+      const productTotal = parseInt(item.product_total || 0, 10)
+      const quantity = parseInt(item.quantity, 10)
+      const expiryThreshold = item.product_expiry_threshold != null ? parseInt(item.product_expiry_threshold, 10) : InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD
+      const status = productTotal === 0 ? 'out-of-stock' : (productTotal < LOW_STOCK_THRESHOLD ? 'low-stock' : 'active')
+      return {
+        id: item.id,
+        productId: item.product_id,
+        inventoryCode: item.inventory_code,
+        productCode: item.product_code,
+        name: item.product_name,
+        category: item.category,
+        location: item.location,
+        quantity,
+        unit: item.unit,
+        unitCost: parseFloat(item.purchase_price),
+        sellingPrice: item.selling_price ? parseFloat(item.selling_price) : null,
+        expiryDate: item.expiry_date,
+        batchNumber: item.batch_no,
+        status,
+        productTotalQuantity: productTotal,
+        expiry_threshold: expiryThreshold,
+        product: {
+          expiry_threshold: expiryThreshold
+        }
       }
-    }))
+    })
 
     return {
       stock: transformedStock,
@@ -1016,15 +1112,16 @@ export class InventoriesRepository {
   }
 
   /**
-   * Calculate stock statistics
-   * @param {Array} stockList - Array of stock items
+   * Calculate stock statistics. Low/out-of-stock counts are per PRODUCT (total quantity across batches).
+   * @param {Array} stockList - Array of stock items (may include productTotalQuantity from API)
    * @returns {Object} Statistics object
    */
   calculateStockStats(stockList) {
     const today = new Date()
     const todayStr = today.toISOString().split('T')[0]
-    const DEFAULT_EXPIRY_THRESHOLD = 30
-    const HIGH_VALUE_THRESHOLD = 1000
+    const DEFAULT_EXPIRY_THRESHOLD = InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD
+    const HIGH_VALUE_THRESHOLD = InventoriesRepository.DEFAULT_HIGH_VALUE_THRESHOLD
+    const LOW_STOCK_THRESHOLD = InventoriesRepository.DEFAULT_LOW_STOCK_THRESHOLD
 
     const stats = {
       total: stockList.length,
@@ -1037,30 +1134,36 @@ export class InventoriesRepository {
       highValue: 0
     }
 
+    // Product-level totals for low/out-of-stock (by product_id)
+    const productTotalsMap = new Map()
     stockList.forEach(item => {
-      const quantity = parseInt(item.quantity || 0, 10)
-      const purchasePrice = parseFloat(item.purchase_price || 0)
-      const expiryDate = item.expiry_date
-      const expiryThreshold = item.expiry_threshold || DEFAULT_EXPIRY_THRESHOLD
+      const pid = item.productId ?? item.product_id
+      if (pid == null) return
+      const qty = parseInt(item.quantity || 0, 10)
+      productTotalsMap.set(pid, (productTotalsMap.get(pid) || 0) + qty)
+    })
+    productTotalsMap.forEach((total, _pid) => {
+      if (total === 0) stats.outOfStock++
+      else if (total < LOW_STOCK_THRESHOLD) stats.lowStock++
+    })
 
-      if (quantity === 0) stats.outOfStock++
-      if (quantity > 0 && quantity < 50) stats.lowStock++
+    stockList.forEach(item => {
+      const purchasePrice = parseFloat(item.purchase_price || item.unitCost || 0)
+      const expiryDate = item.expiry_date || item.expiryDate
+      const expiryThreshold = item.expiry_threshold ?? item.product?.expiry_threshold ?? DEFAULT_EXPIRY_THRESHOLD
+
       if (purchasePrice >= HIGH_VALUE_THRESHOLD) stats.highValue++
 
+      // Only count expired/expiring soon when batch has a valid expiry date; null excluded
       if (expiryDate) {
         const expiry = new Date(expiryDate)
         const expiryDateStr = expiry.toISOString().split('T')[0]
-        
-        if (expiryDateStr < todayStr) {
-          stats.expired++
-        } else {
+        if (expiryDateStr < todayStr) stats.expired++
+        else {
           const thresholdDate = new Date(today)
           thresholdDate.setDate(today.getDate() + expiryThreshold)
           const thresholdDateStr = thresholdDate.toISOString().split('T')[0]
-          
-          if (expiryDateStr <= thresholdDateStr) {
-            stats.expiringSoon++
-          }
+          if (expiryDateStr <= thresholdDateStr) stats.expiringSoon++
         }
       }
     })

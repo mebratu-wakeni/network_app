@@ -3,6 +3,22 @@
  */
 
 /**
+ * Normalize a date value to YYYY-MM-DD for use in <input type="date">.
+ * @param {string|Date|null|undefined} date - Date string (any format), Date object, null, or undefined
+ * @returns {string} YYYY-MM-DD or '' if invalid/null/undefined
+ */
+export const toDateInputValue = (date) => {
+  if (date === null || date === undefined || date === '') return '';
+  try {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    if (isNaN(dateObj.getTime())) return '';
+    return dateObj.toISOString().split('T')[0];
+  } catch (e) {
+    return '';
+  }
+};
+
+/**
  * Formats a date string or Date object into dd/mm/yyyy format
  * @param {string|Date|null|undefined} date - Date string (YYYY-MM-DD), Date object, null, or undefined
  * @returns {string} Formatted date string in dd/mm/yyyy format, or '-' if date is invalid/null/undefined

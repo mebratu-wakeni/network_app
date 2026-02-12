@@ -23,6 +23,7 @@ export const createSalesOrderSchema = z.object({
   invoice_no: z.string().trim().optional().nullable(),
   sales_invoice_no: z.string().trim().optional().nullable(),
   remark: z.string().trim().optional().nullable(),
+  withhold_reference: z.string().trim().optional().nullable(), // when filled, order is withhold confirmed
   payment_type: z.enum(['cash', 'credit', 'cheque']),
   withhold_percentage: z.number().nonnegative().optional().nullable(),
   amount_paid: z.number().nonnegative().optional().nullable(),

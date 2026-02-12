@@ -15,14 +15,15 @@ export class ProductsController {
   list = async (req, res, next) => {
     try {
       const params = req.body || {}
-      const { limit, offset, search, sortBy, orderBy } = params
+      const { limit, offset, search, sortBy, orderBy, filter } = params
       
       console.log(`[ProductsController] List request:`, {
         limit: limit || 10,
         offset: offset || 0,
         search: search || '',
         sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
+        orderBy: orderBy || 'desc',
+        filter: filter || 'all'
       })
       
       const result = await this.service.findAll({
@@ -30,7 +31,8 @@ export class ProductsController {
         offset: offset || 0,
         search: search || '',
         sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
+        orderBy: orderBy || 'desc',
+        filter: filter || 'all'
       })
       
       console.log(`[ProductsController] List response: ${result.products.length} products, total: ${result.total}`)
@@ -38,7 +40,8 @@ export class ProductsController {
       res.json({
         ok: true,
         products: result.products || [],
-        total: result.total || 0
+        total: result.total || 0,
+        stats: result.stats || { outOfStock: 0, lowStock: 0 }
       })
     } catch (error) {
       console.error('[ProductsController] List error:', error)

@@ -14,6 +14,7 @@ import { PurchaseIpcHandlers } from './purchase/ipcHandlers.js'
 import { SalesIpcHandlers } from './sales/ipcHandlers.js'
 import { SettingsIpcHandlers } from './settings/ipcHandlers.js'
 import { DashboardIpcHandlers } from './dashboard/ipcHandlers.js'
+import { FinancialIpcHandlers } from './financial/ipcHandlers.js'
 import { setToken } from './config/authManager.js'
 
 const require = createRequire(import.meta.url)
@@ -129,6 +130,7 @@ PurchaseIpcHandlers();
 SalesIpcHandlers();
 SettingsIpcHandlers();
 DashboardIpcHandlers();
+FinancialIpcHandlers();
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

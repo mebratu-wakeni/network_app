@@ -1,4 +1,3 @@
-import { ManageOutsideClick } from "./OutsideClick";
 const { Row } = Liteframe;
 
 /**
@@ -6,9 +5,8 @@ const { Row } = Liteframe;
  * Structure: Table = flex-1 flex-col overflow-hidden; inner scroll wrapper = flex-1 min-h-0
  * min-w-0 overflow-auto so the table body area scrolls. Thead is sticky inside that scroll area.
  */
-let cleanupOutsideClick;
 const Table = (props, children) => {
-  const { class: className = '', tableClass = '', getOpenActionState, setOpenActionState } = props;
+  const { class: className = '', tableClass = '' } = props;
 
   const baseClasses = 'min-w-full divide-y divide-gray-200 sm:rounded-lg relative';
 
@@ -18,7 +16,7 @@ const Table = (props, children) => {
   const outerClass = `flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden ${baseClasses} ${className}`.trim();
   // Inner: scrollable body area – flex-1 min-h-0 min-w-0 overflow-auto; pb-48 so bottom-row dropdowns aren't cut off
   const scrollClass = 'flex-1 min-h-0 min-w-0 overflow-auto pb-48';
-  const container = Row({
+  return Row({
     tagType: 'div',
     class: outerClass
   }, [
@@ -28,17 +26,6 @@ const Table = (props, children) => {
       attributes: { id: props.id || undefined }
     }, [tableElement])
   ]);
-
-  // Register once
-  if (!cleanupOutsideClick && getOpenActionState && setOpenActionState) {
-    cleanupOutsideClick = ManageOutsideClick({
-      containerEl: container,
-      handleGetState: getOpenActionState,
-      handleSetState: setOpenActionState,
-    });
-  }
-
-  return container;
 };
 
 /**

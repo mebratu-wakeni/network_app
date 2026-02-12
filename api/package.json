@@ -11,7 +11,8 @@
     "rollback": "knex --knexfile db/knexfile.js migrate:rollback",
     "seed": "knex --knexfile db/knexfile.js seed:run",
     "db:reset": "node scripts/reset-db.js",
-    "db:reset:seed": "node scripts/reset-db.js --seed"
+    "db:reset:seed": "node scripts/reset-db.js --seed",
+    "db:recreate-migration": "node scripts/recreate-migration.js"
   },
   "keywords": [],
   "author": "",

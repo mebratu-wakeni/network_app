@@ -1,111 +1,127 @@
+/**
+ * Header UI Component
+ * Displays application header with health indicators and user info
+ */
 const { Row, StatefulRow } = Liteframe;
-import Label from '../utils/Label.js';
-import { Input } from '../utils/Input.js';
 import HeaderVM from './HeaderVM.js';
-import Dropdown from '../utils/Dropdown.js';
 import { IconButton, IonIcon } from '../utils/Icon.js';
 import { getApiAsset } from '../../../electron/config/apiConfig.js';
+import Avatar from '../utils/Avatar.js';
+import {
+  HEALTH_ICONS,
+  HEADER_CLASSES,
+  HEALTH_CHECK_INTERVAL
+} from './headerConfig.js';
+import {
+  getHealthStatus,
+  getOverallHealthStatus
+} from './headerFormatters.js';
 
+/**
+ * Render health indicators
+ * @param {Object} props - Component props
+ * @returns {HTMLElement} Health indicators container
+ */
+function renderHealthIndicators(props) {
+  const serverHealth = props.viewModel.getState('serverHealth');
+  const dbHealth = props.viewModel.getState('dbHealth');
+  const apiHealth = props.viewModel.getState('apiHealth');
+  
+  const serverStatus = getHealthStatus(serverHealth);
+  const dbStatus = getHealthStatus(dbHealth);
+  const apiStatus = getHealthStatus(apiHealth);
+  
+  const overallStatus = getOverallHealthStatus(serverStatus, dbStatus, apiStatus);
+  
+  return Row({
+    class: `${HEADER_CLASSES.healthContainer} ${overallStatus.pulsatingClass} text-xl ${overallStatus.healthColor}`,
+    attributes: {
+      title: overallStatus.tooltip
+    }
+  }, [
+    Row({
+      tagType: 'ion-icon',
+      attributes: { name: HEALTH_ICONS.server }
+    }),
+    Row({
+      tagType: 'ion-icon',
+      attributes: { name: HEALTH_ICONS.database }
+    }),
+    Row({
+      tagType: 'ion-icon',
+      attributes: { name: HEALTH_ICONS.api }
+    })
+  ]);
+}
+
+/**
+ * Render user avatar
+ * Uses the same Avatar component pattern as the users table
+ * @param {Object} user - User object
+ * @returns {HTMLElement} Avatar element
+ */
+function renderAvatar(user) {
+  const avatarPreview = user?.avatar_url ? getApiAsset(user.avatar_url) : null;
+  const fallback = user?.display_name || user?.name || 'User';
+  
+  return Avatar({
+    src: avatarPreview,
+    alt: fallback,
+    fallback: fallback,
+    size: 'w-10 h-10',
+    class: ''
+  });
+}
+
+/**
+ * Render user info section
+ * @param {Object} user - User object
+ * @returns {HTMLElement} User info container
+ */
+function renderUserInfo(user) {
+  const displayName = user?.display_name || user?.name || 'User';
+  
+  return Row({ class: HEADER_CLASSES.rightSection }, [
+    Row({ tagType: 'span', class: HEADER_CLASSES.userName }, displayName),
+    renderAvatar(user)
+  ]);
+}
+
+/**
+ * Main header render function
+ * @param {Object} props - Component props
+ * @returns {HTMLElement} Header container
+ */
+function renderHeader(props) {
+  // Ensure required state keys exist
+  props.ensureStateKey('serverHealth');
+  props.ensureStateKey('dbHealth');
+  props.ensureStateKey('apiHealth');
+  props.ensureStateKey('user');
+  
+  // Sync user data from navigation VM
+  props.viewModel.syncUser();
+  
+  const user = props.viewModel.getState('user');
+  
+  return Row({
+    class: HEADER_CLASSES.container
+  }, [
+    // Left side: Health indicators
+    Row({ class: HEADER_CLASSES.leftSection }, [
+      renderHealthIndicators(props)
+    ]),
+    // Right side: User info
+    renderUserInfo(user)
+  ]);
+}
+
+/**
+ * Header UI Component
+ * @returns {HTMLElement} Header component
+ */
 export default function HeaderUI() {
   const viewModel = new HeaderVM();
   
-  // Track previous navCollapsed state to detect changes
-  let previousNavCollapsed = null;
-
-  const render = (props) => {
-    props.ensureStateKey('serverHealth');
-    props.ensureStateKey('dbHealth');
-    props.ensureStateKey('apiHealth');
-    props.ensureStateKey('user');
-
-    props.viewModel.syncUser();
-
-
-    
-    
-    const serverHealth = props.viewModel.getState('serverHealth');
-    const dbHealth = props.viewModel.getState('dbHealth');
-    const apiHealth = props.viewModel.getState('apiHealth');
-    const user = props.viewModel.getState('user');
-    
-    // Health status helper
-    const getHealthStatus = (health) => {
-      if (!health) return { healthy: false, pulsating: false };
-      return {
-        healthy: health.healthy === true,
-        pulsating: health.healthy === true
-      };
-    };
-
-    const serverStatus = getHealthStatus(serverHealth);
-    const dbStatus = getHealthStatus(dbHealth);
-    const apiStatus = getHealthStatus(apiHealth);
-
-    // Overall health: all three must be healthy for pulsing red
-    const allHealthy = serverStatus.healthy && dbStatus.healthy && apiStatus.healthy;
-
-    // Pulsating animation class - only pulse when all are healthy
-    const pulsatingClass = allHealthy ? 'animate-pulse' : '';
-
-    // Health icon color - bright red when all healthy (pulsating), gray when any unhealthy (no pulse)
-    const healthColor = allHealthy ? 'text-red-500' : 'text-gray-400';
-
-    // User avatar or initials
-    const renderAvatar = () => {
-      if (user?.avatar) {
-        return Row({ 
-          tagType: 'img', 
-          class: 'w-10 h-10 rounded-full object-cover',
-          attributes: { src: getApiAsset(user.avatar), alt: user.name }
-        });
-      }
-      return Row({ 
-        class: 'w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold text-sm'
-      }, user?.initials || 'U');
-    };
-    
-
-    return Row({ 
-      class: 'h-18 w-full bg-white border-b border-gray-200 shadow-sm px-6 py-4 flex items-center justify-between'
-    }, [
-      // Left side: Toggle button and health indicators
-      Row({ class: 'flex items-center gap-4' }, [
-
-        // Health indicators - all in one container with shared pulse and color
-        Row({ 
-          class: `flex items-center gap-3 ml-2 ${pulsatingClass} text-xl ${healthColor}`,
-          attributes: {
-            title: `Server: ${serverStatus.healthy ? 'Healthy' : 'Unhealthy'} | Database: ${dbStatus.healthy ? 'Healthy' : 'Unhealthy'} | API: ${apiStatus.healthy ? 'Healthy' : 'Unhealthy'}`
-          }
-        }, [
-          Row({ 
-            tagType: 'ion-icon', 
-            attributes: { 
-              name: 'server'
-            } 
-          }),
-          Row({ 
-            tagType: 'ion-icon', 
-            attributes: { 
-              name: 'cube'
-            } 
-          }),
-          Row({ 
-            tagType: 'ion-icon', 
-            attributes: { 
-              name: 'flash'
-            } 
-          })
-        ])
-      ]),
-      // Right side: User info
-      Row({ class: 'flex items-center gap-3' }, [
-        Row({ tagType: 'span', class: 'text-gray-700 font-medium' }, user?.name || 'User'),
-        renderAvatar()
-      ])
-    ]);
-  };
-
-  return StatefulRow({ viewModel }, render);
+  return StatefulRow({ viewModel }, renderHeader);
 }
-

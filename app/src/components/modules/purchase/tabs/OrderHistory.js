@@ -17,6 +17,37 @@ const FILTER_SMALL_CLASS = 'text-xs py-1 px-2 min-h-0';
 const SELECT_SMALL_CLASS = 'text-xs py-1 pl-2 pr-6 min-h-0';
 
 export function OrderHistory(props) {
+  const { pendingPurchaseOpen, navigationVM } = props;
+  props.ensureLocalStateKey('pendingPurchaseOpenProcessed', false);
+  const processed = props.getLocalState('pendingPurchaseOpenProcessed');
+
+  // Cross-module: open drawer when navigated from PayablesTab (View in Purchase / Make Payment)
+  props.ensureLocalStateKey('drawerOrderId', null);
+  props.ensureLocalStateKey('showOrderDrawer', false);
+
+  if (pendingPurchaseOpen && !processed) {
+    props.setLocalState('pendingPurchaseOpenProcessed', true);
+    const openFromPending = async () => {
+      try {
+        await props.viewModel.loadOrderDetails(pendingPurchaseOpen.orderId);
+        props.setLocalState('drawerOrderId', pendingPurchaseOpen.orderId);
+        props.setLocalState('drawerContentType', pendingPurchaseOpen.contentType === 'payment' ? 'payment' : 'details');
+        if (pendingPurchaseOpen.contentType === 'payment') {
+          await props.viewModel.preparePaymentForOrder(pendingPurchaseOpen.orderId);
+        }
+        requestAnimationFrame(() => props.setLocalState('showOrderDrawer', true));
+      } catch (error) {
+        await showAlert({ message: error.message || 'Failed to load order details', variant: 'error' });
+        props.setLocalState('pendingPurchaseOpenProcessed', false);
+      } finally {
+        if (navigationVM) navigationVM.updateState('pending-purchase-open', null);
+      }
+    };
+    openFromPending();
+  } else if (!pendingPurchaseOpen && processed) {
+    props.setLocalState('pendingPurchaseOpenProcessed', false);
+  }
+
   return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
     OrderHistoryStatsAndFilters(props),
     OrderHistoryTableSection(props),
@@ -303,8 +334,6 @@ function OrderHistoryTableSection(props) {
         : Row({ class: 'flex-1 flex flex-col min-h-0 border border-gray-200 rounded-lg overflow-hidden' }, [
             Table({
               class: 'flex-1 min-w-full overflow-hidden',
-              getOpenActionState: () => props.getLocalState('actionId'),
-              setOpenActionState: () => props.setLocalState('actionId', null),
             }, [
               TableHeader({}, [
                 TableRow({}, [

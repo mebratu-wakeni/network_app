@@ -16,19 +16,30 @@ import { showAlert } from '../../utils/ModalHelpers';
 
 const { Row, StatefulRow } = Liteframe;
 
-export function SalesUI() {
+export function SalesUI(props = {}) {
+  const { router, navigationVM } = props
   const viewModel = new SalesVM();
 
-  const render = (props) => {
-    props.ensureLocalStateKey('isExpanded', false);
+  const render = (renderProps) => {
+    const mergedProps = { ...renderProps, router, navigationVM }
+    mergedProps.ensureLocalStateKey('isExpanded', false);
+
+    // Handle cross-module navigation: open Sales History with specific order (from ReceivablesTab)
+    const pendingOpen = navigationVM?.getState?.('pending-sales-open')
+    if (pendingOpen && mergedProps.viewModel.getActiveTab() !== 'sales-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateTab('sales-history')
+        mergedProps.setLocalState('isExpanded', true)
+      }, 0)
+    }
 
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden' }, [
       CardHeader({
         class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0'
       }, 'Sales Management'),
       CardBody({ class: 'p-6 flex flex-row h-full overflow-hidden gap-4' }, [
-        LeftPanel(props),
-        RightPanel(props),
+        LeftPanel(mergedProps),
+        RightPanel(mergedProps),
       ]),
     ]);
   };
@@ -36,12 +47,12 @@ export function SalesUI() {
   return StatefulRow({
     class: 'w-full h-full overflow-hidden',
     viewModel,
-    stateKeys: ['loading'],
-  }, render);
+    stateKeys: ['loading', 'sales-tab'],
+  }, render)
 }
 
 function LeftPanel(props) {
-  const isExpanded = props.getLocalState('isExpanded');
+  const isExpanded = props.getLocalState('isExpanded')
   return Row({
     class: `flex-shrink-0 flex flex-col min-h-0 overflow-hidden gap-4 transition-[width,min-width] duration-300 ease-in-out ${isExpanded ? 'w-0 min-w-0' : 'w-1/3 min-w-0'}`,
   }, [
@@ -51,7 +62,7 @@ function LeftPanel(props) {
 }
 
 function RightPanel(props) {
-  const isExpanded = props.getLocalState('isExpanded');
+  const isExpanded = props.getLocalState('isExpanded')
 
   const handleImportSalesOrder = () => {
     OpenImportSalesOrderModal(props);
@@ -111,20 +122,21 @@ function SalesTabs(props) {
 }
 
 function SalesTabContents(props) {
-  const activeTab = props.viewModel.getActiveTab();
+  const activeTab = props.viewModel.getActiveTab()
+  const pendingOpen = props.navigationVM?.getState?.('pending-sales-open')
 
   const tabContent = () => {
     switch (activeTab) {
       case 'current-sale':
-        return CurrentSale(props);
+        return CurrentSale(props)
       case 'sales-history':
-        return SalesHistory(props);
+        return SalesHistory({ ...props, pendingSalesOpen: pendingOpen })
       case 'hold-orders':
-        return HoldOrders(props);
+        return HoldOrders(props)
       default:
-        return CurrentSale(props);
+        return CurrentSale(props)
     }
-  };
+  }
 
   return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
     tabContent(),
