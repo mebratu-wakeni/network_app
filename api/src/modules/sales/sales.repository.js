@@ -188,12 +188,12 @@ export class SalesRepository {
         })
       }
 
-      // 6) Ledger: DR Cash / AR / Withhold Receivable, CR Revenue; DR COGS, CR Inventory
+      // 6) Ledger: DR Cash / AR, CR Revenue (net), CR Withhold Payable; DR COGS, CR Inventory
       const subtotal = Number(order.total_amount ?? 0)
       const withholdAmount = Number(order.withhold_amount ?? 0)
       const firstPayment = Number(order.amount_paid ?? 0)
-      const receivedAmount = subtotal - withholdAmount
-      const outstandingBalance = Math.max(0, receivedAmount - firstPayment)
+      // AR = full amount customer owes (subtotal - firstPayment); withhold reduces our revenue, not AR
+      const outstandingBalance = Math.max(0, subtotal - firstPayment)
 
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
@@ -333,6 +333,21 @@ export class SalesRepository {
     const totalResult = await base.clone().clearSelect().clearOrder().count('so.id as count').first()
     const total = Number(totalResult?.count || 0)
 
+    let periodSummary = null
+    if (date_from && date_to) {
+      const periodRow = await this.knex('sales_orders as so')
+        .where('so.status', 'completed')
+        .where('so.is_reversed', false)
+        .where('so.order_date', '>=', date_from)
+        .where('so.order_date', '<=', date_to)
+        .select(this.knex.raw('COUNT(*) as count, COALESCE(SUM(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0)), 0) as value'))
+        .first()
+      periodSummary = {
+        count: Number(periodRow?.count ?? 0),
+        value: parseFloat(periodRow?.value ?? 0)
+      }
+    }
+
     const allowedSort = ['order_date', 'id', 'receipt_no', 'net_amount', 'customer_name']
     const sortCol = allowedSort.includes(sort_by) ? sort_by : 'order_date'
     const sortDir = order_by === 'asc' ? 'asc' : 'desc'
@@ -405,7 +420,7 @@ export class SalesRepository {
       }
     }
 
-    return { orders, total, stats }
+    return { orders, total, stats, period_summary: periodSummary }
   }
 
   /**

@@ -43,46 +43,7 @@ export default function ServerManagerUI() {
     return Row({class: 'p-6'}, [
       Row({ class: "flex justify-between items-center mb-6" }, [
         Row({ tagType: 'h1', class: "text-2xl font-bold" }, "Server Management"),
-        // Mode Toggle
-        Row({ class: "flex items-center gap-3" }, [
-          Row({ tagType: 'span', class: "text-sm text-gray-600" }, mode === 'docker' ? 'Docker Mode' : 'Dev Mode'),
-          Row({
-            tagType: 'button',
-            class: `px-3 py-1 rounded text-sm font-medium transition-colors ${
-              mode === 'docker' 
-                ? 'bg-blue-500 text-white' 
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`,
-            attributes: {
-              disabled: anyOperationInProgress
-            },
-            events: {
-              'click': () => props.viewModel.toggleMode()
-            }
-          }, 'Docker'),
-          Row({
-            tagType: 'button',
-            class: `px-3 py-1 rounded text-sm font-medium transition-colors ${
-              mode === 'dev' 
-                ? 'bg-green-500 text-white' 
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`,
-            attributes: {
-              disabled: anyOperationInProgress
-            },
-            events: {
-              'click': () => props.viewModel.toggleMode()
-            }
-          }, 'Dev'),
-        ])
-      ]),
-
-      // Mode Info Banner
-      mode === 'dev' && Row({ 
-        class: "mb-6 p-3 bg-blue-50 border border-blue-200 rounded text-blue-800 text-sm" 
-      }, [
-        Row({ tagType: 'p', class: "font-semibold mb-1" }, "🚀 Development Mode"),
-        Row({ tagType: 'p' }, "Running server directly from api/ directory. Faster startup, no Docker build required.")
+        Row({ class: "text-sm text-gray-600" }, "SQLite Server Runtime")
       ]),
 
       // Success Display
@@ -100,19 +61,9 @@ export default function ServerManagerUI() {
         Row({ tagType: 'p', class: "whitespace-pre-line" }, error)
       ]),
 
-      // Docker Status
+      // Server Status
       Row({ class: "mb-6 p-4 bg-gray-100 rounded" }, [
-        Row({ tagType: 'h2', class: "text-xl font-semibold mb-2" }, 'Docker Status'),
-        dockerStatus ? Row({}, [
-          Row({ tagType: 'p' }, `Installed: ${dockerStatus.installed ? '✅ Yes' : '❌ No'}`),
-          Row({ tagType: 'p' }, `Running: ${dockerStatus.running ? '✅ Yes' : '❌ No'}`),
-          dockerStatus.error && Row({ tagType: 'p', class: "text-red-600" }, `Error: ${dockerStatus.error}`)
-        ]) : Row({tagType: 'p', class: ""}, 'Checking...')
-      ]),
-
-      // Server Status (only show in Docker mode)
-      mode === 'docker' && Row({ class: "mb-6 p-4 bg-gray-100 rounded" }, [
-        Row({ tagType: 'h2', class: "text-xl font-semibold mb-2" }, 'Docker Services Status'),
+        Row({ tagType: 'h2', class: "text-xl font-semibold mb-2" }, 'Local API Status'),
         
         serverStatus === null && Row({ tagType: 'p', class: "" }, 'Checking...'),
         
@@ -135,10 +86,8 @@ export default function ServerManagerUI() {
             Row({ tagType: 'p', class: "text-gray-500" }, 'No services found')
         )
       ]),
-
-      // Dev Server Status (only show in Dev mode)
-      mode === 'dev' && Row({ class: "mb-6 p-4 bg-gray-100 rounded" }, [
-        Row({ tagType: 'h2', class: "text-xl font-semibold mb-2" }, 'Development Server Status'),
+      Row({ class: "mb-6 p-4 bg-gray-100 rounded" }, [
+        Row({ tagType: 'h2', class: "text-xl font-semibold mb-2" }, 'Process Status'),
         
         devServerStatus === null && Row({ tagType: 'p', class: "" }, 'Checking...'),
         
@@ -180,7 +129,7 @@ export default function ServerManagerUI() {
               await props.viewModel.handleStart() 
             },
           }
-        }, starting ? [Spinner(), 'Starting...'] : mode === 'dev' ? 'Start Dev Server' : 'Start Server'),
+        }, starting ? [Spinner(), 'Starting...'] : 'Start Server'),
         Row({
           tagType: 'button', 
           class: "px-4 py-2 bg-red-500 text-white rounded disabled:opacity-50 hover:bg-red-600 transition-colors flex items-center", 
@@ -192,7 +141,7 @@ export default function ServerManagerUI() {
               await props.viewModel.handleStop();
             }
           }
-        }, stopping ? [Spinner(), 'Stopping...'] : mode === 'dev' ? 'Stop Dev Server' : 'Stop Server'),
+        }, stopping ? [Spinner(), 'Stopping...'] : 'Stop Server'),
         Row({
           tagType: 'button', 
           class: "px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50 hover:bg-blue-600 transition-colors flex items-center", 

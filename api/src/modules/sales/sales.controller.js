@@ -97,7 +97,7 @@ export class SalesController {
         sort_by: q.sort_by,
         order_by: q.order_by
       })
-      res.json({ ok: true, orders: result.orders, total: result.total, stats: result.stats })
+      res.json({ ok: true, orders: result.orders, total: result.total, stats: result.stats, period_summary: result.period_summary })
     } catch (err) {
       next(err)
     }

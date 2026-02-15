@@ -11,6 +11,7 @@ export class SettingsVM extends ViewModel {
     this.setState('loading', false)
     this.setState('error', null)
     this.setState('success', null)
+    this.setState('settings-active-tab', 'general')
     this.setState('form', {
       withhold_percentage: '',
       company_name: '',
@@ -19,6 +20,16 @@ export class SettingsVM extends ViewModel {
       company_email: '',
       company_tin: ''
     })
+    this.setState('fiscal-years', [])
+    this.setState('current-fiscal-year', null)
+    this.setState('fiscal-years-loading', false)
+    this.setState('fiscal-years-error', null)
+    this.setState('close-fiscal-year-loading', false)
+    this.setState('reopen-fiscal-year-loading', false)
+    this.setState('create-fiscal-year-loading', false)
+    this.setState('report-fy-year', null)
+    this.setState('report-data', null)
+    this.setState('report-loading', false)
   }
 
   async loadSettings() {
@@ -40,6 +51,141 @@ export class SettingsVM extends ViewModel {
       this.updateState('error', err.message || 'Failed to load settings')
     } finally {
       this.updateState('loading', false)
+    }
+  }
+
+  getSettingsTab() {
+    return this.getState('settings-active-tab') || 'general'
+  }
+
+  setSettingsTab(tab) {
+    this.updateState('settings-active-tab', tab)
+    if (tab === 'fiscal-year') {
+      this.loadFiscalYears()
+    }
+  }
+
+  async loadFiscalYears() {
+    this.updateState('fiscal-years-loading', true)
+    this.updateState('fiscal-years-error', null)
+    try {
+      const [listRes, currentRes] = await Promise.all([
+        window.ipcRenderer.invoke('fiscal-years:list'),
+        window.ipcRenderer.invoke('fiscal-years:get-current')
+      ])
+      if (listRes?.success && Array.isArray(listRes.fiscal_years)) {
+        this.updateState('fiscal-years', listRes.fiscal_years)
+      }
+      if (currentRes?.success && currentRes.fiscal_year) {
+        this.updateState('current-fiscal-year', currentRes.fiscal_year)
+      } else {
+        this.updateState('current-fiscal-year', null)
+      }
+    } catch (err) {
+      this.updateState('fiscal-years-error', err.message || 'Failed to load fiscal years')
+      this.updateState('fiscal-years', [])
+      this.updateState('current-fiscal-year', null)
+    } finally {
+      this.updateState('fiscal-years-loading', false)
+    }
+  }
+
+  async createFiscalYear({ fiscal_year, start_date, end_date }) {
+    this.updateState('create-fiscal-year-loading', true)
+    this.updateState('fiscal-years-error', null)
+    try {
+      const result = await window.ipcRenderer.invoke('fiscal-years:create', {
+        fiscal_year: Number(fiscal_year),
+        start_date,
+        end_date
+      })
+      if (result?.success) {
+        await this.loadFiscalYears()
+        return true
+      }
+      this.updateState('fiscal-years-error', result?.error || 'Failed to create fiscal year')
+      return false
+    } catch (err) {
+      this.updateState('fiscal-years-error', err.message || 'Failed to create fiscal year')
+      return false
+    } finally {
+      this.updateState('create-fiscal-year-loading', false)
+    }
+  }
+
+  async deleteFiscalYear(year, force = false) {
+    this.updateState('fiscal-years-error', null)
+    try {
+      const result = await window.ipcRenderer.invoke('fiscal-years:delete-year', year, force)
+      if (result?.success) {
+        await this.loadFiscalYears()
+        return true
+      }
+      return false
+    } catch (err) {
+      this.updateState('fiscal-years-error', err.message || 'Failed to delete fiscal year')
+      return false
+    }
+  }
+
+  async getFiscalYearReport(year) {
+    this.updateState('report-loading', true)
+    this.updateState('report-data', null)
+    this.updateState('report-fy-year', year)
+    try {
+      const res = await window.ipcRenderer.invoke('fiscal-years:get-report', year)
+      if (res?.success && res.report) {
+        this.updateState('report-data', res.report)
+      }
+      return res
+    } catch (e) {
+      this.updateState('report-fy-year', null)
+      throw e
+    } finally {
+      this.updateState('report-loading', false)
+    }
+  }
+
+  closeReportDrawer() {
+    this.updateState('report-fy-year', null)
+    this.updateState('report-data', null)
+  }
+
+  async closeFiscalYear(year) {
+    this.updateState('close-fiscal-year-loading', true)
+    this.updateState('fiscal-years-error', null)
+    try {
+      const result = await window.ipcRenderer.invoke('fiscal-years:close-year', year)
+      if (result?.success) {
+        await this.loadFiscalYears()
+        return true
+      }
+      this.updateState('fiscal-years-error', result?.error || 'Failed to close fiscal year')
+      return false
+    } catch (err) {
+      this.updateState('fiscal-years-error', err.message || 'Failed to close fiscal year')
+      return false
+    } finally {
+      this.updateState('close-fiscal-year-loading', false)
+    }
+  }
+
+  async reopenFiscalYear(year) {
+    this.updateState('reopen-fiscal-year-loading', true)
+    this.updateState('fiscal-years-error', null)
+    try {
+      const result = await window.ipcRenderer.invoke('fiscal-years:reopen-year', year)
+      if (result?.success) {
+        await this.loadFiscalYears()
+        return true
+      }
+      this.updateState('fiscal-years-error', result?.error || 'Failed to reopen fiscal year')
+      return false
+    } catch (err) {
+      this.updateState('fiscal-years-error', err.message || 'Failed to reopen fiscal year')
+      return false
+    } finally {
+      this.updateState('reopen-fiscal-year-loading', false)
     }
   }
 

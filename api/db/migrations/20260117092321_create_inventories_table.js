@@ -1,4 +1,5 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('inventories', (t) => {
     t.bigIncrements('id').primary()
     
@@ -52,18 +53,19 @@ export const up = async (knex) => {
     t.index('quantity', 'inventories_quantity_index')
   })
   
-  // Add CHECK constraints using raw SQL
-  await knex.raw(`
-    ALTER TABLE inventories 
-    ADD CONSTRAINT check_acquisition_type 
-    CHECK (acquisition_type IN ('purchase', 'cash', 'credit', 'cheque', 'borrow'))
-  `)
-  
-  await knex.raw(`
-    ALTER TABLE inventories 
-    ADD CONSTRAINT check_settlement_status 
-    CHECK (settlement_status IN ('unsettled', 'partially_settled', 'fully_settled'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE inventories 
+      ADD CONSTRAINT check_acquisition_type 
+      CHECK (acquisition_type IN ('purchase', 'cash', 'credit', 'cheque', 'borrow'))
+    `)
+    
+    await knex.raw(`
+      ALTER TABLE inventories 
+      ADD CONSTRAINT check_settlement_status 
+      CHECK (settlement_status IN ('unsettled', 'partially_settled', 'fully_settled'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

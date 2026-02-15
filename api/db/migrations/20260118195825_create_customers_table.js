@@ -1,4 +1,5 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('customers', (t) => {
     t.bigIncrements('id').primary()
     t.string('name', 255).notNullable()
@@ -19,12 +20,13 @@ export const up = async (knex) => {
     t.string('sync_status', 255).defaultTo('pending')
   })
 
-  // Add CHECK constraint for customer_type
-  await knex.raw(`
-    ALTER TABLE customers 
-    ADD CONSTRAINT customers_customer_type_check 
-    CHECK (customer_type IN ('supplier', 'retailer', 'both', 'other'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE customers 
+      ADD CONSTRAINT customers_customer_type_check 
+      CHECK (customer_type IN ('supplier', 'retailer', 'both', 'other'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

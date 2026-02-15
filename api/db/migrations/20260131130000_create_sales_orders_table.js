@@ -13,6 +13,7 @@
  */
 
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('sales_orders', (t) => {
     t.bigIncrements('id').primary()
 
@@ -67,23 +68,25 @@ export const up = async (knex) => {
     t.index('payment_status', 'sales_orders_payment_status_index')
   })
 
-  await knex.raw(`
-    ALTER TABLE sales_orders
-    ADD CONSTRAINT sales_orders_status_check
-    CHECK (status IN ('pending', 'completed', 'archived'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE sales_orders
+      ADD CONSTRAINT sales_orders_status_check
+      CHECK (status IN ('pending', 'completed', 'archived'))
+    `)
 
-  await knex.raw(`
-    ALTER TABLE sales_orders
-    ADD CONSTRAINT sales_orders_payment_status_check
-    CHECK (payment_status IN ('paid', 'partial', 'unpaid'))
-  `)
+    await knex.raw(`
+      ALTER TABLE sales_orders
+      ADD CONSTRAINT sales_orders_payment_status_check
+      CHECK (payment_status IN ('paid', 'partial', 'unpaid'))
+    `)
 
-  await knex.raw(`
-    ALTER TABLE sales_orders
-    ADD CONSTRAINT sales_orders_payment_type_check
-    CHECK (payment_type IN ('cash', 'credit', 'cheque'))
-  `)
+    await knex.raw(`
+      ALTER TABLE sales_orders
+      ADD CONSTRAINT sales_orders_payment_type_check
+      CHECK (payment_type IN ('cash', 'credit', 'cheque'))
+    `)
+  }
 
   // Unique index for sales_invoice_no (nullable)
   await knex.raw(`

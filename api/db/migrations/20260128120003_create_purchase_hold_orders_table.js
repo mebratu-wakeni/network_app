@@ -1,4 +1,5 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('purchase_hold_orders', (t) => {
     t.bigIncrements('id').primary()
     
@@ -46,12 +47,13 @@ export const up = async (knex) => {
     t.index('payment_mode', 'purchase_hold_orders_payment_mode_index')
   })
   
-  // Add CHECK constraint using raw SQL
-  await knex.raw(`
-    ALTER TABLE purchase_hold_orders 
-    ADD CONSTRAINT purchase_hold_orders_payment_mode_check 
-    CHECK (payment_mode IN ('cash', 'credit', 'cheque'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE purchase_hold_orders 
+      ADD CONSTRAINT purchase_hold_orders_payment_mode_check 
+      CHECK (payment_mode IN ('cash', 'credit', 'cheque'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

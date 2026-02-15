@@ -368,7 +368,8 @@ class PurchaseManager {
       const response = await this.apiRequest(url, { method: 'GET' }, token);
       return {
         success: response.ok === true,
-        stats: response.stats || {}
+        stats: response.stats || {},
+        period_summary: response.period_summary || null
       };
     } catch (error) {
       console.error('[PurchaseManager] getStats error:', error);

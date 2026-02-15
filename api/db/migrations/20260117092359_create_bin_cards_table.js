@@ -1,4 +1,5 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('bin_cards', (t) => {
     t.bigIncrements('id').primary()
     
@@ -55,12 +56,13 @@ export const up = async (knex) => {
     t.index('created_by', 'bin_cards_created_by_index')
   })
   
-  // Add CHECK constraint for transaction_type
-  await knex.raw(`
-    ALTER TABLE bin_cards 
-    ADD CONSTRAINT check_transaction_type 
-    CHECK (transaction_type IN ('received', 'issued', 'voided', 'adjustment', 'opening', 'return', 'transfer_in', 'transfer_out', 'expired', 'damaged'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE bin_cards 
+      ADD CONSTRAINT check_transaction_type 
+      CHECK (transaction_type IN ('received', 'issued', 'voided', 'adjustment', 'opening', 'return', 'transfer_in', 'transfer_out', 'expired', 'damaged'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

@@ -130,13 +130,20 @@ export class ProductsRepository {
     }
     const threshold = ProductsRepository.DEFAULT_LOW_STOCK_THRESHOLD
     const bcSubquery = this.knex.raw(
-      `(SELECT DISTINCT ON (product_id) product_id, balance FROM bin_cards ORDER BY product_id, id DESC) AS bc`
+      `(SELECT b.product_id, b.balance
+         FROM bin_cards b
+         JOIN (
+           SELECT product_id, MAX(id) AS max_id
+           FROM bin_cards
+           GROUP BY product_id
+         ) latest ON latest.max_id = b.id
+       ) AS bc`
     )
     const row = await this.knex('products')
       .leftJoin(bcSubquery, 'products.id', 'bc.product_id')
       .select(
-        this.knex.raw('SUM(CASE WHEN COALESCE(bc.balance, 0) = 0 THEN 1 ELSE 0 END)::int AS out_of_stock'),
-        this.knex.raw('SUM(CASE WHEN COALESCE(bc.balance, 0) > 0 AND COALESCE(bc.balance, 0) < ? THEN 1 ELSE 0 END)::int AS low_stock', [threshold])
+        this.knex.raw('SUM(CASE WHEN COALESCE(bc.balance, 0) = 0 THEN 1 ELSE 0 END) AS out_of_stock'),
+        this.knex.raw('SUM(CASE WHEN COALESCE(bc.balance, 0) > 0 AND COALESCE(bc.balance, 0) < ? THEN 1 ELSE 0 END) AS low_stock', [threshold])
       )
       .first()
     return {
@@ -159,7 +166,14 @@ export class ProductsRepository {
     const hasBinCards = await this.knex.schema.hasTable('bin_cards')
     const bcSubquery = hasBinCards
       ? this.knex.raw(
-          `(SELECT DISTINCT ON (product_id) product_id, balance FROM bin_cards ORDER BY product_id, id DESC) AS bc`
+          `(SELECT b.product_id, b.balance
+             FROM bin_cards b
+             JOIN (
+               SELECT product_id, MAX(id) AS max_id
+               FROM bin_cards
+               GROUP BY product_id
+             ) latest ON latest.max_id = b.id
+           ) AS bc`
         )
       : null
 
@@ -175,7 +189,7 @@ export class ProductsRepository {
     if (bcSubquery) {
       query = query
         .leftJoin(bcSubquery, 'products.id', 'bc.product_id')
-        .select(this.knex.raw('COALESCE(bc.balance, 0)::int AS balance'))
+        .select(this.knex.raw('COALESCE(bc.balance, 0) AS balance'))
     } else {
       query = query.select(this.knex.raw('0 AS balance'))
     }

@@ -427,7 +427,7 @@ export class PurchaseController {
         status
       } = req.query
 
-      const { stats } = await this.service.listOrders({
+      const { stats, period_summary } = await this.service.listOrders({
         limit: 1000,
         offset: 0,
         date_from: date_from || undefined,
@@ -437,7 +437,7 @@ export class PurchaseController {
         status: status || undefined
       })
 
-      res.json({ ok: true, stats })
+      res.json({ ok: true, stats, period_summary })
     } catch (err) {
       next(err)
     }

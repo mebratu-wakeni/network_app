@@ -26,25 +26,82 @@ export class LedgerHelper {
   }
 
   /**
-   * Get account balance as of a specific date
-   * Gets the last balance entry for the account up to the given date
+   * Get account balance: closing balance as of a date, or period activity in a date range.
+   * - getAccountBalance(code, asOfDate) → closing balance (sum of debit-credit where date <= asOfDate)
+   * - getAccountBalance(code, fromDate, toDate) → period change (sum of debit-credit in range)
+   * - getAccountBalance(code, asOfDate, trx) → closing balance with transaction
    * @param {string} accountCode - Account code
-   * @param {string} asOfDate - Date in YYYY-MM-DD format
-   * @param {Object} trx - Knex transaction (optional)
-   * @returns {Promise<number>} Account balance
+   * @param {string} asOfDateOrFrom - As-of date (2 args) or start date (3 args)
+   * @param {string|Object} [toDateOrTrx] - End date (period) or Knex trx (closing)
+   * @param {Object} trx - Knex transaction (optional, 4th arg only)
+   * @returns {Promise<number>} Balance or period change
    */
-  async getAccountBalance(accountCode, asOfDate, trx = null) {
-    const db = trx || this.knex
-    
-    // Get the last entry for this account up to the given date
-    // The balance field stores the running balance
-    const lastEntry = await db('account_ledger')
-      .where('account_code', accountCode)
-      .where('transaction_date', '<=', asOfDate)
-      .orderBy('id', 'desc')
-      .first()
+  async getAccountBalance(accountCode, asOfDateOrFrom, toDateOrTrx, trx = null) {
+    const isDateStr = (v) => v != null && typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(String(v).slice(0, 10))
+    const fromStr = asOfDateOrFrom && String(asOfDateOrFrom).slice(0, 10)
+    if (!fromStr) return 0
 
-    return lastEntry ? parseFloat(lastEntry.balance || 0) : 0
+    const toStr = isDateStr(toDateOrTrx) ? String(toDateOrTrx).slice(0, 10) : null
+    const db = trx || (isDateStr(toDateOrTrx) ? this.knex : toDateOrTrx) || this.knex
+
+    if (toStr) {
+      const row = await db('account_ledger')
+        .where('account_code', accountCode)
+        .where('transaction_date', '>=', fromStr)
+        .where('transaction_date', '<=', toStr)
+        .select(db.raw('COALESCE(SUM(debit - credit), 0) as period_change'))
+        .first()
+      return parseFloat(row?.period_change || 0)
+    }
+
+    const row = await db('account_ledger')
+      .where('account_code', accountCode)
+      .where('transaction_date', '<=', fromStr)
+      .select(db.raw('COALESCE(SUM(debit - credit), 0) as balance'))
+      .first()
+    return parseFloat(row?.balance || 0)
+  }
+
+  /**
+   * Get account period activity (net change) in a date range.
+   * Alias for getAccountBalance(code, fromDate, toDate).
+   */
+  async getAccountPeriodActivity(accountCode, fromDate, toDate, trx = null) {
+    return this.getAccountBalance(accountCode, fromDate, toDate, trx)
+  }
+
+  /**
+   * Get closing balance per account as of a date (computed from debit/credit).
+   * Returns { account_code, account_name, balance }[] for each account with activity.
+   * Does NOT use the stored balance column.
+   * @param {string} asOfDate - Date YYYY-MM-DD
+   * @param {Object} trx - Knex transaction (optional)
+   * @returns {Promise<Array<{account_code, account_name, balance}>>}
+   */
+  async getClosingBalances(asOfDate, trx = null) {
+    const db = trx || this.knex
+    const dateStr = typeof asOfDate === 'string' && asOfDate.length >= 10
+      ? asOfDate.slice(0, 10)
+      : asOfDate instanceof Date
+        ? asOfDate.toISOString().slice(0, 10)
+        : String(asOfDate || '').slice(0, 10)
+
+    if (!dateStr || dateStr.length < 10) return []
+
+    const rows = await db('account_ledger')
+      .where('transaction_date', '<=', dateStr)
+      .select(
+        'account_code',
+        db.raw('MAX(account_name) as account_name'),
+        db.raw('COALESCE(SUM(debit - credit), 0) as balance')
+      )
+      .groupBy('account_code')
+
+    return rows.map((r) => ({
+      account_code: r.account_code,
+      account_name: r.account_name,
+      balance: parseFloat(r.balance || 0)
+    }))
   }
 
   /**
@@ -140,9 +197,12 @@ export class LedgerHelper {
         throw new Error(`Account code ${entry.account_code} not found`)
       }
 
-      // Get current balance for this account (before this transaction)
+      // Get current balance for this account (last row on or before this transaction's date)
+      // Uses date then id so backdated transactions get the correct prior balance, not today's
       const lastEntry = await db('account_ledger')
         .where('account_code', entry.account_code)
+        .where('transaction_date', '<=', transaction_date)
+        .orderBy('transaction_date', 'desc')
         .orderBy('id', 'desc')
         .first()
 
@@ -1019,17 +1079,19 @@ export class LedgerHelper {
     }
     if (withholdAmount > 0.01) {
       entries.push({
-        account_code: '1250', // Withhold Receivable
-        debit: withholdAmount,
-        credit: 0,
+        account_code: '3210', // Withhold Payable (tax we owe from sales; liability)
+        debit: 0,
+        credit: withholdAmount,
         description: `Withhold - ${referenceNumber || `SO-${salesOrderId}`}`
       })
     }
-    if (subtotal > 0.01) {
+    // Revenue is net of withhold (subtotal - withholdAmount) to balance with Cash + AR
+    const revenueAmount = Math.max(0, (subtotal || 0) - (withholdAmount || 0))
+    if (revenueAmount > 0.01) {
       entries.push({
         account_code: '5100', // Sales Revenue
         debit: 0,
-        credit: subtotal,
+        credit: revenueAmount,
         description: description
       })
     }
@@ -1097,6 +1159,49 @@ export class LedgerHelper {
       description,
       transaction_type: 'expense',
       entries,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Reverse fiscal year closing ledger entries.
+   * Finds entries where reference_table='fiscal_years', reference_id=fyId, and transaction_type
+   * in ('year_end_closing','year_end_opening'), then posts offsetting entries.
+   * @param {Object} params - { fiscalYearId, transactionDate, reason, referenceNumber, createdBy }
+   * @returns {Promise<Object>} Result from postGLTransaction or { success: true } if nothing to reverse
+   */
+  async reverseFiscalYearClosing(params, trx = null) {
+    const { fiscalYearId, transactionDate, reason = 'Reopen fiscal year', referenceNumber = null, createdBy = null } = params
+    const db = trx || this.knex
+    const entries = await db('account_ledger')
+      .where({ reference_table: 'fiscal_years', reference_id: fiscalYearId })
+      .whereIn('transaction_type', ['year_end_closing', 'year_end_opening'])
+      .orderBy('id', 'asc')
+    if (entries.length === 0) return { success: true, message: 'No closing entries to reverse', entries: [] }
+    const accountGroups = {}
+    entries.forEach((entry) => {
+      const code = entry.account_code
+      if (!accountGroups[code]) accountGroups[code] = { debit: 0, credit: 0 }
+      accountGroups[code].debit += parseFloat(entry.debit || 0)
+      accountGroups[code].credit += parseFloat(entry.credit || 0)
+    })
+    const reverseEntries = Object.keys(accountGroups).map((accountCode) => {
+      const g = accountGroups[accountCode]
+      return {
+        account_code: accountCode,
+        debit: g.credit,
+        credit: g.debit,
+        description: `REVERSAL: FY closing - ${reason}`
+      }
+    })
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: referenceNumber || `FY-REV-${fiscalYearId}`,
+      reference_table: 'fiscal_years',
+      reference_id: fiscalYearId,
+      description: `Fiscal year closing reversal - ${reason}`,
+      transaction_type: 'year_end_reversal',
+      entries: reverseEntries,
       created_by: createdBy
     }, trx)
   }

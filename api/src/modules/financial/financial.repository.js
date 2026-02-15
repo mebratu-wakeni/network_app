@@ -90,39 +90,41 @@ export class FinancialRepository {
 
   // ---------- Deposits ----------
   async createDeposit(data, userId = null) {
-    const [row] = await this.knex('deposits')
-      .insert({
-        deposit_date: data.deposit_date,
-        type: data.type || 'deposit',
-        amount: data.amount,
-        description: data.description || null,
-        source: data.source || null,
-        reference_no: data.reference_no || null,
-        created_by: userId,
-        created_at: this.knex.fn.now(),
-        last_updated: this.knex.fn.now()
-      })
-      .returning('*')
+    return this.knex.transaction(async (trx) => {
+      const [row] = await trx('deposits')
+        .insert({
+          deposit_date: data.deposit_date,
+          type: data.type || 'deposit',
+          amount: data.amount,
+          description: data.description || null,
+          source: data.source || null,
+          reference_no: data.reference_no || null,
+          created_by: userId,
+          created_at: trx.fn.now(),
+          last_updated: trx.fn.now()
+        })
+        .returning('*')
 
-    const hasLedger = await this.knex.schema.hasTable('account_ledger')
-    if (hasLedger) {
-      // Chart of accounts: 4300 Opening Balance, 4100 Owner's Capital, 5200 Other Revenue
-      const revenueTypes = ['donation', 'grant', 'interest_income', 'other_revenue']
-      const accountCode = data.type === 'initial_seed' ? '4300'
-        : revenueTypes.includes(data.type) ? '5200'
-        : '4100'
-      await this.ledgerHelper.recordDeposit({
-        depositId: row.id,
-        amount: Number(row.amount),
-        accountCode,
-        transactionDate: row.deposit_date,
-        description: `Deposit - ${row.type}${row.description ? `: ${row.description}` : ''}`,
-        referenceNumber: row.reference_no,
-        createdBy: userId
-      })
-    }
+      const hasLedger = await trx.schema.hasTable('account_ledger')
+      if (hasLedger) {
+        // Chart of accounts: 4300 Opening Balance, 4100 Owner's Capital, 5200 Other Revenue
+        const revenueTypes = ['donation', 'grant', 'interest_income', 'other_revenue']
+        const accountCode = data.type === 'initial_seed' ? '4300'
+          : revenueTypes.includes(data.type) ? '5200'
+          : '4100'
+        await this.ledgerHelper.recordDeposit({
+          depositId: row.id,
+          amount: Number(row.amount),
+          accountCode,
+          transactionDate: row.deposit_date,
+          description: `Deposit - ${row.type}${row.description ? `: ${row.description}` : ''}`,
+          referenceNumber: row.reference_no,
+          createdBy: userId
+        }, trx)
+      }
 
-    return row
+      return row
+    })
   }
 
   async listDeposits({ limit = 50, offset = 0, date_from, date_to, type, include_reversed = false }) {
@@ -294,7 +296,18 @@ export class FinancialRepository {
     const rows = await q.limit(limit).offset(offset)
 
     let sumQ = this.knex('cash_loans_receivable')
-      .select(this.knex.raw('COALESCE(SUM(GREATEST(0, amount - COALESCE(returned_amount, 0))), 0) as total_outstanding'))
+      .select(this.knex.raw(`
+        COALESCE(
+          SUM(
+            CASE
+              WHEN amount - COALESCE(returned_amount, 0) > 0
+              THEN amount - COALESCE(returned_amount, 0)
+              ELSE 0
+            END
+          ),
+          0
+        ) as total_outstanding
+      `))
     if (status) sumQ = sumQ.where('status', status)
     const sumRow = await sumQ.first()
 
@@ -817,6 +830,20 @@ export class FinancialRepository {
         throw err
       }
 
+      // Cash balance safeguard: withhold payable settlement pays cash to tax authority
+      const hasLedger = await trx.schema.hasTable('account_ledger')
+      if (hasLedger && totalAmount > 0) {
+        const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+        const cashBalance = Number(balances['1100'] ?? 0)
+        if (cashBalance < totalAmount) {
+          const err = new Error(
+            `Insufficient cash balance for withhold settlement. Current: ${cashBalance.toFixed(2)}. Required: ${totalAmount.toFixed(2)}.`
+          )
+          err.status = 400
+          throw err
+        }
+      }
+
       const [settlement] = await trx('withhold_payable_settlements')
         .insert({
           settlement_date: settlement_date || new Date().toISOString().split('T')[0],
@@ -840,7 +867,6 @@ export class FinancialRepository {
         .whereIn('id', purchase_order_ids)
         .update({ withhold_settled: true, last_updated: trx.fn.now() })
 
-      const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger && totalAmount > 0) {
         await this.ledgerHelper.recordWithholdPayableSettlement({
           settlementId: settlement.id,

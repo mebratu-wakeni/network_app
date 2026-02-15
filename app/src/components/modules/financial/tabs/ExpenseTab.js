@@ -107,7 +107,7 @@ export function ExpenseTab(props) {
     Modal({}, (delegator, handleClose) => CreateExpenseModalContent(props.viewModel, delegator, handleClose))
   }
 
-  return Row({ class: 'flex flex-col gap-4 flex-1 min-h-0 overflow-hidden border border-gray-200 rounded-lg relative' }, [
+  return Row({ class: 'flex flex-col gap-4 flex-1 min-h-0 overflow-hidden border border-gray-200 rounded-lg' }, [
     Row({ class: 'flex justify-between items-center px-4 py-4 gap-2' }, [
       Row({}, [
         SelectFluid({
@@ -222,40 +222,33 @@ function ExpenseDetailDrawer(props) {
   const title = `Expense #${expense.id}`
 
   return Drawer({ class: 'flex flex-col h-full', openSlide: true }, [
-    Row({ class: 'flex-1 bg-transparent', events: { click: onClose } }),
-    Row({
-      class: 'bg-white w-150 flex flex-col h-full border border-gray-200',
-      attributes: { style: 'box-shadow: -12px 0 24px rgba(15, 23, 42, 0.12);' },
-      events: { click: (e) => e.stopPropagation() }
-    }, [
-      Card({ class: 'flex flex-col h-full' }, [
-        CardHeader({ class: 'flex items-center justify-between px-5 h-12 border-b border-gray-200 flex-shrink-0' }, [
-          Row({ class: 'text-base font-semibold text-gray-900' }, title),
-          IconButton({ onClick: onClose }, IonIcon({ name: 'close-outline', class: 'text-xl' }))
-        ]),
-        CardBody({ class: 'flex-1 overflow-y-auto min-h-0 px-5 py-4' }, [
-          Row({ class: 'flex flex-col gap-4' }, [
-            detailRow('Date', formatDateDDMMYYYY(expense.paid_on)),
-            detailRow('Category', expense.category || '—'),
-            detailRow('Amount', `Br ${financeFormat(expense.amount)}`),
-            detailRow('Payee', expense.customer_name || 'Walk-in'),
-            detailRow('Payment method', (expense.payment_method || 'cash').replace(/_/g, ' ')),
-            expense.invoice_no ? detailRow('Invoice no.', expense.invoice_no) : null,
-            expense.description ? detailRow('Description', expense.description) : null,
-            expense.payment_method === 'cheque' && (expense.cheque_no || expense.cheque_date || expense.bank_name) ? Row({ class: 'border-t border-gray-100 pt-3 mt-2' }, [
-              Row({ class: 'text-xs font-medium uppercase tracking-wide text-gray-500 mb-2' }, 'Cheque details'),
-              detailRow('Cheque no.', expense.cheque_no || '—'),
-              detailRow('Cheque date', expense.cheque_date ? formatDateDDMMYYYY(expense.cheque_date) : '—'),
-              detailRow('Bank', expense.bank_name || '—')
-            ]) : null,
-            expense.payment_method === 'bank_transfer' && expense.bank_transfer_ref ? detailRow('Bank transfer ref.', expense.bank_transfer_ref) : null,
-            expense.withhold_percentage != null && Number(expense.withhold_percentage) > 0 ? detailRow('Withhold %', `${expense.withhold_percentage}%`) : null
-          ].filter(Boolean))
-        ]),
-        CardFooter({ class: 'flex justify-end gap-2 px-5 py-3 border-t border-gray-200 flex-shrink-0' }, [
-          Button({ variant: 'secondary', onClick: onClose }, 'Close'),
-          Button({ variant: 'danger', onClick: () => handleReverseExpense(viewModel, expense) }, 'Reverse')
-        ])
+    Card({ class: 'flex flex-col h-full' }, [
+      CardHeader({ class: 'flex items-center justify-between px-5 h-12 border-b border-gray-200 flex-shrink-0' }, [
+        Row({ class: 'text-base font-semibold text-gray-900' }, title),
+        IconButton({ onClick: onClose }, IonIcon({ name: 'close-outline', class: 'text-xl' }))
+      ]),
+      CardBody({ class: 'flex-1 overflow-y-auto min-h-0 px-5 py-4' }, [
+        Row({ class: 'flex flex-col gap-4' }, [
+          detailRow('Date', formatDateDDMMYYYY(expense.paid_on)),
+          detailRow('Category', expense.category || '—'),
+          detailRow('Amount', `Br ${financeFormat(expense.amount)}`),
+          detailRow('Payee', expense.customer_name || 'Walk-in'),
+          detailRow('Payment method', (expense.payment_method || 'cash').replace(/_/g, ' ')),
+          expense.invoice_no ? detailRow('Invoice no.', expense.invoice_no) : null,
+          expense.description ? detailRow('Description', expense.description) : null,
+          expense.payment_method === 'cheque' && (expense.cheque_no || expense.cheque_date || expense.bank_name) ? Row({ class: 'border-t border-gray-100 pt-3 mt-2' }, [
+            Row({ class: 'text-xs font-medium uppercase tracking-wide text-gray-500 mb-2' }, 'Cheque details'),
+            detailRow('Cheque no.', expense.cheque_no || '—'),
+            detailRow('Cheque date', expense.cheque_date ? formatDateDDMMYYYY(expense.cheque_date) : '—'),
+            detailRow('Bank', expense.bank_name || '—')
+          ]) : null,
+          expense.payment_method === 'bank_transfer' && expense.bank_transfer_ref ? detailRow('Bank transfer ref.', expense.bank_transfer_ref) : null,
+          expense.withhold_percentage != null && Number(expense.withhold_percentage) > 0 ? detailRow('Withhold %', `${expense.withhold_percentage}%`) : null
+        ].filter(Boolean))
+      ]),
+      CardFooter({ class: 'flex justify-end gap-2 px-5 py-3 border-t border-gray-200 flex-shrink-0' }, [
+        Button({ variant: 'secondary', onClick: onClose }, 'Close'),
+        Button({ variant: 'danger', onClick: () => handleReverseExpense(viewModel, expense) }, 'Reverse')
       ])
     ])
   ])

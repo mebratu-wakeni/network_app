@@ -2,266 +2,143 @@ import { app, ipcMain, nativeImage, BrowserWindow } from "electron";
 import { createRequire } from "node:module";
 import { fileURLToPath as fileURLToPath$1 } from "node:url";
 import path$2 from "node:path";
-import { exec, spawn } from "child_process";
-import require$$1, { promisify } from "util";
+import os from "node:os";
+import crypto$1 from "node:crypto";
+import { execSync, spawn } from "child_process";
 import path$1 from "path";
+import fs$1 from "fs";
 import require$$5, { fileURLToPath } from "url";
-import require$$6, { existsSync } from "fs";
+import require$$1 from "util";
 import stream from "stream";
 import require$$3 from "http";
 import require$$4 from "https";
 import require$$8 from "crypto";
-import fs$1 from "fs/promises";
-const execAsync = promisify(exec);
+import fs$2 from "fs/promises";
 const __dirname$1 = path$1.dirname(fileURLToPath(import.meta.url));
 function findProjectRoot(startPath) {
   let current = path$1.resolve(startPath);
   const root = path$1.parse(current).root;
   while (current !== root) {
-    const dockerComposePath = path$1.join(current, "docker-compose.yml");
     const apiDir = path$1.join(current, "api");
-    if (existsSync(dockerComposePath) && existsSync(apiDir)) {
-      return current;
-    }
+    if (fs$1.existsSync(apiDir)) return current;
     current = path$1.dirname(current);
   }
-  const possibleRoots = [
-    path$1.resolve(__dirname$1, "../.."),
-    // from dist-electron/ or electron/
-    path$1.resolve(__dirname$1, "../../.."),
-    // from electron/services/
-    path$1.resolve(__dirname$1, "../../../..")
-    // from services/ (if nested deeper)
-  ];
-  for (const possibleRoot of possibleRoots) {
-    const dockerComposePath = path$1.join(possibleRoot, "docker-compose.yml");
-    if (existsSync(dockerComposePath)) {
-      return possibleRoot;
-    }
-  }
-  throw new Error("Could not find project root. Make sure docker-compose.yml exists in the project root.");
+  throw new Error("Could not find project root containing /api directory.");
 }
 const ROOT_DIR = findProjectRoot(__dirname$1);
-const SERVER_DIR = path$1.join(ROOT_DIR, "api");
-console.log("ROOT_DIR: ", ROOT_DIR);
+const API_DIR = path$1.join(ROOT_DIR, "api");
 class ServerManager {
   constructor() {
-    this.composeFile = path$1.join(ROOT_DIR, "docker-compose.yml");
-    this.isRunning = false;
-    this.devProcess = null;
-    this.mode = "docker";
-    if (!existsSync(this.composeFile)) {
-      console.error(`ERROR: docker-compose.yml not found at: ${this.composeFile}`);
-      console.error(`ROOT_DIR resolved to: ${ROOT_DIR}`);
-      throw new Error(`docker-compose.yml not found at: ${this.composeFile}`);
-    }
-    console.log(`✓ docker-compose.yml found at: ${this.composeFile}`);
+    this.apiProcess = null;
+    this.lastLogs = [];
   }
-  /**
-   * Start development server (npm run dev)
-   */
-  async startDevServer() {
+  _appendLog(line) {
+    this.lastLogs.push(line);
+    if (this.lastLogs.length > 2e3) this.lastLogs.shift();
+  }
+  async startServer(options = {}) {
+    if (this.apiProcess && !this.apiProcess.killed) {
+      return { success: true, message: "Server already running" };
+    }
+    if (!fs$1.existsSync(API_DIR)) {
+      return { success: false, error: `API directory not found: ${API_DIR}` };
+    }
+    const port = Number(options.port || process.env.PORT || 4e3);
+    const dbFile = options.dbFile || process.env.DB_FILE;
+    const env = {
+      ...process.env,
+      PORT: String(port),
+      DB_FILE: dbFile || "",
+      DB_CLIENT: "sqlite3"
+    };
+    if (dbFile) fs$1.mkdirSync(path$1.dirname(dbFile), { recursive: true });
+    const shouldSeed = !!dbFile && !fs$1.existsSync(dbFile);
     try {
-      if (this.devProcess && !this.devProcess.killed) {
-        return { success: false, error: "Development server is already running" };
-      }
-      console.log(`[startDevServer] Starting dev server from: ${SERVER_DIR}`);
-      if (!existsSync(SERVER_DIR)) {
-        return { success: false, error: `API directory not found at: ${SERVER_DIR}` };
-      }
-      this.devProcess = spawn("npm", ["run", "dev"], {
-        shell: true,
-        cwd: SERVER_DIR,
-        stdio: ["ignore", "pipe", "pipe"]
-      });
-      this.devProcess.stdout.on("data", (data) => {
-        console.log(`[DEV]: ${data}`);
-      });
-      this.devProcess.stderr.on("data", (data) => {
-        console.error(`[DEV ERROR]: ${data}`);
-      });
-      this.devProcess.on("close", (code) => {
-        console.log(`Development server process exited with code ${code}`);
-        this.devProcess = null;
-      });
-      this.devProcess.on("error", (err) => {
-        console.error("Failed to start development server process:", err);
-        this.devProcess = null;
-        return { success: false, error: err.message };
-      });
-      await new Promise((resolve) => setTimeout(resolve, 1e3));
-      if (this.devProcess && !this.devProcess.killed) {
-        this.isRunning = true;
-        return { success: true, message: "Development server started successfully" };
-      } else {
-        return { success: false, error: "Failed to start development server" };
+      execSync("npm run migrate", { cwd: API_DIR, env, stdio: "inherit" });
+      if (shouldSeed) {
+        execSync("npm run seed", { cwd: API_DIR, env, stdio: "inherit" });
       }
     } catch (error) {
-      console.error(`[startDevServer] Error:`, error);
-      return { success: false, error: error.message };
+      return { success: false, error: `Failed to run migrations: ${error.message}` };
     }
-  }
-  /**
-   * Stop development server
-   */
-  async stopDevServer() {
-    try {
-      if (!this.devProcess) {
-        return { success: false, error: "Development server is not running" };
-      }
-      console.log(`[stopDevServer] Stopping dev server...`);
-      if (!this.devProcess.killed) {
-        this.devProcess.kill("SIGTERM");
-        setTimeout(() => {
-          if (this.devProcess && !this.devProcess.killed) {
-            this.devProcess.kill("SIGKILL");
-          }
-        }, 3e3);
-      }
-      this.devProcess = null;
-      this.isRunning = false;
-      return { success: true, message: "Development server stopped successfully" };
-    } catch (error) {
-      console.error(`[stopDevServer] Error:`, error);
-      return { success: false, error: error.message };
+    const command = process.env.NODE_ENV === "production" ? ["run", "start"] : ["run", "dev"];
+    this.apiProcess = spawn("npm", command, {
+      shell: true,
+      cwd: API_DIR,
+      env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    this.apiProcess.stdout.on("data", (data) => {
+      this._appendLog(`[API] ${String(data)}`);
+      console.log(`[API] ${String(data)}`);
+    });
+    this.apiProcess.stderr.on("data", (data) => {
+      this._appendLog(`[API_ERR] ${String(data)}`);
+      console.error(`[API_ERR] ${String(data)}`);
+    });
+    this.apiProcess.on("close", (code) => {
+      this._appendLog(`[API_EXIT] exited with code ${code}`);
+      this.apiProcess = null;
+    });
+    this.apiProcess.on("error", (err) => {
+      this._appendLog(`[API_ERROR] ${err.message}`);
+      this.apiProcess = null;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (!this.apiProcess || this.apiProcess.killed) {
+      return { success: false, error: "Failed to start API server process" };
     }
+    return { success: true, message: "API server started", port, dbFile };
   }
-  /**
-   * Check if dev server is running
-   */
-  async checkDevServerStatus() {
-    try {
-      if (this.devProcess && !this.devProcess.killed) {
-        return { success: true, running: true };
-      }
-      const health = await this.checkApiHealth();
-      return { success: true, running: health.healthy };
-    } catch (error) {
-      return { success: false, running: false, error: error.message };
-    }
+  async stopServer() {
+    if (!this.apiProcess) return { success: true, message: "Server already stopped" };
+    const proc = this.apiProcess;
+    if (!proc.killed) proc.kill("SIGTERM");
+    setTimeout(() => {
+      if (this.apiProcess && !this.apiProcess.killed) this.apiProcess.kill("SIGKILL");
+    }, 3e3);
+    this.apiProcess = null;
+    return { success: true, message: "API server stopped" };
   }
-  /**
-   * Check if Docker is installed and running
-   */
-  async checkDocker() {
-    try {
-      await execAsync("docker --version");
-      await execAsync("docker ps");
-      return { installed: true, running: true };
-    } catch (error) {
-      if (error.message.includes("docker: command not found")) {
-        return { installed: false, running: false, error: "Docker not installed" };
-      }
-      return { installed: true, running: false, error: "Docker not running" };
-    }
-  }
-  /**
-   * Start Docker services
-   */
-  async startServices() {
-    try {
-      console.log(`[startServices] Starting services...`);
-      console.log(`[startServices] composeFile: ${this.composeFile}`);
-      console.log(`[startServices] ROOT_DIR: ${ROOT_DIR}`);
-      const command = `docker compose -f "${this.composeFile}" up -d`;
-      console.log(`[startServices] Executing: ${command}`);
-      const { stdout, stderr } = await execAsync(command, { cwd: ROOT_DIR });
-      console.log(`[startServices] stdout:`, stdout);
-      if (stderr) {
-        console.log(`[startServices] stderr:`, stderr);
-      }
-      if (stderr && !stderr.includes("Creating") && !stderr.includes("Starting") && !stderr.includes("Started")) {
-        const isError = stderr.toLowerCase().includes("error") || stderr.toLowerCase().includes("failed") || stderr.toLowerCase().includes("cannot");
-        if (isError) {
-          throw new Error(stderr);
-        }
-      }
-      this.isRunning = true;
-      return { success: true, message: "Services started successfully", stdout, stderr };
-    } catch (error) {
-      console.error(`[startServices] Error:`, error);
-      this.isRunning = false;
-      return { success: false, error: error.message, details: error.toString() };
-    }
-  }
-  /**
-   * Stop Docker services
-   */
-  async stopServices() {
-    try {
-      console.log(`[stopServices] Stopping services...`);
-      console.log(`[stopServices] composeFile: ${this.composeFile}`);
-      console.log(`[stopServices] ROOT_DIR: ${ROOT_DIR}`);
-      const command = `docker compose -f "${this.composeFile}" down`;
-      console.log(`[stopServices] Executing: ${command}`);
-      const { stdout, stderr } = await execAsync(command, { cwd: ROOT_DIR });
-      console.log(`[stopServices] stdout:`, stdout);
-      if (stderr) {
-        console.log(`[stopServices] stderr:`, stderr);
-      }
-      this.isRunning = false;
-      return { success: true, message: "Services stopped successfully", stdout, stderr };
-    } catch (error) {
-      console.error(`[stopServices] Error:`, error);
-      return { success: false, error: error.message, details: error.toString() };
-    }
-  }
-  /**
-   * Get service status
-   */
   async getServiceStatus() {
-    try {
-      const command = `docker compose -f "${this.composeFile}" ps --format json`;
-      const { stdout } = await execAsync(command, { cwd: ROOT_DIR });
-      if (!stdout || !stdout.trim()) {
-        return { success: true, services: [] };
-      }
-      const services = stdout.trim().split("\n").filter((line) => line.trim()).map((line) => {
-        try {
-          return JSON.parse(line);
-        } catch (e) {
-          console.warn(`Failed to parse service line: ${line}`, e);
-          return null;
-        }
-      }).filter((svc) => svc !== null);
-      return {
-        success: true,
-        services: services.map((svc) => ({
-          name: svc.Name,
-          status: svc.State,
-          health: svc.Health || "unknown"
-        }))
-      };
-    } catch (error) {
-      console.error(`[getServiceStatus] Error:`, error);
-      return { success: false, error: error.message };
-    }
+    const running = !!(this.apiProcess && !this.apiProcess.killed);
+    return {
+      success: true,
+      services: [{ name: "api", status: running ? "running" : "stopped", health: "unknown" }]
+    };
   }
-  /**
-   * Check API health
-   */
-  async checkApiHealth() {
+  async checkApiHealth(apiRoot = "http://localhost:4000") {
     try {
-      const response = await fetch("http://localhost:4000/health");
-      const data = await response.json();
+      const res = await fetch(`${apiRoot.replace(/\/+$/, "")}/health`);
+      const data = await res.json();
       return { success: true, healthy: data.ok === true };
     } catch (error) {
       return { success: false, healthy: false, error: error.message };
     }
   }
-  /**
-   * Get service logs
-   */
-  async getLogs(service = "backend", lines = 100) {
-    try {
-      const { stdout } = await execAsync(
-        `docker compose -f "${this.composeFile}" logs --tail=${lines} ${service}`,
-        { cwd: ROOT_DIR }
-      );
-      return { success: true, logs: stdout };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
+  async getLogs(_service = "api", lines = 200) {
+    const take = Number(lines) > 0 ? Number(lines) : 200;
+    return { success: true, logs: this.lastLogs.slice(-take).join("") };
+  }
+  // Compatibility shims (legacy IPC calls)
+  async checkDocker() {
+    return { installed: false, running: false, error: "Docker mode removed in sqlite-only branch" };
+  }
+  async startDevServer(opts = {}) {
+    return this.startServer(opts);
+  }
+  async stopDevServer() {
+    return this.stopServer();
+  }
+  async checkDevServerStatus() {
+    const running = !!(this.apiProcess && !this.apiProcess.killed);
+    return { success: true, running };
+  }
+  async startServices(opts = {}) {
+    return this.startServer(opts);
+  }
+  async stopServices() {
+    return this.stopServer();
   }
 }
 const __vite_import_meta_env__ = { "BASE_URL": "/", "DEV": true, "MODE": "development", "PROD": false, "SSR": false, "VITE_DEV_SERVER_URL": "http://localhost:5173/" };
@@ -271,15 +148,22 @@ function readApiBase() {
     return process.env.API_BASE_URL;
   }
   try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const stored = window.localStorage.getItem("apiBaseUrl");
+      if (stored) return stored;
+    }
+  } catch (e) {
+  }
+  try {
     if (typeof import.meta !== "undefined" && __vite_import_meta_env__ && void 0) ;
   } catch (e) {
   }
   return DEFAULT_API;
 }
-const API_BASE_URL = readApiBase();
 function getApiUrl(endpoint) {
+  const apiBaseUrl = readApiBase();
   const path2 = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
-  return `${API_BASE_URL}${path2}`;
+  return `${apiBaseUrl}${path2}`;
 }
 function getDefaultExportFromCjs(x) {
   return x && x.__esModule && Object.prototype.hasOwnProperty.call(x, "default") ? x["default"] : x;
@@ -11484,7 +11368,14 @@ var _eval = EvalError;
 var range = RangeError;
 var ref = ReferenceError;
 var syntax = SyntaxError;
-var type = TypeError;
+var type;
+var hasRequiredType;
+function requireType() {
+  if (hasRequiredType) return type;
+  hasRequiredType = 1;
+  type = TypeError;
+  return type;
+}
 var uri = URIError;
 var abs$1 = Math.abs;
 var floor$1 = Math.floor;
@@ -11730,7 +11621,7 @@ function requireCallBindApplyHelpers() {
   if (hasRequiredCallBindApplyHelpers) return callBindApplyHelpers;
   hasRequiredCallBindApplyHelpers = 1;
   var bind3 = functionBind;
-  var $TypeError2 = type;
+  var $TypeError2 = requireType();
   var $call2 = requireFunctionCall();
   var $actualApply = requireActualApply();
   callBindApplyHelpers = function callBindBasic(args) {
@@ -11803,7 +11694,7 @@ var $EvalError = _eval;
 var $RangeError = range;
 var $ReferenceError = ref;
 var $SyntaxError = syntax;
-var $TypeError$1 = type;
+var $TypeError$1 = requireType();
 var $URIError = uri;
 var abs = abs$1;
 var floor = floor$1;
@@ -12134,7 +12025,7 @@ var GetIntrinsic2 = getIntrinsic;
 var $defineProperty = GetIntrinsic2("%Object.defineProperty%", true);
 var hasToStringTag = requireShams()();
 var hasOwn$1 = hasown;
-var $TypeError = type;
+var $TypeError = requireType();
 var toStringTag = hasToStringTag ? Symbol.toStringTag : null;
 var esSetTostringtag = function setToStringTag(object, value) {
   var overrideIfSet = arguments.length > 2 && !!arguments[2] && arguments[2].force;
@@ -12167,7 +12058,7 @@ var path = path$1;
 var http = require$$3;
 var https = require$$4;
 var parseUrl = require$$5.parse;
-var fs = require$$6;
+var fs = fs$1;
 var Stream = stream.Stream;
 var crypto = require$$8;
 var mime = mimeTypes;
@@ -13518,7 +13409,7 @@ class UsersManager {
       const outputDir = app.getPath("downloads");
       const fileName = `users_${Date.now()}.csv`;
       const filePath = path$1.join(outputDir, fileName);
-      await fs$1.writeFile(filePath, csv, "utf8");
+      await fs$2.writeFile(filePath, csv, "utf8");
       return {
         success: response.ok,
         filePath,
@@ -15563,7 +15454,8 @@ class PurchaseManager {
       const response = await this.apiRequest(url, { method: "GET" }, token);
       return {
         success: response.ok === true,
-        stats: response.stats || {}
+        stats: response.stats || {},
+        period_summary: response.period_summary || null
       };
     } catch (error) {
       console.error("[PurchaseManager] getStats error:", error);
@@ -15711,7 +15603,8 @@ class SalesManager {
       success: response.ok === true,
       orders: response.orders || [],
       total: response.total || 0,
-      stats: response.stats || {}
+      stats: response.stats || {},
+      period_summary: response.period_summary || null
     };
   }
   async getOrderById(orderId, token) {
@@ -16223,6 +16116,191 @@ function FinancialIpcHandlers() {
   ipcMain.handle("financial:list-withhold-payables", async (_e, params) => financialManager.listWithholdPayables(params, getToken()));
   ipcMain.handle("financial:create-withhold-payable-settlement", async (_e, body) => financialManager.createWithholdPayableSettlement(body, getToken()));
 }
+class FiscalYearsManager {
+  async apiRequest(endpoint, options = {}, token) {
+    const url = getApiUrl(endpoint);
+    const headers = {
+      "Content-Type": "application/json",
+      ...options.headers
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers,
+      body: options.body
+    });
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      const text = await response.text();
+      throw new Error(`Invalid JSON: ${text}`);
+    }
+    if (!response.ok) {
+      const err = new Error(data.error || data.message || `HTTP ${response.status}`);
+      if (data.details) err.details = data.details;
+      throw err;
+    }
+    return data;
+  }
+  async create({ fiscal_year, start_date, end_date }, token) {
+    return this.apiRequest("/fiscal-years", {
+      method: "POST",
+      body: JSON.stringify({ fiscal_year, start_date, end_date })
+    }, token);
+  }
+  async list(token) {
+    return this.apiRequest("/fiscal-years", { method: "GET" }, token);
+  }
+  async getCurrent(token) {
+    return this.apiRequest("/fiscal-years/current", { method: "GET" }, token);
+  }
+  async closeYear(year, token) {
+    return this.apiRequest(`/fiscal-years/${year}/close`, {
+      method: "POST"
+    }, token);
+  }
+  async reopenYear(year, token) {
+    return this.apiRequest(`/fiscal-years/${year}/reopen`, {
+      method: "POST"
+    }, token);
+  }
+  async deleteYear(year, force = false, token) {
+    const url = force ? `/fiscal-years/${year}?force=true` : `/fiscal-years/${year}`;
+    return this.apiRequest(url, { method: "DELETE" }, token);
+  }
+  async getReport(year, token) {
+    return this.apiRequest(`/fiscal-years/${year}/report`, { method: "GET" }, token);
+  }
+}
+const fiscalYearsManager = new FiscalYearsManager();
+function FiscalYearsIpcHandlers() {
+  ipcMain.handle("fiscal-years:create", async (_e, payload) => fiscalYearsManager.create(payload, getToken()));
+  ipcMain.handle("fiscal-years:list", async () => fiscalYearsManager.list(getToken()));
+  ipcMain.handle("fiscal-years:get-current", async () => fiscalYearsManager.getCurrent(getToken()));
+  ipcMain.handle("fiscal-years:close-year", async (_e, year) => fiscalYearsManager.closeYear(year, getToken()));
+  ipcMain.handle("fiscal-years:reopen-year", async (_e, year) => fiscalYearsManager.reopenYear(year, getToken()));
+  ipcMain.handle("fiscal-years:delete-year", async (_e, year, force) => fiscalYearsManager.deleteYear(year, !!force, getToken()));
+  ipcMain.handle("fiscal-years:get-report", async (_e, year) => fiscalYearsManager.getReport(year, getToken()));
+}
+class ReportsManager {
+  async apiRequest(endpoint, options = {}, token) {
+    const url = getApiUrl(endpoint);
+    const headers = {
+      "Content-Type": "application/json",
+      ...options.headers
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers,
+      body: options.body
+    });
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      const text = await response.text();
+      throw new Error(`Invalid JSON: ${text}`);
+    }
+    if (!response.ok) {
+      const err = new Error(data.error || data.message || `HTTP ${response.status}`);
+      if (data.details) err.details = data.details;
+      throw err;
+    }
+    return data;
+  }
+  async getIncomeStatement({ date_from, date_to }, token) {
+    const q = new URLSearchParams({ date_from, date_to }).toString();
+    return this.apiRequest(`/reports/income-statement?${q}`, { method: "GET" }, token);
+  }
+  async getBalanceSheet({ as_of_date }, token) {
+    const q = new URLSearchParams({ as_of_date }).toString();
+    return this.apiRequest(`/reports/balance-sheet?${q}`, { method: "GET" }, token);
+  }
+  async getCashFlow({ date_from, date_to }, token) {
+    const q = new URLSearchParams({ date_from, date_to }).toString();
+    return this.apiRequest(`/reports/cash-flow?${q}`, { method: "GET" }, token);
+  }
+  async getStatementOfChangesInEquity({ date_from, date_to }, token) {
+    const q = new URLSearchParams({ date_from, date_to }).toString();
+    return this.apiRequest(`/reports/equity?${q}`, { method: "GET" }, token);
+  }
+}
+const reportsManager = new ReportsManager();
+function ReportsIpcHandlers() {
+  ipcMain.handle("reports:income-statement", async (_e, params) => reportsManager.getIncomeStatement(params, getToken()));
+  ipcMain.handle("reports:balance-sheet", async (_e, params) => reportsManager.getBalanceSheet(params, getToken()));
+  ipcMain.handle("reports:cash-flow", async (_e, params) => reportsManager.getCashFlow(params, getToken()));
+  ipcMain.handle("reports:equity", async (_e, params) => reportsManager.getStatementOfChangesInEquity(params, getToken()));
+}
+class LicenseManager {
+  async apiRequest(endpoint, options = {}) {
+    const url = getApiUrl(endpoint);
+    const headers = { "Content-Type": "application/json", ...options.headers || {} };
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers,
+      body: options.body
+    });
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (e) {
+      const text = await response.text();
+      throw new Error(`Invalid JSON from license API: ${text}`);
+    }
+    if (!response.ok) {
+      const err = new Error((data == null ? void 0 : data.error) || (data == null ? void 0 : data.message) || `HTTP ${response.status}`);
+      err.details = (data == null ? void 0 : data.details) || null;
+      throw err;
+    }
+    return data;
+  }
+  async getStatus(deviceFingerprint = null) {
+    const query = deviceFingerprint ? `?device_fingerprint=${encodeURIComponent(deviceFingerprint)}` : "";
+    try {
+      const data = await this.apiRequest(`/license/status${query}`, { method: "GET" });
+      return {
+        success: !!(data == null ? void 0 : data.ok),
+        valid: !!(data == null ? void 0 : data.valid),
+        reason: (data == null ? void 0 : data.reason) || null,
+        license: (data == null ? void 0 : data.license) || null
+      };
+    } catch (error) {
+      return { success: false, valid: false, reason: "api_unavailable", error: error.message };
+    }
+  }
+  async activate(payload) {
+    try {
+      const data = await this.apiRequest("/license/activate", {
+        method: "POST",
+        body: JSON.stringify(payload || {})
+      });
+      return {
+        success: !!(data == null ? void 0 : data.ok),
+        activated: !!(data == null ? void 0 : data.activated),
+        license: (data == null ? void 0 : data.license) || null
+      };
+    } catch (error) {
+      return {
+        success: false,
+        activated: false,
+        error: error.message,
+        details: error.details || null
+      };
+    }
+  }
+}
+const licenseManager$1 = new LicenseManager();
+function LicenseIpcHandlers() {
+  ipcMain.handle("license:get-status", async (_event, deviceFingerprint = null) => {
+    return licenseManager$1.getStatus(deviceFingerprint);
+  });
+  ipcMain.handle("license:activate", async (_event, payload) => {
+    return licenseManager$1.activate(payload);
+  });
+}
 createRequire(import.meta.url);
 const __dirname = path$2.dirname(fileURLToPath$1(import.meta.url));
 process.env.APP_ROOT = path$2.join(__dirname, "..");
@@ -16233,53 +16311,279 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path$2.join(process.env.APP_ROOT
 let win;
 const serverManager = new ServerManager();
 const usersManager = new UsersManager();
+const licenseManager = new LicenseManager();
+let runtimeConfig = null;
+const APP_NAME = "PharmaSuitLAN";
+const DB_FILE_NAME = "pharmasuit_lan.db";
+function getDefaultDbDirectory() {
+  if (process.platform === "win32") {
+    const programData = process.env.ProgramData || "C:\\ProgramData";
+    return path$2.join(programData, APP_NAME, "data");
+  }
+  if (process.platform === "darwin") {
+    return path$2.join(app.getPath("appData"), APP_NAME, "data");
+  }
+  return path$2.join(app.getPath("appData"), APP_NAME, "data");
+}
+function getRuntimeConfigPath() {
+  return path$2.join(app.getPath("userData"), "runtime-config.json");
+}
+function getDeviceFingerprint() {
+  const interfaces = os.networkInterfaces();
+  const macs = Object.values(interfaces).flat().filter((i) => i && !i.internal && i.mac && i.mac !== "00:00:00:00:00:00").map((i) => i.mac).sort().join("|");
+  const seed = [
+    os.hostname(),
+    os.platform(),
+    os.arch(),
+    os.release(),
+    macs
+  ].join("::");
+  return crypto$1.createHash("sha256").update(seed).digest("hex");
+}
+function normalizeServerUrl(url) {
+  if (!url) return null;
+  const trimmed = String(url).trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(trimmed)) return `http://${trimmed}`;
+  return trimmed;
+}
+function loadRuntimeConfig() {
+  try {
+    const cfgPath = getRuntimeConfigPath();
+    if (!fs$1.existsSync(cfgPath)) {
+      return { setupCompleted: false };
+    }
+    const parsed = JSON.parse(fs$1.readFileSync(cfgPath, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : { setupCompleted: false };
+  } catch (e) {
+    return { setupCompleted: false };
+  }
+}
+function saveRuntimeConfig(config) {
+  const cfgPath = getRuntimeConfigPath();
+  fs$1.mkdirSync(path$2.dirname(cfgPath), { recursive: true });
+  fs$1.writeFileSync(cfgPath, JSON.stringify(config, null, 2), "utf8");
+}
+function applyRuntimeConfig(config) {
+  var _a;
+  runtimeConfig = config;
+  if (config == null ? void 0 : config.apiBaseUrl) process.env.API_BASE_URL = config.apiBaseUrl;
+  if ((_a = config == null ? void 0 : config.server) == null ? void 0 : _a.dbFile) process.env.DB_FILE = config.server.dbFile;
+}
+function getApiRootForHealth() {
+  const apiBase = process.env.API_BASE_URL || "http://localhost:4000/api";
+  return apiBase.replace(/\/api\/?$/i, "");
+}
+async function waitForApiReady(apiRoot, timeoutMs = 15e3, intervalMs = 300) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const health = await serverManager.checkApiHealth(apiRoot);
+    if ((health == null ? void 0 : health.success) && (health == null ? void 0 : health.healthy)) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+async function resolveEffectiveConfig(initialConfig) {
+  var _a;
+  const loaded = initialConfig || loadRuntimeConfig();
+  if (!(loaded == null ? void 0 : loaded.setupCompleted) || (loaded == null ? void 0 : loaded.mode) !== "server") return loaded;
+  const dbFile = ((_a = loaded == null ? void 0 : loaded.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
+  const hasServerDb = !!(dbFile && fs$1.existsSync(dbFile));
+  if (!hasServerDb) return { ...loaded, setupCompleted: false };
+  const fingerprint = getDeviceFingerprint();
+  const status = await licenseManager.getStatus(fingerprint);
+  if (!(status == null ? void 0 : status.success) || !(status == null ? void 0 : status.valid)) {
+    return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status };
+  }
+  return { ...loaded, licenseStatus: status };
+}
 const iconPath = path$2.join(__dirname, "..", "public", "masatech-logo.png");
 const iconImage = nativeImage.createFromPath(iconPath);
-app.dock.setIcon(iconImage);
-app.dock.bounce();
-function createWindow() {
+if (process.platform === "darwin" && app.dock) {
+  app.dock.setIcon(iconImage);
+  app.dock.bounce();
+}
+function loadRenderer(targetWindow) {
+  targetWindow.webContents.on("did-finish-load", () => {
+    targetWindow == null ? void 0 : targetWindow.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
+  });
+  if (VITE_DEV_SERVER_URL) {
+    targetWindow.loadURL(VITE_DEV_SERVER_URL);
+  } else {
+    targetWindow.loadFile(path$2.join(RENDERER_DIST, "index.html"));
+  }
+}
+function createWizardWindow() {
+  const wizardWidth = 720;
+  const wizardHeight = 540;
   win = new BrowserWindow({
     icon: iconPath,
+    width: wizardWidth,
+    height: wizardHeight,
+    minWidth: wizardWidth,
+    minHeight: wizardHeight,
+    maxWidth: wizardWidth,
+    maxHeight: wizardHeight,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreen: false,
+    fullscreenable: false,
+    frame: false,
+    autoHideMenuBar: true,
+    thickFrame: false,
+    titleBarStyle: "hidden",
     webPreferences: {
       preload: path$2.join(__dirname, "preload.mjs")
     }
   });
-  win.webContents.on("did-finish-load", () => {
-    win == null ? void 0 : win.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
+  win.setMenuBarVisibility(false);
+  loadRenderer(win);
+}
+function createMainWindow() {
+  win = new BrowserWindow({
+    icon: iconPath,
+    width: 1200,
+    height: 820,
+    minWidth: 1e3,
+    minHeight: 700,
+    resizable: true,
+    maximizable: true,
+    minimizable: true,
+    fullscreen: false,
+    fullscreenable: true,
+    frame: true,
+    webPreferences: {
+      preload: path$2.join(__dirname, "preload.mjs")
+    }
   });
-  if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL);
-  } else {
-    win.loadFile(path$2.join(RENDERER_DIST, "index.html"));
-  }
-  win.maximize();
+  loadRenderer(win);
 }
 ipcMain.handle("server:check-docker", async () => {
   return await serverManager.checkDocker();
 });
 ipcMain.handle("server:start", async (event, mode = "docker") => {
-  if (mode === "dev") {
-    return await serverManager.startDevServer();
+  var _a, _b;
+  const cfg = runtimeConfig || loadRuntimeConfig();
+  if ((cfg == null ? void 0 : cfg.mode) === "client") {
+    return { success: false, error: "Client mode does not start local server" };
   }
-  return await serverManager.startServices();
+  const port = Number(((_a = cfg == null ? void 0 : cfg.server) == null ? void 0 : _a.port) || process.env.PORT || 4e3);
+  const dbFile = ((_b = cfg == null ? void 0 : cfg.server) == null ? void 0 : _b.dbFile) || process.env.DB_FILE;
+  return await serverManager.startServer({ port, dbFile, mode });
 });
 ipcMain.handle("server:stop", async (event, mode = "docker") => {
-  if (mode === "dev") {
-    return await serverManager.stopDevServer();
-  }
-  return await serverManager.stopServices();
+  return await serverManager.stopServer();
 });
 ipcMain.handle("server:status", async () => {
   return await serverManager.getServiceStatus();
 });
 ipcMain.handle("server:health", async () => {
-  return await serverManager.checkApiHealth();
+  return await serverManager.checkApiHealth(getApiRootForHealth());
 });
 ipcMain.handle("server:logs", async (event, service, lines) => {
   return await serverManager.getLogs(service, lines);
 });
 ipcMain.handle("server:check-dev-status", async () => {
   return await serverManager.checkDevServerStatus();
+});
+ipcMain.handle("setup:get-config", async () => {
+  const loaded = runtimeConfig || loadRuntimeConfig();
+  const defaultDir = getDefaultDbDirectory();
+  try {
+    fs$1.mkdirSync(defaultDir, { recursive: true });
+  } catch (_) {
+  }
+  const fingerprint = getDeviceFingerprint();
+  let effectiveConfig = loaded;
+  if ((loaded == null ? void 0 : loaded.setupCompleted) && (loaded == null ? void 0 : loaded.mode) === "server") {
+    const status = await licenseManager.getStatus(fingerprint);
+    if (!status.success || !status.valid) {
+      effectiveConfig = { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status };
+    } else {
+      effectiveConfig = { ...loaded, licenseStatus: status };
+    }
+  }
+  return {
+    success: true,
+    config: effectiveConfig,
+    defaults: {
+      mode: "server",
+      dbDirectory: defaultDir,
+      dbFileName: DB_FILE_NAME,
+      port: 4e3,
+      deviceFingerprint: fingerprint
+    }
+  };
+});
+ipcMain.handle("app:quit", async () => {
+  app.quit();
+  return { success: true };
+});
+ipcMain.handle("setup:save-config", async (_event, payload) => {
+  const mode = (payload == null ? void 0 : payload.mode) === "client" ? "client" : "server";
+  const base = { setupCompleted: true, mode };
+  if (mode === "server") {
+    const dbDirectory = path$2.resolve((payload == null ? void 0 : payload.dbDirectory) || getDefaultDbDirectory());
+    fs$1.mkdirSync(dbDirectory, { recursive: true });
+    const dbFile = path$2.join(dbDirectory, DB_FILE_NAME);
+    const port = Number((payload == null ? void 0 : payload.port) || 4e3);
+    const deviceFingerprint = getDeviceFingerprint();
+    const installationKey = String((payload == null ? void 0 : payload.installationKey) || "").trim();
+    const licenseKey = String((payload == null ? void 0 : payload.licenseKey) || "").trim();
+    const companyName = String((payload == null ? void 0 : payload.companyName) || "").trim();
+    const companyPhone = String((payload == null ? void 0 : payload.companyPhone) || "").trim();
+    const config2 = {
+      ...base,
+      server: { dbDirectory, dbFile, port },
+      apiBaseUrl: `http://localhost:${port}/api`
+    };
+    applyRuntimeConfig(config2);
+    const serverStart = await serverManager.startServer({ port, dbFile });
+    if (!(serverStart == null ? void 0 : serverStart.success)) {
+      return { success: false, error: (serverStart == null ? void 0 : serverStart.error) || "Failed to start server during setup" };
+    }
+    const apiReady = await waitForApiReady(`http://localhost:${port}`);
+    if (!apiReady) {
+      return { success: false, error: "Server started but API is not ready yet. Please retry in a moment." };
+    }
+    const currentStatus = await licenseManager.getStatus(deviceFingerprint);
+    if (!(currentStatus == null ? void 0 : currentStatus.valid)) {
+      if (!licenseKey || !companyName || !companyPhone) {
+        return { success: false, error: "License key, company name, and company phone are required for server setup" };
+      }
+      const activation = await licenseManager.activate({
+        installation_key: installationKey || null,
+        license_key: licenseKey,
+        device_fingerprint: deviceFingerprint,
+        company_name: companyName,
+        company_phone: companyPhone
+      });
+      if (!(activation == null ? void 0 : activation.success)) {
+        return { success: false, error: (activation == null ? void 0 : activation.error) || "License activation failed", details: (activation == null ? void 0 : activation.details) || null };
+      }
+    }
+    saveRuntimeConfig(config2);
+    applyRuntimeConfig(config2);
+    const previousWindow = win;
+    setTimeout(() => {
+      if (previousWindow && !previousWindow.isDestroyed()) {
+        previousWindow.destroy();
+      }
+      createMainWindow();
+    }, 80);
+    return { success: true, config: config2 };
+  }
+  const serverUrl = normalizeServerUrl(payload == null ? void 0 : payload.serverUrl);
+  if (!serverUrl) return { success: false, error: "Server URL is required in client mode" };
+  const config = {
+    ...base,
+    client: { serverUrl },
+    apiBaseUrl: `${serverUrl}/api`
+  };
+  saveRuntimeConfig(config);
+  applyRuntimeConfig(config);
+  await serverManager.stopServer();
+  return { success: true, config };
 });
 ipcMain.handle("auth:login", async (event, credentials) => {
   const result = await usersManager.authenticate(credentials);
@@ -16298,20 +16602,38 @@ SalesIpcHandlers();
 SettingsIpcHandlers();
 DashboardIpcHandlers();
 FinancialIpcHandlers();
+FiscalYearsIpcHandlers();
+ReportsIpcHandlers();
+LicenseIpcHandlers();
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
     win = null;
   }
 });
-app.on("activate", () => {
+app.on("activate", async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    const effectiveCfg = await resolveEffectiveConfig(runtimeConfig || loadRuntimeConfig());
+    applyRuntimeConfig(effectiveCfg);
+    if (effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) createMainWindow();
+    else createWizardWindow();
   }
 });
 app.on("before-quit", async () => {
 });
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  var _a, _b;
+  const cfg = loadRuntimeConfig();
+  const effectiveCfg = await resolveEffectiveConfig(cfg);
+  applyRuntimeConfig(effectiveCfg);
+  if ((effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) && (effectiveCfg == null ? void 0 : effectiveCfg.mode) === "server") {
+    const dbFile = ((_a = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
+    const port = Number(((_b = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _b.port) || 4e3);
+    await serverManager.startServer({ port, dbFile });
+  }
+  if (effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) createMainWindow();
+  else createWizardWindow();
+});
 export {
   MAIN_DIST,
   RENDERER_DIST,

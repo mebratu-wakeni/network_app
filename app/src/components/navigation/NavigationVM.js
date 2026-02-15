@@ -19,6 +19,7 @@ class NavigationVM extends ViewModel {
     super(stateManager);
     this.menuOptions = MENU;
     this.initializeState();
+    this.loadSetupConfig();
     // this.login(); // to test auth on app start
   }
 
@@ -29,6 +30,13 @@ class NavigationVM extends ViewModel {
     this.setState('pending-sales-open', null);
     // Cross-module: PayablesTab -> Purchase (View in Purchase / Make Payment)
     this.setState('pending-purchase-open', null);
+    // Cross-module: Dashboard -> Sales/Purchase History with date filter
+    this.setState('pending-sales-filter', null);
+    this.setState('pending-purchase-filter', null);
+    this.setState('setup-loading', true);
+    this.setState('setup-config', null);
+    this.setState('setup-defaults', null);
+    this.setState('setup-error', null);
 
     // Auth state
     this.setState('auth', {
@@ -115,6 +123,49 @@ class NavigationVM extends ViewModel {
       }
     } catch (e) { /* ignore */ }
     return false
+  }
+
+  async loadSetupConfig() {
+    this.updateState('setup-loading', true)
+    this.updateState('setup-error', null)
+    try {
+      const res = await window.ipcRenderer.invoke('setup:get-config')
+      if (res?.success) {
+        this.updateState('setup-config', res.config || null)
+        this.updateState('setup-defaults', res.defaults || null)
+        try {
+          if (res?.config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', res.config.apiBaseUrl)
+        } catch (_) {}
+      } else {
+        this.updateState('setup-error', res?.error || 'Failed to load setup')
+      }
+    } catch (e) {
+      this.updateState('setup-error', e.message || 'Failed to load setup')
+    } finally {
+      this.updateState('setup-loading', false)
+    }
+  }
+
+  async saveSetupConfig(payload) {
+    this.updateState('setup-loading', true)
+    this.updateState('setup-error', null)
+    try {
+      const res = await window.ipcRenderer.invoke('setup:save-config', payload)
+      if (!res?.success) {
+        this.updateState('setup-error', res?.error || 'Failed to save setup')
+        return false
+      }
+      this.updateState('setup-config', res.config || null)
+      try {
+        if (res.config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', res.config.apiBaseUrl)
+      } catch (_) {}
+      return true
+    } catch (e) {
+      this.updateState('setup-error', e.message || 'Failed to save setup')
+      return false
+    } finally {
+      this.updateState('setup-loading', false)
+    }
   }
 
 }

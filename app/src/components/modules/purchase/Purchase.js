@@ -33,6 +33,30 @@ export function PurchaseUI(props = {}) {
         mergedProps.setLocalState('isExpanded', true);
       }, 0);
     }
+
+    // Handle cross-module navigation: open Order History with date filter (from Dashboard)
+    const pendingFilter = navigationVM?.getState?.('pending-purchase-filter');
+    if (pendingFilter && mergedProps.viewModel.getActiveTab() !== 'order-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateTab('order-history');
+        mergedProps.viewModel.updateOrderTableConfig({
+          date_from: pendingFilter.date_from,
+          date_to: pendingFilter.date_to,
+          offset: 0
+        });
+        mergedProps.setLocalState('isExpanded', true);
+        if (navigationVM) navigationVM.updateState('pending-purchase-filter', null);
+      }, 0);
+    } else if (pendingFilter && mergedProps.viewModel.getActiveTab() === 'order-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateOrderTableConfig({
+          date_from: pendingFilter.date_from,
+          date_to: pendingFilter.date_to,
+          offset: 0
+        });
+        if (navigationVM) navigationVM.updateState('pending-purchase-filter', null);
+      }, 0);
+    }
     
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden'}, [
       CardHeader({ 

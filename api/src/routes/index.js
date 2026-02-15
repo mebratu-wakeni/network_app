@@ -11,6 +11,9 @@ import sales from '../modules/sales/sales.routes.js'
 import settings from '../modules/settings/settings.routes.js'
 import ledger from '../modules/ledger/ledger.routes.js'
 import financial from '../modules/financial/financial.routes.js'
+import fiscalYears from '../modules/fiscal-years/fiscal-years.routes.js'
+import reports from '../modules/reports/reports.routes.js'
+import license from '../modules/license/license.routes.js'
 
 const router = Router()
 
@@ -24,6 +27,7 @@ router.get('/db-health', async (_req, res, next) => {
 
 // Public auth routes
 router.use('/auth', auth)
+router.use('/license', license)
 
 // Protected routes
 router.use('/test-items', testItems)
@@ -37,6 +41,8 @@ router.use('/sales', sales)
 router.use('/settings', settings)
 router.use('/ledger', ledger)
 router.use('/financial', financial)
+router.use('/fiscal-years', fiscalYears)
+router.use('/reports', reports)
 
 export default router
 

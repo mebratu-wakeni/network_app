@@ -12,11 +12,12 @@
  */
 
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('sales_hold_orders', (t) => {
     t.bigIncrements('id').primary()
 
     // Full current-order state (restore from this only)
-    t.jsonb('snapshot').notNullable()
+    t.json('snapshot').notNullable()
 
     // Index columns for list/filter/sort (and join to customers for name)
     t.bigInteger('customer_id')
@@ -40,11 +41,13 @@ export const up = async (knex) => {
     t.index('payment_type', 'sales_hold_orders_payment_type_index')
   })
 
-  await knex.raw(`
-    ALTER TABLE sales_hold_orders
-    ADD CONSTRAINT sales_hold_orders_payment_type_check
-    CHECK (payment_type IN ('cash', 'credit', 'cheque'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE sales_hold_orders
+      ADD CONSTRAINT sales_hold_orders_payment_type_check
+      CHECK (payment_type IN ('cash', 'credit', 'cheque'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

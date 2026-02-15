@@ -33,6 +33,30 @@ export function SalesUI(props = {}) {
       }, 0)
     }
 
+    // Handle cross-module navigation: open Sales History with date filter (from Dashboard)
+    const pendingFilter = navigationVM?.getState?.('pending-sales-filter')
+    if (pendingFilter && mergedProps.viewModel.getActiveTab() !== 'sales-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateTab('sales-history')
+        mergedProps.viewModel.updateSalesOrderTableConfig({
+          date_from: pendingFilter.date_from,
+          date_to: pendingFilter.date_to,
+          offset: 0
+        })
+        mergedProps.setLocalState('isExpanded', true)
+        if (navigationVM) navigationVM.updateState('pending-sales-filter', null)
+      }, 0)
+    } else if (pendingFilter && mergedProps.viewModel.getActiveTab() === 'sales-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateSalesOrderTableConfig({
+          date_from: pendingFilter.date_from,
+          date_to: pendingFilter.date_to,
+          offset: 0
+        })
+        if (navigationVM) navigationVM.updateState('pending-sales-filter', null)
+      }, 0)
+    }
+
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden' }, [
       CardHeader({
         class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0'

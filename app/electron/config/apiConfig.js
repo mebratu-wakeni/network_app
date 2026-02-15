@@ -15,6 +15,16 @@ function readApiBase() {
     return process.env.API_BASE_URL;
   }
 
+  // Runtime override persisted by first-run setup (renderer).
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const stored = window.localStorage.getItem('apiBaseUrl');
+      if (stored) return stored;
+    }
+  } catch (e) {
+    // ignore localStorage access issues
+  }
+
   // Vite provides import.meta.env at build time (use VITE_ prefix)
   try {
     if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) {
@@ -27,18 +37,18 @@ function readApiBase() {
   return DEFAULT_API;
 }
 
-export const API_BASE_URL = readApiBase();
-
 // Helper to get full API endpoint URL (keeps existing behavior)
 export function getApiUrl(endpoint) {
+  const apiBaseUrl = readApiBase();
   const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  return `${API_BASE_URL}${path}`;
+  return `${apiBaseUrl}${path}`;
 }
 
 // Helpers for static assets served from the API root (e.g. /uploads/...)
 export function getApiRoot() {
+  const apiBaseUrl = readApiBase();
   // Remove a trailing '/api' if present so /uploads resolves correctly
-  return API_BASE_URL.replace(/\/api\/?$/i, '');
+  return apiBaseUrl.replace(/\/api\/?$/i, '');
 }
 
 export function getApiAsset(assetPath) {

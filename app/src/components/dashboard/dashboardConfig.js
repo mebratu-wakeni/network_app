@@ -1,75 +1,75 @@
 /**
- * Dashboard configuration: single source of truth for account codes, labels, icons,
- * module cards, quick actions, and chart placeholders. Used by DashboardUI for
- * config-driven rendering.
+ * Dashboard configuration: operational metrics, module cards, quick actions,
+ * and chart placeholders. Used by DashboardUI for config-driven rendering.
  */
-
-/** Ledger account codes shown in financial overview (order preserved). */
-export const LEDGER_ACCOUNT_CODES = ['5100', '1300', '6100', '3100', '1200'];
-
-/** Metadata per ledger account: abbr (card header), fullName (subtitle), icon, iconColor. */
-export const LEDGER_ACCOUNT_META = {
-  '5100': { abbr: 'SR', fullName: 'Sales Revenue', icon: 'trending-up-outline', iconColor: 'bg-emerald-50 text-emerald-600' },
-  '1300': { abbr: 'Inv', fullName: 'Inventory', icon: 'layers-outline', iconColor: 'bg-violet-50 text-violet-600' },
-  '6100': { abbr: 'COGS', fullName: 'Cost of Goods Sold', icon: 'receipt-outline', iconColor: 'bg-orange-50 text-orange-600' },
-  '3100': { abbr: 'AP', fullName: 'Accounts Payable', icon: 'card-outline', iconColor: 'bg-rose-50 text-rose-600' },
-  '1200': { abbr: 'AR', fullName: 'Accounts Receivable', icon: 'wallet-outline', iconColor: 'bg-blue-50 text-blue-600' }
-};
-
-/** Working capital = current assets (cash, stock, receivables) − current liabilities (payables, etc.). */
-export const WORKING_CAPITAL_META = {
-  abbr: 'WC',
-  fullName: 'Working capital',
-  icon: 'briefcase-outline',
-  iconColor: 'bg-teal-50 text-teal-600',
-  primaryLabel: 'Current assets − Current liabilities'
-};
-
-/** Gross profit = Revenue − COGS (income statement). */
-export const GROSS_PROFIT_META = {
-  abbr: 'GP',
-  fullName: 'Gross profit',
-  icon: 'calculator-outline',
-  iconColor: 'bg-indigo-50 text-indigo-600',
-  primaryLabel: 'Revenue − COGS'
-};
-
-/** Current asset account codes (ledger balance positive = debit balance). */
-export const CURRENT_ASSET_CODES = ['1100', '1200', '1250', '1300', '1400'];
-
-/** Current liability account codes (ledger balance negative = credit balance). */
-export const CURRENT_LIABILITY_CODES = ['3100', '3200', '3210', '3300'];
 
 /** Section titles. */
 export const SECTION_TITLES = {
-  financial: 'Financial overview (from ledger)',
+  today: "Today's activity",
+  week: 'This week',
+  holds: 'Hold orders',
   modules: 'Module overview',
   quickActions: 'Quick actions',
   charts: 'Charts & trends'
 };
 
-/** Module cards: id, title, icon, iconColor, primaryLabel, secondaryLabel, viewLabel, route. */
-export const MODULE_CARDS = [
+/** Today's activity cards: id, title, icon, iconColor, primaryLabel, route. */
+export const TODAY_CARDS = [
   {
-    id: 'sales',
-    title: 'Sales',
+    id: 'sales-today',
+    title: "Today's sales",
     icon: 'pricetag-outline',
     iconColor: 'bg-emerald-50 text-emerald-600',
-    primaryLabel: 'Total sales value',
-    secondaryLabel: 'Outstanding',
-    viewLabel: 'View Sales',
+    primaryLabel: 'Value',
+    secondaryLabel: 'Orders',
     route: '/sales'
   },
   {
-    id: 'purchase',
-    title: 'Purchase',
+    id: 'purchase-today',
+    title: "Today's purchases",
     icon: 'cart-outline',
     iconColor: 'bg-blue-50 text-blue-600',
-    primaryLabel: 'Total orders value',
-    secondaryLabel: 'Outstanding',
-    viewLabel: 'View Purchase',
+    primaryLabel: 'Value',
+    secondaryLabel: 'Orders',
     route: '/purchase'
+  }
+];
+
+/** This week cards. */
+export const WEEK_CARDS = [
+  {
+    id: 'sales-week',
+    title: "This week's sales",
+    icon: 'trending-up-outline',
+    iconColor: 'bg-teal-50 text-teal-600',
+    primaryLabel: 'Value',
+    secondaryLabel: 'Orders',
+    route: '/sales'
   },
+  {
+    id: 'purchase-week',
+    title: "This week's purchases",
+    icon: 'cart-outline',
+    iconColor: 'bg-blue-50 text-blue-600',
+    primaryLabel: 'Value',
+    secondaryLabel: 'Orders',
+    route: '/purchase'
+  }
+];
+
+/** Hold orders card (sales + purchase counts). */
+export const HOLDS_CARD = {
+  id: 'holds',
+  title: 'Hold orders',
+  icon: 'hourglass-outline',
+  iconColor: 'bg-amber-50 text-amber-600',
+  primaryLabel: 'Sales',
+  secondaryLabel: 'Purchases',
+  route: null
+};
+
+/** Module cards: id, title, icon, iconColor, primaryLabel, secondaryLabel, viewLabel, route. */
+export const MODULE_CARDS = [
   {
     id: 'inventory',
     title: 'Inventory',
@@ -84,11 +84,31 @@ export const MODULE_CARDS = [
     id: 'customers',
     title: 'Customers',
     icon: 'business-outline',
-    iconColor: 'bg-amber-50 text-amber-600',
+    iconColor: 'bg-indigo-50 text-indigo-600',
     primaryLabel: 'Total customers',
     secondaryLabel: null,
     viewLabel: 'View Customers',
     route: '/customers'
+  },
+  {
+    id: 'outstanding-sales',
+    title: 'Outstanding sales',
+    icon: 'wallet-outline',
+    iconColor: 'bg-rose-50 text-rose-600',
+    primaryLabel: 'Amount due',
+    secondaryLabel: 'Orders',
+    viewLabel: 'View Sales',
+    route: '/sales'
+  },
+  {
+    id: 'outstanding-purchase',
+    title: 'Outstanding purchases',
+    icon: 'card-outline',
+    iconColor: 'bg-orange-50 text-orange-600',
+    primaryLabel: 'Amount owing',
+    secondaryLabel: 'Orders',
+    viewLabel: 'View Purchase',
+    route: '/purchase'
   }
 ];
 

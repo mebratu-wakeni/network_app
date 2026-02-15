@@ -2,6 +2,27 @@
  * Date utility functions
  */
 
+/** Today in YYYY-MM-DD (local timezone). */
+export const today = () => {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+};
+
+/** Start of current week (Sunday) and end (Saturday) in YYYY-MM-DD. */
+export const weekBounds = () => {
+  const d = new Date();
+  const day = d.getDay();
+  const diffToSunday = d.getDate() - day;
+  const start = new Date(d);
+  start.setDate(diffToSunday);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return {
+    from: start.toISOString().slice(0, 10),
+    to: end.toISOString().slice(0, 10)
+  };
+};
+
 /**
  * Normalize a date value to YYYY-MM-DD for use in <input type="date">.
  * @param {string|Date|null|undefined} date - Date string (any format), Date object, null, or undefined

@@ -1,17 +1,23 @@
 const { ViewModel, SharedStateManager } = Liteframe;
+import { today, weekBounds } from '../utils/DateUtils.js';
 
 const EMPTY_DASHBOARD = {
-  ledger: null,
-  sales: null,
-  purchase: null,
+  salesToday: null,
+  salesWeek: null,
+  purchaseToday: null,
+  purchaseWeek: null,
+  holdOrdersSales: null,
+  holdOrdersPurchase: null,
   inventory: null,
-  customers: null
+  customers: null,
+  outstandingSales: null,
+  outstandingPurchase: null
 };
 
 /**
- * Dashboard VM: loads aggregate stats for Sales, Purchase, Inventory, Customers,
- * and ledger balances. Uses Promise.allSettled so one failure does not block others.
- * State: loading, error (first message if any), dashboard (normalized per-segment data).
+ * Dashboard VM: loads operational metrics (today's sales/week sales, today's purchases,
+ * hold orders, inventory alerts, outstanding, customers). No ledger balances.
+ * Uses Promise.allSettled so one failure does not block others.
  */
 export class DashboardVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
@@ -30,8 +36,7 @@ export class DashboardVM extends ViewModel {
   }
 
   /**
-   * Load all dashboard data via IPC in parallel. Normalizes each segment so UI
-   * always receives a consistent shape; missing or failed segments stay null.
+   * Load all dashboard data via IPC in parallel.
    */
   async loadDashboard() {
     this.updateState('loading', true);
@@ -39,44 +44,115 @@ export class DashboardVM extends ViewModel {
 
     const dashboard = { ...EMPTY_DASHBOARD };
 
-    const [ledgerRes, salesRes, purchaseRes, inventoryRes, customersRes] = await Promise.allSettled([
-      window.ipcRenderer?.invoke?.('dashboard:get-ledger-balances') ?? Promise.resolve(null),
-      window.ipcRenderer?.invoke?.('sales:get-orders', { limit: 1, offset: 0 }) ?? Promise.resolve(null),
-      window.ipcRenderer?.invoke?.('purchase:get-stats', {}) ?? Promise.resolve(null),
+    const t = today();
+    const { from: weekFrom, to: weekTo } = weekBounds();
+
+    const [
+      salesTodayRes,
+      salesWeekRes,
+      purchaseTodayRes,
+      purchaseWeekRes,
+      holdSalesRes,
+      holdPurchaseRes,
+      inventoryRes,
+      customersRes,
+      salesOutstandingRes,
+      purchaseOutstandingRes
+    ] = await Promise.allSettled([
+      window.ipcRenderer?.invoke?.('sales:get-orders', {
+        limit: 1,
+        offset: 0,
+        date_from: t,
+        date_to: t
+      }) ?? Promise.resolve(null),
+      window.ipcRenderer?.invoke?.('sales:get-orders', {
+        limit: 1,
+        offset: 0,
+        date_from: weekFrom,
+        date_to: weekTo
+      }) ?? Promise.resolve(null),
+      window.ipcRenderer?.invoke?.('purchase:get-stats', {
+        date_from: t,
+        date_to: t
+      }) ?? Promise.resolve(null),
+      window.ipcRenderer?.invoke?.('purchase:get-stats', {
+        date_from: weekFrom,
+        date_to: weekTo
+      }) ?? Promise.resolve(null),
+      window.ipcRenderer?.invoke?.('sales:get-hold-orders', { limit: 1, offset: 0 }) ?? Promise.resolve(null),
+      window.ipcRenderer?.invoke?.('purchase:get-hold-orders', { limit: 1, offset: 0 }) ?? Promise.resolve(null),
       window.ipcRenderer?.invoke?.('inventory:get-stock', { limit: 1, offset: 0 }) ?? Promise.resolve(null),
-      window.ipcRenderer?.invoke?.('customers:get-customers', { limit: 1, offset: 0 }) ?? Promise.resolve(null)
+      window.ipcRenderer?.invoke?.('customers:get-customers', { limit: 1, offset: 0 }) ?? Promise.resolve(null),
+      window.ipcRenderer?.invoke?.('sales:get-orders', {
+        limit: 1,
+        offset: 0,
+        has_outstanding_balance: true
+      }) ?? Promise.resolve(null),
+      window.ipcRenderer?.invoke?.('purchase:get-orders', {
+        limit: 1,
+        offset: 0,
+        has_outstanding_balance: true
+      }) ?? Promise.resolve(null)
     ]);
 
     const errors = [];
 
-    if (ledgerRes.status === 'fulfilled' && ledgerRes.value != null) {
-      dashboard.ledger = ledgerRes.value.balances ?? {};
-    } else if (ledgerRes.status === 'rejected') {
-      errors.push(ledgerRes.reason?.message || 'Ledger');
+    if (salesTodayRes.status === 'fulfilled' && salesTodayRes.value?.period_summary) {
+      dashboard.salesToday = salesTodayRes.value.period_summary;
+    } else if (salesTodayRes.status === 'fulfilled' && salesTodayRes.value) {
+      dashboard.salesToday = {
+        count: salesTodayRes.value.total ?? 0,
+        value: 0
+      };
+    } else if (salesTodayRes.status === 'rejected') {
+      errors.push(salesTodayRes.reason?.message || 'Sales today');
     }
 
-    if (salesRes.status === 'fulfilled' && salesRes.value?.stats) {
-      const s = salesRes.value.stats;
-      dashboard.sales = {
-        totalOrders: (s.all?.count ?? 0) + (s.total_orders?.count ?? 0),
-        totalValue: s.all?.value ?? s.total_orders?.value ?? 0,
-        outstanding: s.outstanding?.value ?? 0,
-        outstandingCount: s.outstanding?.count ?? 0
+    if (salesWeekRes.status === 'fulfilled' && salesWeekRes.value?.period_summary) {
+      dashboard.salesWeek = salesWeekRes.value.period_summary;
+    } else if (salesWeekRes.status === 'fulfilled' && salesWeekRes.value) {
+      dashboard.salesWeek = {
+        count: salesWeekRes.value.total ?? 0,
+        value: 0
       };
-    } else if (salesRes.status === 'rejected') {
-      errors.push(salesRes.reason?.message || 'Sales');
+    } else if (salesWeekRes.status === 'rejected') {
+      errors.push(salesWeekRes.reason?.message || 'Sales week');
     }
 
-    if (purchaseRes.status === 'fulfilled' && purchaseRes.value?.stats) {
-      const p = purchaseRes.value.stats;
-      dashboard.purchase = {
-        totalOrders: p.total_orders?.count ?? 0,
-        totalValue: p.total_orders?.value ?? 0,
-        outstanding: p.outstanding_balance?.value ?? 0,
-        outstandingCount: p.outstanding_balance?.count ?? 0
+    if (purchaseTodayRes.status === 'fulfilled' && purchaseTodayRes.value?.period_summary) {
+      dashboard.purchaseToday = purchaseTodayRes.value.period_summary;
+    } else if (purchaseTodayRes.status === 'fulfilled' && purchaseTodayRes.value?.stats) {
+      const p = purchaseTodayRes.value.stats;
+      dashboard.purchaseToday = {
+        count: p.total_orders?.count ?? 0,
+        value: 0
       };
-    } else if (purchaseRes.status === 'rejected') {
-      errors.push(purchaseRes.reason?.message || 'Purchase');
+    } else if (purchaseTodayRes.status === 'rejected') {
+      errors.push(purchaseTodayRes.reason?.message || 'Purchase today');
+    }
+
+    if (purchaseWeekRes.status === 'fulfilled' && purchaseWeekRes.value?.period_summary) {
+      dashboard.purchaseWeek = purchaseWeekRes.value.period_summary;
+    } else if (purchaseWeekRes.status === 'fulfilled' && purchaseWeekRes.value?.stats) {
+      const p = purchaseWeekRes.value.stats;
+      dashboard.purchaseWeek = {
+        count: p.total_orders?.count ?? 0,
+        value: 0
+      };
+    } else if (purchaseWeekRes.status === 'rejected') {
+      errors.push(purchaseWeekRes.reason?.message || 'Purchase week');
+    }
+
+    if (holdSalesRes.status === 'fulfilled' && holdSalesRes.value != null) {
+      dashboard.holdOrdersSales = holdSalesRes.value.total ?? 0;
+    } else if (holdSalesRes.status === 'rejected') {
+      errors.push(holdSalesRes.reason?.message || 'Hold sales');
+    }
+
+    if (holdPurchaseRes.status === 'fulfilled' && holdPurchaseRes.value != null) {
+      dashboard.holdOrdersPurchase = holdPurchaseRes.value.total ?? 0;
+    } else if (holdPurchaseRes.status === 'rejected') {
+      errors.push(holdPurchaseRes.reason?.message || 'Hold purchase');
     }
 
     if (inventoryRes.status === 'fulfilled' && inventoryRes.value != null) {
@@ -95,6 +171,26 @@ export class DashboardVM extends ViewModel {
       dashboard.customers = { total: customersRes.value.total ?? 0 };
     } else if (customersRes.status === 'rejected') {
       errors.push(customersRes.reason?.message || 'Customers');
+    }
+
+    if (salesOutstandingRes.status === 'fulfilled' && salesOutstandingRes.value?.stats) {
+      const s = salesOutstandingRes.value.stats;
+      dashboard.outstandingSales = {
+        count: s.outstanding?.count ?? 0,
+        value: s.outstanding?.value ?? 0
+      };
+    } else if (salesOutstandingRes.status === 'rejected') {
+      errors.push(salesOutstandingRes.reason?.message || 'Outstanding sales');
+    }
+
+    if (purchaseOutstandingRes.status === 'fulfilled' && purchaseOutstandingRes.value?.stats) {
+      const p = purchaseOutstandingRes.value.stats;
+      dashboard.outstandingPurchase = {
+        count: p.outstanding_balance?.count ?? 0,
+        value: p.outstanding_balance?.value ?? 0
+      };
+    } else if (purchaseOutstandingRes.status === 'rejected') {
+      errors.push(purchaseOutstandingRes.reason?.message || 'Outstanding purchase');
     }
 
     if (errors.length > 0) {

@@ -144,8 +144,8 @@ export class PurchaseRepository {
       const term = `%${search}%`
       q.where(builder => {
         builder
-          .whereILike('name', term)
-          .orWhereILike('product_code', term)
+          .whereRaw('LOWER(name) LIKE ?', [term.toLowerCase()])
+          .orWhereRaw('LOWER(product_code) LIKE ?', [term.toLowerCase()])
       })
     }
 
@@ -164,7 +164,7 @@ export class PurchaseRepository {
     if (search) {
       const term = `%${search}%`
       q.andWhere(builder => {
-        builder.whereILike('name', term)
+        builder.whereRaw('LOWER(name) LIKE ?', [term.toLowerCase()])
       })
     }
 
@@ -200,21 +200,21 @@ export class PurchaseRepository {
         receiptSnapshot // { snapshot_data, order_meta, order_items, order_payment }
       } = payload
 
-      // 0) Cash balance validation: prevent negative cash for cash purchases
-      if (order.payment_mode === 'cash') {
-        const netAmount = Number(order.total_amount || 0) - Number(order.withhold_amount || 0)
-        if (netAmount > 0) {
-          const hasLedger = await trx.schema.hasTable('account_ledger')
-          if (hasLedger) {
-            const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
-            const cashBalance = Number(balances['1100'] ?? 0)
-            if (cashBalance < netAmount) {
-              const err = new Error(
-                `Insufficient cash balance. Current cash: ${cashBalance.toFixed(2)}. Required: ${netAmount.toFixed(2)}.`
-              )
-              err.status = 400
-              throw err
-            }
+      // 0) Cash balance validation: prevent negative cash for cash/cheque purchases
+      const netAmount = Number(order.total_amount || 0) - Number(order.withhold_amount || 0)
+      const chequeAmount = Number(initialPayment?.amount || 0)
+      const cashRequired = order.payment_mode === 'cash' ? netAmount : order.payment_mode === 'cheque' ? chequeAmount : 0
+      if (cashRequired > 0) {
+        const hasLedger = await trx.schema.hasTable('account_ledger')
+        if (hasLedger) {
+          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+          const cashBalance = Number(balances['1100'] ?? 0)
+          if (cashBalance < cashRequired) {
+            const err = new Error(
+              `Insufficient cash balance. Current cash: ${cashBalance.toFixed(2)}. Required: ${cashRequired.toFixed(2)}.`
+            )
+            err.status = 400
+            throw err
           }
         }
       }
@@ -569,8 +569,8 @@ export class PurchaseRepository {
       const term = `%${search}%`
       base.andWhere(builder => {
         builder
-          .whereILike('po.receipt_no', term)
-          .orWhereILike('c.name', term)
+          .whereRaw('LOWER(po.receipt_no) LIKE ?', [term.toLowerCase()])
+          .orWhereRaw('LOWER(c.name) LIKE ?', [term.toLowerCase()])
       })
     }
 
@@ -607,13 +607,36 @@ export class PurchaseRepository {
     const totalResult = await base.clone().clearSelect().clearOrder().countDistinct({ count: 'po.id' }).first()
     const total = Number(totalResult?.count || 0)
 
+    let periodSummary = null
+    if (date_from && date_to) {
+      const periodBase = this.knex('purchase_orders as po')
+        .leftJoin(paymentsSubquery, 'po.id', 'pp.purchase_order_id')
+        .where('po.status', 'completed')
+        .where('po.order_date', '>=', date_from)
+        .where('po.order_date', '<=', date_to)
+      const periodRow = await periodBase
+        .select(this.knex.raw('COUNT(po.id) as count, COALESCE(SUM(coalesce(po.total_amount,0) - coalesce(po.withhold_amount,0)), 0) as value'))
+        .first()
+      periodSummary = {
+        count: Number(periodRow?.count ?? 0),
+        value: parseFloat(periodRow?.value ?? 0)
+      }
+    }
+
     // Sorting & pagination
     const allowedSort = ['order_date', 'id', 'receipt_no', 'net_amount', 'supplier_name']
     const sortColumn = allowedSort.includes(sort_by) ? sort_by : 'order_date'
     const sortDir = order_by === 'asc' ? 'asc' : 'desc'
+    const sortColumnMap = {
+      order_date: 'po.order_date',
+      id: 'po.id',
+      receipt_no: 'po.receipt_no',
+      supplier_name: 'c.name',
+      net_amount: this.knex.raw('(coalesce(po.total_amount,0) - coalesce(po.withhold_amount,0))')
+    }
 
     const orders = await base
-      .orderBy(sortColumn, sortDir)
+      .orderBy(sortColumnMap[sortColumn] || 'po.order_date', sortDir)
       .limit(limit)
       .offset(offset)
 
@@ -677,7 +700,7 @@ export class PurchaseRepository {
       }
     }
 
-    return { orders, total, stats }
+    return { orders, total, stats, period_summary: periodSummary }
   }
 
   /**
@@ -1100,8 +1123,8 @@ export class PurchaseRepository {
       const term = `%${search}%`
       q.andWhere(builder => {
         builder
-          .whereILike('c.name', term)
-          .orWhereILike('h.invoice_no', term)
+          .whereRaw('LOWER(c.name) LIKE ?', [term.toLowerCase()])
+          .orWhereRaw('LOWER(h.invoice_no) LIKE ?', [term.toLowerCase()])
       })
     }
 
@@ -1110,6 +1133,14 @@ export class PurchaseRepository {
 
     const sortCol = sort_by || 'created_at'
     const sortDir = order_by === 'asc' ? 'asc' : 'desc'
+    const holdSortMap = {
+      id: 'h.id',
+      created_at: 'h.created_at',
+      order_date: 'h.order_date',
+      net_amount: 'h.total_amount',
+      supplier_name: 'c.name'
+    }
+    const holdSortColumn = holdSortMap[sortCol] || 'h.created_at'
 
     const hold_orders = await q
       .select(
@@ -1120,7 +1151,7 @@ export class PurchaseRepository {
         'h.items',
         'h.created_at'
       )
-      .orderBy(sortCol, sortDir)
+      .orderBy(holdSortColumn, sortDir)
       .limit(limit)
       .offset(offset)
 
@@ -1273,7 +1304,7 @@ export class PurchaseRepository {
     if (search) {
       const term = `%${search}%`
       q.andWhere(builder => {
-        builder.whereILike('r.receipt_no', term)
+        builder.whereRaw('LOWER(r.receipt_no) LIKE ?', [term.toLowerCase()])
       })
     }
 

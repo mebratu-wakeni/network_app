@@ -14,8 +14,9 @@ export class InventoriesRepository {
    * Get the last balance for a product from bin cards
    * Returns the most recent balance for the product, or 0 if no transactions exist
    */
-  async getLastProductBalance(productId) {
-    const lastTransaction = await this.knex('bin_cards')
+  async getLastProductBalance(productId, trx = null) {
+    const db = trx || this.knex
+    const lastTransaction = await db('bin_cards')
       .where({ product_id: productId })
       .orderBy('transaction_date', 'desc')
       .orderBy('id', 'desc')
@@ -152,8 +153,9 @@ export class InventoriesRepository {
    * Find existing inventory record by product and variation details
    * Checks for existing record with same product_id, batch_no, expiry_date, purchase_price
    */
-  async findExistingInventory(productId, batchNo, expiryDate, purchasePrice) {
-    let query = this.knex('inventories')
+  async findExistingInventory(productId, batchNo, expiryDate, purchasePrice, trx = null) {
+    const db = trx || this.knex
+    let query = db('inventories')
       .where({ product_id: productId })
       .where({ purchase_price: purchasePrice })
 
@@ -177,7 +179,8 @@ export class InventoriesRepository {
    * Extracts the numeric part from inventory_code pattern 'I###XXXX'
    * where ### is the variation number and XXXX is the 4-digit product code
    */
-  async getMaxVariationNumber(productCode) {
+  async getMaxVariationNumber(productCode, trx = null) {
+    const db = trx || this.knex
     // Extract 4 digits from product code (e.g., 'PRD0011' -> '0011')
     const productCodeDigits = this.extractProductCodeDigits(productCode)
     if (!productCodeDigits) {
@@ -185,7 +188,7 @@ export class InventoriesRepository {
     }
 
     // Find all inventory codes for this product that match pattern 'I###XXXX'
-    const inventories = await this.knex('inventories')
+    const inventories = await db('inventories')
       .join('products', 'inventories.product_id', 'products.id')
       .where('products.product_code', productCode)
       .where('inventories.inventory_code', 'like', `I%${productCodeDigits}`)
@@ -234,13 +237,13 @@ export class InventoriesRepository {
    * Generate inventory code for a product variation
    * Format: 'I###XXXX' where ### is variation number (001, 002, etc.) and XXXX is 4-digit product code
    */
-  async generateInventoryCode(productCode) {
+  async generateInventoryCode(productCode, trx = null) {
     const productCodeDigits = this.extractProductCodeDigits(productCode)
     if (!productCodeDigits) {
       throw new Error(`Invalid product code format: ${productCode}`)
     }
 
-    const maxVariation = await this.getMaxVariationNumber(productCode)
+    const maxVariation = await this.getMaxVariationNumber(productCode, trx)
     const nextVariation = maxVariation + 1
     
     // Format variation number as 3-digit string (001, 002, ..., 999)
@@ -332,7 +335,8 @@ export class InventoriesRepository {
             product.id,
             item.batch_number || null,
             item.expiry_date || null,
-            parseFloat(item.unit_cost)
+            parseFloat(item.unit_cost),
+            trx
           )
 
           let inventoryCode
@@ -354,7 +358,7 @@ export class InventoriesRepository {
               })
           } else {
             // Generate new inventory code
-            inventoryCode = await this.generateInventoryCode(product.product_code)
+            inventoryCode = await this.generateInventoryCode(product.product_code, trx)
             
             // Insert new inventory record
             const [inserted] = await trx('inventories')
@@ -379,7 +383,7 @@ export class InventoriesRepository {
           }
 
           // Get opening balance for bin card transaction
-          const openingBalance = await this.getLastProductBalance(product.id)
+          const openingBalance = await this.getLastProductBalance(product.id, trx)
 
           // Create bin card transaction for this import
           await this.createBinCardTransaction({
@@ -998,7 +1002,7 @@ export class InventoriesRepository {
           this.whereNotNull('inventories.expiry_date')
             .where('inventories.expiry_date', '>=', todayStr)
             .whereRaw(
-              `inventories.expiry_date <= (?::date + (COALESCE(products.expiry_threshold, ?) || ' days')::interval)`,
+              `DATE(inventories.expiry_date) <= DATE(?, '+' || COALESCE(products.expiry_threshold, ?) || ' days')`,
               [todayStr, InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD]
             )
         } else if (filter === 'high-value') {

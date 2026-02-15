@@ -65,7 +65,8 @@ class SalesManager {
       success: response.ok === true,
       orders: response.orders || [],
       total: response.total || 0,
-      stats: response.stats || {}
+      stats: response.stats || {},
+      period_summary: response.period_summary || null
     }
   }
 

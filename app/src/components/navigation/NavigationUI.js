@@ -38,7 +38,7 @@ export default function  NavigationUI(props) {
       if (option.route === '/server') {
         return ServerManagerUI();
       }
-      if (option.route === '/') return DashboardUI({ router });
+      if (option.route === '/') return DashboardUI({ router, navigationVM: props.viewModel });
       if (option.route === '/inventory') return InventoryUI();
       if (option.route === '/purchase') return PurchaseUI({ router, navigationVM: props.viewModel });
       if (option.route === '/sales') return SalesUI({ router, navigationVM: props.viewModel });

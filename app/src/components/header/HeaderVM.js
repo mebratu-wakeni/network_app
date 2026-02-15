@@ -5,6 +5,7 @@
 const { ViewModel, SharedStateManager } = Liteframe;
 import { navigationVM } from '../navigation/NavigationVM.js';
 import { HEALTH_CHECK_INTERVAL } from './headerConfig.js';
+import { getApiUrl } from '../../../electron/config/apiConfig.js';
 
 export default class HeaderVM extends ViewModel {
   constructor(stateManager = new SharedStateManager()) {
@@ -95,7 +96,7 @@ export default class HeaderVM extends ViewModel {
    */
   async checkDbHealth() {
     try {
-      const dbHealthResponse = await fetch('http://localhost:4000/api/db-health');
+      const dbHealthResponse = await fetch(getApiUrl('/db-health'));
       if (dbHealthResponse.ok) {
         const dbHealth = await dbHealthResponse.json();
         this.updateState('dbHealth', { healthy: dbHealth.ok === true });

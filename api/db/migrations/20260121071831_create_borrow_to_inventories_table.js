@@ -1,4 +1,5 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('borrow_to_inventories', (t) => {
     t.bigIncrements('id').primary()
     
@@ -47,12 +48,13 @@ export const up = async (knex) => {
     t.index('lent_date', 'borrow_to_inventories_lent_date_index')
   })
   
-  // Add CHECK constraint for status
-  await knex.raw(`
-    ALTER TABLE borrow_to_inventories 
-    ADD CONSTRAINT check_borrow_to_status 
-    CHECK (status IN ('active', 'returned', 'partially_returned'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE borrow_to_inventories 
+      ADD CONSTRAINT check_borrow_to_status 
+      CHECK (status IN ('active', 'returned', 'partially_returned'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

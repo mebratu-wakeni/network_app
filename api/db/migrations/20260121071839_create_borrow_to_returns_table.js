@@ -1,4 +1,5 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('borrow_to_returns', (t) => {
     t.bigIncrements('id').primary()
     
@@ -36,12 +37,13 @@ export const up = async (knex) => {
     t.index('returned_date', 'borrow_to_returns_returned_date_index')
   })
   
-  // Add CHECK constraint for condition
-  await knex.raw(`
-    ALTER TABLE borrow_to_returns 
-    ADD CONSTRAINT check_borrow_to_return_condition 
-    CHECK (condition IN ('good', 'damaged', 'expired', 'other') OR condition IS NULL)
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE borrow_to_returns 
+      ADD CONSTRAINT check_borrow_to_return_condition 
+      CHECK (condition IN ('good', 'damaged', 'expired', 'other') OR condition IS NULL)
+    `)
+  }
 }
 
 export const down = async (knex) => {

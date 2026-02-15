@@ -118,6 +118,14 @@ export class FinancialVM extends ViewModel {
     this.setState('loading', false)
     this.setState('error', null)
     this.setState('withhold-percentage', null) // Fetched from system_settings when needed
+    this.setState('report-type', 'income-statement')
+    const today = new Date().toISOString().split('T')[0]
+    const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+    this.setState('report-date-from', firstOfMonth)
+    this.setState('report-date-to', today)
+    this.setState('report-as-of-date', today)
+    this.setState('report-data', null)
+    this.setState('report-loading', false)
   }
 
   /**
@@ -154,6 +162,7 @@ export class FinancialVM extends ViewModel {
     else if (tab === 'deposits') this.loadDeposits()
     else if (tab === 'receivables') this.loadReceivables()
     else if (tab === 'payables') this.loadPayables()
+    else if (tab === 'reports') this.loadReport()
 
     this.updateState('loading', false)
   }
@@ -788,5 +797,62 @@ export class FinancialVM extends ViewModel {
 
   getActiveTab() {
     return this.getState('active-tab') || 'expense'
+  }
+
+  setReportType(type) {
+    this.updateState('report-type', type || 'income-statement')
+  }
+
+  setReportDateFrom(value) {
+    this.updateState('report-date-from', value ?? '')
+  }
+
+  setReportDateTo(value) {
+    this.updateState('report-date-to', value ?? '')
+  }
+
+  setReportAsOfDate(value) {
+    this.updateState('report-as-of-date', value ?? '')
+  }
+
+  async loadReport() {
+    const type = this.getState('report-type') || 'income-statement'
+    const dateFrom = this.getState('report-date-from')
+    const dateTo = this.getState('report-date-to')
+    const asOfDate = this.getState('report-as-of-date')
+
+    this.updateState('report-loading', true)
+    this.updateState('report-data', null)
+    this.updateState('error', null)
+
+    try {
+      if (type === 'balance-sheet') {
+        if (!asOfDate) {
+          this.updateState('error', 'As of date is required for Balance Sheet.')
+          return
+        }
+        const res = await window.ipcRenderer.invoke('reports:balance-sheet', { as_of_date: asOfDate })
+        this.updateState('report-data', res?.report ?? null)
+      } else {
+        if (!dateFrom || !dateTo) {
+          this.updateState('error', 'Date range is required.')
+          return
+        }
+        if (type === 'income-statement') {
+          const res = await window.ipcRenderer.invoke('reports:income-statement', { date_from: dateFrom, date_to: dateTo })
+          this.updateState('report-data', res?.report ?? null)
+        } else if (type === 'cash-flow') {
+          const res = await window.ipcRenderer.invoke('reports:cash-flow', { date_from: dateFrom, date_to: dateTo })
+          this.updateState('report-data', res?.report ?? null)
+        } else if (type === 'equity') {
+          const res = await window.ipcRenderer.invoke('reports:equity', { date_from: dateFrom, date_to: dateTo })
+          this.updateState('report-data', res?.report ?? null)
+        }
+      }
+    } catch (e) {
+      this.updateState('error', e.message || 'Failed to load report.')
+    } finally {
+      this.updateState('report-loading', false)
+    }
   }
 }

@@ -1,4 +1,5 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   // 1) Add column as nullable to allow backfill
   const hasColumn = await knex.schema.hasColumn('users', 'username')
   if (!hasColumn) {
@@ -9,19 +10,34 @@ export const up = async (knex) => {
 
   // 2) Backfill existing rows: prefer email prefix when available, otherwise fallback to 'user_<id>'
   // Use CASE to handle null emails
-  await knex.raw(`
-    UPDATE users
-    SET username = CASE
-      WHEN email IS NOT NULL AND position('@' in email) > 1 THEN split_part(email, '@', 1)
-      ELSE 'user_' || id
-    END
-    WHERE username IS NULL;
-  `)
+  if (client === 'sqlite3') {
+    await knex.raw(`
+      UPDATE users
+      SET username = CASE
+        WHEN email IS NOT NULL AND instr(email, '@') > 1 THEN substr(email, 1, instr(email, '@') - 1)
+        ELSE 'user_' || id
+      END
+      WHERE username IS NULL;
+    `)
+  } else {
+    await knex.raw(`
+      UPDATE users
+      SET username = CASE
+        WHEN email IS NOT NULL AND position('@' in email) > 1 THEN split_part(email, '@', 1)
+        ELSE 'user_' || id
+      END
+      WHERE username IS NULL;
+    `)
+  }
 
   // 3) Enforce NOT NULL and UNIQUE, and create an index
-  await knex.schema.alterTable('users', (t) => {
-    t.text('username').notNullable().unique().alter()
-  })
+  if (client === 'sqlite3') {
+    await knex.raw(`CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique_idx ON users (username)`)
+  } else {
+    await knex.schema.alterTable('users', (t) => {
+      t.text('username').notNullable().unique().alter()
+    })
+  }
 }
 
 export const down = async (knex) => {

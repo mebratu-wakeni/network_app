@@ -81,8 +81,6 @@ export function DepositsTab(props) {
   const selectedDeposit = vm.getState('selected-deposit')
   const createDepositModalOpen = vm.getState('create-deposit-modal-open') === true
   const createDepositSubmitting = vm.getState('create-deposit-submitting') === true
-  const editDepositModalOpen = vm.getState('edit-deposit-modal-open') === true
-  const editingDeposit = vm.getState('editing-deposit')
 
   const displayedDeposits = filterAndSortDeposits(deposits, search, typeFilter, sortBy, orderBy)
   const initRow = total > 0 ? paginationOffset + 1 : 0
@@ -115,26 +113,6 @@ export function DepositsTab(props) {
     vm.updateState('create-deposit-submitting', false)
   }
 
-  const openEditDepositModal = (d) => {
-    vm.updateState('editing-deposit', d)
-    vm.updateState('deposit-form', {
-      deposit_date: d.deposit_date,
-      type: d.type || 'contribution',
-      amount: String(d.amount || ''),
-      description: d.description || '',
-      source: d.source || '',
-      reference_no: d.reference_no || ''
-    })
-    vm.updateState('create-deposit-submitting', false)
-    vm.updateState('edit-deposit-modal-open', true)
-  }
-
-  const closeEditDepositModal = () => {
-    vm.updateState('edit-deposit-modal-open', false)
-    vm.updateState('editing-deposit', null)
-    vm.updateState('create-deposit-submitting', false)
-  }
-
   const handleViewDeposit = (d) => {
     vm.openDepositDrawer(d)
   }
@@ -161,25 +139,16 @@ export function DepositsTab(props) {
   const actionId = props.getLocalState('depositActionId')
 
   const depositDetailsDrawer = drawerDepositId && selectedDeposit ? (
-    Row({ class: 'absolute inset-0 z-50 pointer-events-none', attributes: { 'aria-hidden': !showDepositDrawer } }, [
-      Row({
-        class: 'absolute inset-0 pointer-events-auto',
-        events: { click: () => vm.closeDepositDrawer() }
-      }),
-      Drawer(
-        { openSlide: showDepositDrawer, class: 'pointer-events-auto' },
-        [
-          Card({ class: 'flex flex-col h-full rounded-none border-0' }, [
-            CardHeader({ class: 'flex items-center justify-between px-6 py-4 border-b border-gray-200' }, [
-              Row({ class: 'text-lg font-semibold text-gray-900' }, 'Deposit Details'),
-              IconButton({ onClick: () => vm.closeDepositDrawer() }, [IonIcon({ name: 'close-outline', class: 'text-xl' })])
-            ]),
-            CardBody({ class: 'flex-1 overflow-auto px-6 py-4' }, [
-              DepositDetailContent({ deposit: selectedDeposit })
-            ])
-          ])
-        ]
-      )
+    Drawer({ openSlide: showDepositDrawer, class: 'flex flex-col h-full' }, [
+      Card({ class: 'flex flex-col h-full rounded-none border-0' }, [
+        CardHeader({ class: 'flex items-center justify-between px-5 h-12 border-b border-gray-200 flex-shrink-0' }, [
+          Row({ class: 'text-base font-semibold text-gray-900' }, 'Deposit Details'),
+          IconButton({ onClick: () => vm.closeDepositDrawer() }, [IonIcon({ name: 'close-outline', class: 'text-xl' })])
+        ]),
+        CardBody({ class: 'flex-1 overflow-y-auto min-h-0 px-5 py-4' }, [
+          DepositDetailContent({ deposit: selectedDeposit })
+        ])
+      ])
     ])
   ) : null
 
@@ -292,13 +261,12 @@ export function DepositsTab(props) {
                   TableDCell({ class: 'max-w-xs truncate' }, d.description || '—'),
                   TableDCell({ class: 'w-12' }, [
                     ActionDropdown({
-                      id: `deposit-action-${d.id}`,
-                      isOpen: actionId === d.id,
+                      actionId: d.id,
+                      open: actionId === d.id,
                       onToggle: () => props.setLocalState('depositActionId', actionId === d.id ? null : d.id),
-                      onOutsideClick: () => props.setLocalState('depositActionId', null)
+                      class: 'text-center'
                     }, [
                       ActionItem({ label: 'View', icon: 'eye-outline', onClick: () => { props.setLocalState('depositActionId', null); handleViewDeposit(d) } }),
-                      ActionItem({ label: 'Edit', icon: 'create-outline', onClick: () => { props.setLocalState('depositActionId', null); openEditDepositModal(d) } }),
                       ActionItem({ label: 'Reverse', icon: 'arrow-undo-outline', danger: true, onClick: () => handleReverseDeposit(d) })
                     ])
                   ])
@@ -318,20 +286,6 @@ export function DepositsTab(props) {
       CreateDepositModalContent({
         ...props,
         handleClose: closeCreateDepositModal,
-        createDepositSubmitting
-      })
-    ]),
-    editDepositModalOpen && editingDeposit && Row({
-      class: 'fixed inset-0 bg-gray-800/50 flex items-center justify-center p-4 z-50',
-      attributes: { id: 'edit-deposit-modal-backdrop' },
-      events: {
-        click: (e) => { if (e.target.id === 'edit-deposit-modal-backdrop') closeEditDepositModal() }
-      }
-    }, [
-      EditDepositModalContent({
-        ...props,
-        deposit: editingDeposit,
-        handleClose: closeEditDepositModal,
         createDepositSubmitting
       })
     ])
@@ -487,107 +441,6 @@ function CreateDepositModalContent(props) {
           disabled: createDepositSubmitting,
           onClick: (e) => { e.preventDefault(); e.target.closest('form')?.requestSubmit() }
         }, createDepositSubmitting ? [Spinner({ class: 'w-4 h-4' }), 'Creating...'] : 'Create')
-      ])
-    ])
-  ])
-}
-
-function EditDepositModalContent(props) {
-  const { handleClose, createDepositSubmitting, deposit } = props
-  const vm = props.viewModel
-  const form = vm.getState('deposit-form') || {}
-
-  const update = (key, value) => {
-    const f = vm.getState('deposit-form') || {}
-    vm.updateState('deposit-form', { ...f, [key]: value })
-  }
-
-  const handleSubmit = async (e) => {
-    e?.preventDefault?.()
-    const currentForm = vm.getState('deposit-form') || {}
-    const amount = Number(currentForm.amount)
-    if (!currentForm.deposit_date || !amount || amount <= 0) {
-      showAlert({ message: 'Date and amount (positive) are required.', variant: 'error' })
-      return
-    }
-    vm.updateState('create-deposit-submitting', true)
-    try {
-      await vm.updateDeposit(deposit.id, {
-        deposit_date: currentForm.deposit_date,
-        type: currentForm.type || 'contribution',
-        amount,
-        description: currentForm.description || null,
-        source: currentForm.source || null,
-        reference_no: currentForm.reference_no || null
-      })
-      handleClose()
-      showAlert({ message: 'Deposit updated successfully.', variant: 'success' })
-    } catch (err) {
-      showAlert({ message: err.message || 'Failed to update deposit.', variant: 'error' })
-    } finally {
-      vm.updateState('create-deposit-submitting', false)
-    }
-  }
-
-  const labelClass = 'block text-sm font-medium text-gray-700 mb-1'
-  const fieldClass = 'w-full'
-
-  return Row({ class: 'w-full max-w-lg bg-white rounded-xl shadow-xl overflow-hidden flex flex-col' }, [
-    CardHeader({ class: 'flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
-      Row({ class: 'flex items-center gap-2' }, [
-        IonIcon({ name: 'create-outline', class: 'text-2xl text-indigo-600' }),
-        Row({ class: 'text-lg font-semibold text-gray-900' }, 'Edit Deposit')
-      ]),
-      IconButton({ onClick: handleClose, class: 'text-gray-400 hover:text-gray-600' }, [IonIcon({ name: 'close-outline', class: 'text-xl' })])
-    ]),
-    Row({
-      tagType: 'form',
-      class: 'flex flex-col flex-1 min-h-0',
-      events: { submit: handleSubmit },
-      attributes: { name: 'edit-deposit-form' }
-    }, [
-      CardBody({ class: 'px-6 py-5 space-y-4 flex-1 overflow-y-auto' }, [
-        Row({ class: 'grid grid-cols-2 gap-4' }, [
-          Row({}, [
-            Row({ tagType: 'label', class: labelClass }, 'Date *'),
-            Input({ type: 'date', value: form.deposit_date, onChange: (e) => update('deposit_date', e.target.value), class: fieldClass })
-          ]),
-          Row({}, [
-            Row({ tagType: 'label', class: labelClass }, 'Type'),
-            SelectFluid({
-              value: form.type,
-              onChange: (e) => update('type', e.target.value),
-              class: fieldClass
-            }, [
-              ...DEPOSIT_TYPES.map((t) => Row({ tagType: 'option', attributes: { value: t.value } }, t.label))
-            ])
-          ])
-        ]),
-        Row({}, [
-          Row({ tagType: 'label', class: labelClass }, 'Amount (Br) *'),
-          Input({ type: 'number', step: '0.01', value: form.amount, onChange: (e) => update('amount', e.target.value), placeholder: '0.00', class: fieldClass })
-        ]),
-        Row({}, [
-          Row({ tagType: 'label', class: labelClass }, 'Source (optional)'),
-          Input({ value: form.source, onChange: (e) => update('source', e.target.value), placeholder: 'e.g. Member name or organization', class: fieldClass })
-        ]),
-        Row({}, [
-          Row({ tagType: 'label', class: labelClass }, 'Reference no. (optional)'),
-          Input({ value: form.reference_no, onChange: (e) => update('reference_no', e.target.value), placeholder: 'Reference or receipt number', class: fieldClass })
-        ]),
-        Row({}, [
-          Row({ tagType: 'label', class: labelClass }, 'Description (optional)'),
-          Input({ value: form.description, onChange: (e) => update('description', e.target.value), placeholder: 'Additional notes', class: fieldClass })
-        ])
-      ]),
-      CardFooter({ class: 'flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 flex-shrink-0' }, [
-        Button({ type: 'button', variant: 'secondary', onClick: handleClose }, 'Cancel'),
-        Button({
-          type: 'button',
-          variant: 'primary',
-          disabled: createDepositSubmitting,
-          onClick: (e) => { e.preventDefault(); e.target.closest('form')?.requestSubmit() }
-        }, createDepositSubmitting ? [Spinner({ class: 'w-4 h-4' }), 'Saving...'] : 'Save')
       ])
     ])
   ])

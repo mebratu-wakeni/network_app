@@ -31,7 +31,7 @@ export default class ServerManagerVM extends ViewModel {
   }
 
   initializeState() {
-    this.setState('docker-status', null);
+    this.setState('docker-status', { installed: false, running: false, error: 'Not used in sqlite-only mode' });
     this.setState('server-status', null);
     this.setState('api-health', null);
     this.setState('starting', false);
@@ -40,7 +40,7 @@ export default class ServerManagerVM extends ViewModel {
     this.setState('error', null);
     this.setState('success', null);
     this.setState('lastUpdated', null);
-    this.setState('mode', 'docker'); // 'docker' or 'dev'
+    this.setState('mode', 'server');
     this.setState('dev-server-status', null);
     this.refreshDebounceTimer = null;
   }
@@ -77,10 +77,6 @@ export default class ServerManagerVM extends ViewModel {
     this.updateState('error', null);
     
     try {
-      // Check Docker
-      const docker = await window.ipcRenderer.checkDocker()
-      this.updateState('docker-status', docker)
-
       // Check server status
       const status = await window.ipcRenderer.getServerStatus()
       this.updateState('server-status', status)
@@ -89,12 +85,8 @@ export default class ServerManagerVM extends ViewModel {
       const health = await window.ipcRenderer.checkServerHealth()
       this.updateState('api-health', health)
       
-      // Check dev server status if in dev mode
-      const mode = this.getState('mode');
-      if (mode === 'dev') {
-        const devStatus = await window.ipcRenderer.checkDevServerStatus()
-        this.updateState('dev-server-status', devStatus)
-      }
+      const devStatus = await window.ipcRenderer.checkDevServerStatus()
+      this.updateState('dev-server-status', devStatus)
       
       // Update last refreshed timestamp
       this.updateState('lastUpdated', new Date().toLocaleTimeString());
@@ -122,14 +114,14 @@ export default class ServerManagerVM extends ViewModel {
       console.log('start result: ', result);
       
       if (result.success) {
-        const modeLabel = mode === 'dev' ? 'Development server' : 'Server';
+        const modeLabel = 'Server';
         this.updateState('success', `${modeLabel} started successfully`);
         // Auto-dismiss success message after 3 seconds
         setTimeout(() => this.updateState('success', null), 3000);
         
         setTimeout(async () => {
           await this.checkStatus(false) // Silent refresh after start
-        }, mode === 'dev' ? 3000 : 2000) // Dev server takes a bit longer to start
+        }, 2500)
       } else {
         // Store error in state for UI to display
         console.error('Failed to start server:', result.error);
@@ -158,7 +150,7 @@ export default class ServerManagerVM extends ViewModel {
       console.log('stop result: ', result);
       
       if (result.success) {
-        const modeLabel = mode === 'dev' ? 'Development server' : 'Server';
+        const modeLabel = 'Server';
         this.updateState('success', `${modeLabel} stopped successfully`);
         // Auto-dismiss success message after 3 seconds
         setTimeout(() => this.updateState('success', null), 3000);
@@ -183,19 +175,5 @@ export default class ServerManagerVM extends ViewModel {
     }
   }
 
-  async toggleMode() {
-    const currentMode = this.getState('mode');
-    const newMode = currentMode === 'docker' ? 'dev' : 'docker';
-    
-    // Warn user if server is running (they should stop it first)
-    const apiHealth = this.getState('api-health');
-    if (apiHealth?.healthy) {
-      // Server is running - warn but allow switch
-      console.warn(`Switching from ${currentMode} to ${newMode} mode while server is running`);
-    }
-    
-    this.updateState('mode', newMode);
-    // Refresh status to update UI
-    await this.checkStatus(false);
-  }
+  async toggleMode() {}
 }

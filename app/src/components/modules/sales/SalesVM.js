@@ -148,6 +148,19 @@ export class SalesVM extends ViewModel {
     });
   }
 
+  isWalkInCustomer(customer) {
+    const name = (customer?.name || customer?.full_name || '').trim().toLowerCase()
+    return name === 'walk-in'
+  }
+
+  isWalkInSale(currentSale = {}) {
+    if (currentSale.customer_id == null || currentSale.customer_id === '') return true
+    if (this.isWalkInCustomer(currentSale.customer)) return true
+    const customers = this.getState('customer-list') || []
+    const matched = customers.find((c) => c.id === currentSale.customer_id)
+    return this.isWalkInCustomer(matched)
+  }
+
   /** Set sales payment form defaults (e.g. when opening Record Payment). Updates form and sets loading false at end. */
   setSalesPaymentFormDefaults(outstanding) {
     const today = new Date().toISOString().split('T')[0];
@@ -304,7 +317,7 @@ export class SalesVM extends ViewModel {
   toggleWithholding() {
     const currentSale = this.getState('current-sale') || {};
     // Walk-in customers cannot have withholding
-    const isWalkIn = currentSale.customer_id == null || currentSale.customer_id === '';
+    const isWalkIn = this.isWalkInSale(currentSale);
     if (isWalkIn) {
       // Cannot enable withholding for walk-in - keep it disabled
       return;
@@ -416,12 +429,14 @@ export class SalesVM extends ViewModel {
     this.updateState('error', null);
     try {
       // Use same API as Purchase: inventory partners with types 'retailer' and 'both'
-      const [retailersResult, bothResult] = await Promise.all([
+      const [retailersResult, bothResult, otherResult] = await Promise.all([
         window.ipcRenderer.invoke('inventory:get-partners', 'retailer'),
         window.ipcRenderer.invoke('inventory:get-partners', 'both'),
+        window.ipcRenderer.invoke('inventory:get-partners', 'other'),
       ]);
       const retailers = Array.isArray(retailersResult) ? retailersResult : [];
       const both = Array.isArray(bothResult) ? bothResult : [];
+      const others = Array.isArray(otherResult) ? otherResult : [];
       const merged = [...retailers];
       const seenIds = new Set(merged.map((c) => c.id));
       both.forEach((c) => {
@@ -430,8 +445,12 @@ export class SalesVM extends ViewModel {
           seenIds.add(c.id);
         }
       });
-      this.updateState('customer-list', merged);
-      return merged;
+      const walkIn = others.find((c) => this.isWalkInCustomer(c));
+      const finalCustomers = walkIn
+        ? [walkIn, ...merged.filter((c) => c.id !== walkIn.id)]
+        : merged;
+      this.updateState('customer-list', finalCustomers);
+      return finalCustomers;
     } catch (error) {
       console.error('[SalesVM] loadCustomers error:', error);
       this.updateState('error', { message: error.message || 'Failed to load customers' });
@@ -449,10 +468,13 @@ export class SalesVM extends ViewModel {
 
   selectCustomer(customer) {
     const currentSale = this.getState('current-sale') || {};
+    const isWalkIn = this.isWalkInCustomer(customer);
     this.updateState('current-sale', { 
       ...currentSale, 
       customer_id: customer.id, 
       customer,
+      is_withholding: isWalkIn ? false : currentSale.is_withholding,
+      withhold_reference: isWalkIn ? '' : currentSale.withhold_reference,
       // Reset withhold confirmation fields when customer changes
       sales_invoice_no: null,
       withhold_confirmation: false
@@ -462,15 +484,16 @@ export class SalesVM extends ViewModel {
 
   selectWalkIn() {
     const currentSale = this.getState('current-sale') || {};
-    // Walk-in customers cannot have withholding - disable it
+    const customers = this.getState('customer-list') || []
+    const walkIn = customers.find((c) => this.isWalkInCustomer(c)) || null
     this.updateState('current-sale', { 
       ...currentSale, 
-      customer_id: null, 
-      customer: null,
+      customer_id: walkIn?.id ?? null, 
+      customer: walkIn,
       is_withholding: false,
       withhold_reference: ''
     });
-    this.updateState('selected-customer', null);
+    this.updateState('selected-customer', walkIn);
   }
 
   async loadWithholdPercentage() {
@@ -666,7 +689,7 @@ export class SalesVM extends ViewModel {
         this.updateState('selected-customer', customerForSelect);
 
         // Walk-in customers cannot have withholding
-        const isWalkIn = customerId == null || customerId === '';
+        const isWalkIn = this.isWalkInCustomer(customerForSelect) || (!customerForSelect && String(customerName || '').trim().toLowerCase() === 'walk-in');
         const snapshotWithholding = (snapshot.withhold_percentage != null || holdOrder.withhold_percentage != null) && Number(snapshot.withhold_percentage || holdOrder.withhold_percentage || 0) > 0;
         
         const orderDate = normalizeSaleDate(snapshot.sale_date || snapshot.order_date || holdOrder.order_date);
