@@ -13,8 +13,13 @@ export function App() {
   const router = new Router(main);
 
   const render = (props) => {
-    // Try to restore auth from stored token (will mark optimistic authenticated)
-    // try { props.viewModel.tryRestoreAuth() } catch (e) {}
+    const setupLoading = props.viewModel.getState('setup-loading')
+    const setupConfig = props.viewModel.getState('setup-config')
+    const setupDone = !!setupConfig?.setupCompleted
+    if (setupLoading) {
+      return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 text-gray-600' }, 'Loading setup...')
+    }
+    if (!setupDone) return SetupLayout(props)
 
     const auth = props.viewModel.getState('auth') || { isAuthenticated: false };
     if (!auth.isAuthenticated) return LoginLayout(props);
@@ -22,8 +27,227 @@ export function App() {
     return MainLayout(props, main, router);
   };
 
-  return StatefulRow({id: 'App', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'setup-defaults', 'setup-error'], viewModel: navigationVM }, render);
   
+}
+
+function SetupLayout(props) {
+  const defaults = props.viewModel.getState('setup-defaults') || {}
+  const setupError = props.viewModel.getState('setup-error')
+  const loading = props.viewModel.getState('setup-loading')
+  const stepLabelsByMode = {
+    server: ['Welcome', 'Mode', 'Server', 'License', 'Finish'],
+    client: ['Welcome', 'Mode', 'Client', 'Finish']
+  }
+  props.ensureLocalStateKey('setup-mode', defaults.mode || 'server')
+  props.ensureLocalStateKey('setup-db-dir', defaults.dbDirectory || '')
+  props.ensureLocalStateKey('setup-port', defaults.port || 4000)
+  props.ensureLocalStateKey('setup-server-url', '')
+  props.ensureLocalStateKey('setup-installation-key', '')
+  props.ensureLocalStateKey('setup-license-key', '')
+  props.ensureLocalStateKey('setup-company-name', '')
+  props.ensureLocalStateKey('setup-company-phone', '')
+  props.ensureLocalStateKey('setup-step-index', 0)
+
+  const mode = props.getLocalState('setup-mode')
+  const dbDir = props.getLocalState('setup-db-dir')
+  const port = props.getLocalState('setup-port')
+  const serverUrl = props.getLocalState('setup-server-url')
+  const installationKey = props.getLocalState('setup-installation-key')
+  const licenseKey = props.getLocalState('setup-license-key')
+  const companyName = props.getLocalState('setup-company-name')
+  const companyPhone = props.getLocalState('setup-company-phone')
+  const stepLabels = stepLabelsByMode[mode] || stepLabelsByMode.server
+  const maxStepIndex = stepLabels.length - 1
+  const stepIndexRaw = props.getLocalState('setup-step-index') || 0
+  const stepIndex = Math.max(0, Math.min(stepIndexRaw, maxStepIndex))
+  if (stepIndexRaw !== stepIndex) props.setLocalState('setup-step-index', stepIndex)
+  const progressPercent = Math.round(((stepIndex + 1) / stepLabels.length) * 100)
+  const currentStep = stepLabels[stepIndex]
+
+  const saveSetup = async () => {
+    const payload = mode === 'server'
+      ? {
+          mode: 'server',
+          dbDirectory: dbDir,
+          port: Number(port || 4000),
+          installationKey: String(installationKey || '').trim(),
+          licenseKey: String(licenseKey || '').trim(),
+          companyName: String(companyName || '').trim(),
+          companyPhone: String(companyPhone || '').trim()
+        }
+      : { mode: 'client', serverUrl: String(serverUrl || '').trim() }
+    await props.viewModel.saveSetupConfig(payload)
+  }
+
+  const onCancel = async () => {
+    try {
+      await window.ipcRenderer.invoke('app:quit')
+    } catch (_) {
+      // no-op fallback if quit IPC is unavailable
+    }
+  }
+
+  const canProceed = () => {
+    if (currentStep === 'Mode') return mode === 'server' || mode === 'client'
+    if (currentStep === 'Server') return String(dbDir || '').trim() !== '' && Number(port) > 0
+    if (currentStep === 'License') {
+      return String(licenseKey || '').trim() !== '' && String(companyName || '').trim() !== '' && String(companyPhone || '').trim() !== ''
+    }
+    if (currentStep === 'Client') return String(serverUrl || '').trim() !== ''
+    return true
+  }
+
+  const onBack = () => {
+    if (stepIndex <= 0) return
+    props.setLocalState('setup-step-index', stepIndex - 1)
+  }
+
+  const onNext = async () => {
+    if (loading || !canProceed()) return
+    if (stepIndex < maxStepIndex) {
+      props.setLocalState('setup-step-index', stepIndex + 1)
+      return
+    }
+    await saveSetup()
+  }
+
+  const setMode = (newMode) => {
+    props.setLocalState('setup-mode', newMode)
+    props.setLocalState('setup-step-index', Math.min(props.getLocalState('setup-step-index') || 0, (stepLabelsByMode[newMode] || []).length - 1))
+  }
+
+  const StepBody = () => {
+    if (currentStep === 'Welcome') {
+      return Row({ class: 'text-sm text-gray-700 space-y-3' }, [
+        Row({}, 'This setup wizard will configure your app in a few guided steps.'),
+        Row({}, 'Server mode requires one-time online license activation, then runs offline using local validation.')
+      ])
+    }
+    if (currentStep === 'Mode') {
+      return Row({ class: 'flex flex-col gap-4' }, [
+        Row({ class: 'text-sm text-gray-700' }, 'Choose how this app should run on this machine.'),
+        Row({ class: 'flex gap-3' }, [
+          Button({
+            variant: mode === 'server' ? 'primary' : 'outline',
+            onClick: () => setMode('server')
+          }, 'Server (host + database)'),
+          Button({
+            variant: mode === 'client' ? 'primary' : 'outline',
+            onClick: () => setMode('client')
+          }, 'Client (connect to server)')
+        ])
+      ])
+    }
+    if (currentStep === 'Server') {
+      return Row({ class: 'flex flex-col gap-3' }, [
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Database directory'),
+          Input({
+            value: dbDir,
+            onChange: (e) => props.setLocalState('setup-db-dir', e.target.value),
+            placeholder: 'Path to directory where pharmasuit_lan.db will be stored'
+          })
+        ]),
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Server port'),
+          Input({
+            type: 'number',
+            value: port,
+            onChange: (e) => props.setLocalState('setup-port', e.target.value || 4000)
+          })
+        ])
+      ])
+    }
+    if (currentStep === 'License') {
+      return Row({ class: 'flex flex-col gap-3' }, [
+        Row({ class: 'text-xs text-gray-500' }, 'Internet connection is required for activation on this step.'),
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Installation key'),
+          Input({
+            value: installationKey,
+            onChange: (e) => props.setLocalState('setup-installation-key', e.target.value),
+            placeholder: 'Secret installation key'
+          })
+        ]),
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'License key'),
+          Input({
+            value: licenseKey,
+            onChange: (e) => props.setLocalState('setup-license-key', e.target.value),
+            placeholder: 'XXXX-XXXX-XXXX-XXXX'
+          })
+        ]),
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Company name'),
+          Input({
+            value: companyName,
+            onChange: (e) => props.setLocalState('setup-company-name', e.target.value),
+            placeholder: 'Company legal name'
+          })
+        ]),
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Company phone'),
+          Input({
+            value: companyPhone,
+            onChange: (e) => props.setLocalState('setup-company-phone', e.target.value),
+            placeholder: 'Primary phone'
+          })
+        ])
+      ])
+    }
+    if (currentStep === 'Client') {
+      return Row({ class: 'flex flex-col gap-3' }, [
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Server URL'),
+          Input({
+            value: serverUrl,
+            onChange: (e) => props.setLocalState('setup-server-url', e.target.value),
+            placeholder: 'e.g. http://192.168.1.20:4000'
+          })
+        ])
+      ])
+    }
+    return Row({ class: 'text-sm text-gray-700 space-y-2' }, [
+      Row({ class: 'font-medium' }, 'Review setup'),
+      Row({}, mode === 'server' ? `Mode: Server, Port: ${port}` : `Mode: Client, URL: ${serverUrl || '-'}`),
+      Row({}, mode === 'server' ? `Database: ${dbDir || '-'}` : '')
+    ])
+  }
+
+  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 p-2' }, [
+    Row({ class: 'w-full max-w-xl min-h-[410px] bg-white rounded-2xl shadow-xl flex flex-col' }, [
+      Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
+        Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Initial Setup'),
+        Row({ class: 'text-xs text-gray-500 mb-2' }, `Step ${stepIndex + 1} of ${stepLabels.length}: ${currentStep}`),
+        Row({ class: 'w-full h-2 bg-gray-100 rounded' }, [
+          Row({ class: 'h-2 bg-indigo-600 rounded', attributes: { style: `width:${progressPercent}%` } })
+        ]),
+        Row({ class: 'mt-2 text-[11px] text-gray-500' }, stepLabels.join('  >  '))
+      ]),
+      Row({ class: 'px-8 py-6 flex-1 overflow-auto flex flex-col gap-4' }, [
+        StepBody(),
+        setupError ? Row({ class: 'text-sm text-red-600' }, setupError) : null
+      ]),
+      Row({ class: 'px-8 py-4 border-t border-gray-100 flex items-center justify-end gap-2' }, [
+        Button({
+          variant: 'outline',
+          onClick: onBack,
+          disabled: loading || stepIndex === 0
+        }, 'Back'),
+        Button({
+          variant: 'outline',
+          onClick: onCancel,
+          disabled: !!loading
+        }, 'Cancel'),
+        Button({
+          variant: 'primary',
+          disabled: !!loading || !canProceed(),
+          onClick: onNext
+        }, loading ? (stepIndex === maxStepIndex ? 'Finishing...' : 'Saving...') : (stepIndex === maxStepIndex ? 'Finish' : 'Next'))
+      ])
+    ])
+  ])
 }
 
 function MainLayout(props, main, router) { 
