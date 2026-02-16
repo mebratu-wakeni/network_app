@@ -1,16 +1,11 @@
 node_modules
 .DS_Store
 dist
-.env
-.env.*
 .vscode
 .idea
 coverage
 postgres-data
 
-api/.env
-web/.env
-.env.local
 
 node_modules/
 dist/
