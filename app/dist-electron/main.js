@@ -16373,6 +16373,31 @@ function getApiRootForHealth() {
   const apiBase = process.env.API_BASE_URL || "http://localhost:4000/api";
   return apiBase.replace(/\/api\/?$/i, "");
 }
+function getLanIPv4Addresses() {
+  const interfaces = os.networkInterfaces();
+  const ips = Object.values(interfaces).flat().filter((i) => i && i.family === "IPv4" && !i.internal && i.address).map((i) => i.address);
+  return [...new Set(ips)];
+}
+function normalizeLicenseActivationFailure(errorMessage) {
+  const msg = String(errorMessage || "");
+  const lower = msg.toLowerCase();
+  if (lower.includes("invalid installation key")) {
+    return { code: "INVALID_INSTALLATION_KEY", error: "Installation key is invalid." };
+  }
+  if (lower.includes("already") && (lower.includes("machine") || lower.includes("fingerprint") || lower.includes("bound"))) {
+    return { code: "LICENSE_ALREADY_BOUND", error: "This license is already activated on another machine." };
+  }
+  if (lower.includes("invalid license") || lower.includes("license key") || lower.includes("license not found") || lower.includes("not found")) {
+    return { code: "INVALID_LICENSE_KEY", error: "License key is invalid." };
+  }
+  if (lower.includes("fetch failed") || lower.includes("econnrefused") || lower.includes("network") || lower.includes("license server")) {
+    return {
+      code: "SERVER_ERROR",
+      error: "License service is unreachable. Check internet connection and Google Script deployment URL."
+    };
+  }
+  return { code: "SERVER_ERROR", error: msg || "License activation failed" };
+}
 async function waitForApiReady(apiRoot, timeoutMs = 15e3, intervalMs = 300) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -16382,16 +16407,21 @@ async function waitForApiReady(apiRoot, timeoutMs = 15e3, intervalMs = 300) {
   }
   return false;
 }
-async function resolveEffectiveConfig(initialConfig) {
+function resolveConfigByDbPresence(initialConfig) {
   var _a;
   const loaded = initialConfig || loadRuntimeConfig();
   if (!(loaded == null ? void 0 : loaded.setupCompleted) || (loaded == null ? void 0 : loaded.mode) !== "server") return loaded;
   const dbFile = ((_a = loaded == null ? void 0 : loaded.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
   const hasServerDb = !!(dbFile && fs$1.existsSync(dbFile));
   if (!hasServerDb) return { ...loaded, setupCompleted: false };
+  return loaded;
+}
+async function resolveLicenseState(initialConfig) {
+  const loaded = initialConfig || loadRuntimeConfig();
+  if (!(loaded == null ? void 0 : loaded.setupCompleted) || (loaded == null ? void 0 : loaded.mode) !== "server") return loaded;
   const fingerprint = getDeviceFingerprint();
   const status = await licenseManager.getStatus(fingerprint);
-  if (!(status == null ? void 0 : status.success) || !(status == null ? void 0 : status.valid)) {
+  if ((status == null ? void 0 : status.success) === true && (status == null ? void 0 : status.valid) === false) {
     return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status };
   }
   return { ...loaded, licenseStatus: status };
@@ -16480,6 +16510,33 @@ ipcMain.handle("server:status", async () => {
 ipcMain.handle("server:health", async () => {
   return await serverManager.checkApiHealth(getApiRootForHealth());
 });
+ipcMain.handle("server:connection-info", async () => {
+  var _a, _b;
+  const cfg = runtimeConfig || loadRuntimeConfig();
+  const mode = (cfg == null ? void 0 : cfg.mode) || "server";
+  if (mode === "client") {
+    const serverUrl = normalizeServerUrl(((_a = cfg == null ? void 0 : cfg.client) == null ? void 0 : _a.serverUrl) || "");
+    return {
+      success: true,
+      mode,
+      port: null,
+      localhostUrl: null,
+      apiRoot: serverUrl || null,
+      lanUrls: []
+    };
+  }
+  const port = Number(((_b = cfg == null ? void 0 : cfg.server) == null ? void 0 : _b.port) || process.env.PORT || 4e3);
+  const localhostUrl = `http://localhost:${port}`;
+  const lanUrls = getLanIPv4Addresses().map((ip) => `http://${ip}:${port}`);
+  return {
+    success: true,
+    mode,
+    port,
+    localhostUrl,
+    apiRoot: `${localhostUrl}/api`,
+    lanUrls
+  };
+});
 ipcMain.handle("server:logs", async (event, service, lines) => {
   return await serverManager.getLogs(service, lines);
 });
@@ -16494,13 +16551,13 @@ ipcMain.handle("setup:get-config", async () => {
   } catch (_) {
   }
   const fingerprint = getDeviceFingerprint();
-  let effectiveConfig = loaded;
-  if ((loaded == null ? void 0 : loaded.setupCompleted) && (loaded == null ? void 0 : loaded.mode) === "server") {
+  let effectiveConfig = resolveConfigByDbPresence(loaded);
+  if ((effectiveConfig == null ? void 0 : effectiveConfig.setupCompleted) && (effectiveConfig == null ? void 0 : effectiveConfig.mode) === "server") {
     const status = await licenseManager.getStatus(fingerprint);
-    if (!status.success || !status.valid) {
-      effectiveConfig = { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status };
+    if ((status == null ? void 0 : status.success) === true && (status == null ? void 0 : status.valid) === false) {
+      effectiveConfig = { ...effectiveConfig, setupCompleted: false, licenseRequired: true, licenseStatus: status };
     } else {
-      effectiveConfig = { ...loaded, licenseStatus: status };
+      effectiveConfig = { ...effectiveConfig, licenseStatus: status };
     }
   }
   return {
@@ -16540,11 +16597,19 @@ ipcMain.handle("setup:save-config", async (_event, payload) => {
     applyRuntimeConfig(config2);
     const serverStart = await serverManager.startServer({ port, dbFile });
     if (!(serverStart == null ? void 0 : serverStart.success)) {
-      return { success: false, error: (serverStart == null ? void 0 : serverStart.error) || "Failed to start server during setup" };
+      return {
+        success: false,
+        code: "SERVER_ERROR",
+        error: (serverStart == null ? void 0 : serverStart.error) || "Failed to start server during setup"
+      };
     }
     const apiReady = await waitForApiReady(`http://localhost:${port}`);
     if (!apiReady) {
-      return { success: false, error: "Server started but API is not ready yet. Please retry in a moment." };
+      return {
+        success: false,
+        code: "SERVER_ERROR",
+        error: "Server started but API is not ready yet. Please retry in a moment."
+      };
     }
     const currentStatus = await licenseManager.getStatus(deviceFingerprint);
     if (!(currentStatus == null ? void 0 : currentStatus.valid)) {
@@ -16559,7 +16624,13 @@ ipcMain.handle("setup:save-config", async (_event, payload) => {
         company_phone: companyPhone
       });
       if (!(activation == null ? void 0 : activation.success)) {
-        return { success: false, error: (activation == null ? void 0 : activation.error) || "License activation failed", details: (activation == null ? void 0 : activation.details) || null };
+        const normalizedFailure = normalizeLicenseActivationFailure(activation == null ? void 0 : activation.error);
+        return {
+          success: false,
+          code: normalizedFailure.code,
+          error: normalizedFailure.error,
+          details: (activation == null ? void 0 : activation.details) || null
+        };
       }
     }
     saveRuntimeConfig(config2);
@@ -16612,9 +16683,20 @@ app.on("window-all-closed", () => {
   }
 });
 app.on("activate", async () => {
+  var _a, _b;
   if (BrowserWindow.getAllWindows().length === 0) {
-    const effectiveCfg = await resolveEffectiveConfig(runtimeConfig || loadRuntimeConfig());
+    let effectiveCfg = resolveConfigByDbPresence(runtimeConfig || loadRuntimeConfig());
     applyRuntimeConfig(effectiveCfg);
+    if ((effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) && (effectiveCfg == null ? void 0 : effectiveCfg.mode) === "server") {
+      const dbFile = ((_a = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
+      const port = Number(((_b = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _b.port) || 4e3);
+      await serverManager.startServer({ port, dbFile });
+      const apiReady = await waitForApiReady(`http://localhost:${port}`);
+      if (apiReady) {
+        effectiveCfg = await resolveLicenseState(effectiveCfg);
+        applyRuntimeConfig(effectiveCfg);
+      }
+    }
     if (effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) createMainWindow();
     else createWizardWindow();
   }
@@ -16624,12 +16706,17 @@ app.on("before-quit", async () => {
 app.whenReady().then(async () => {
   var _a, _b;
   const cfg = loadRuntimeConfig();
-  const effectiveCfg = await resolveEffectiveConfig(cfg);
+  let effectiveCfg = resolveConfigByDbPresence(cfg);
   applyRuntimeConfig(effectiveCfg);
   if ((effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) && (effectiveCfg == null ? void 0 : effectiveCfg.mode) === "server") {
     const dbFile = ((_a = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
     const port = Number(((_b = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _b.port) || 4e3);
     await serverManager.startServer({ port, dbFile });
+    const apiReady = await waitForApiReady(`http://localhost:${port}`);
+    if (apiReady) {
+      effectiveCfg = await resolveLicenseState(effectiveCfg);
+      applyRuntimeConfig(effectiveCfg);
+    }
   }
   if (effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) createMainWindow();
   else createWizardWindow();

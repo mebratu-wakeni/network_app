@@ -126,6 +126,41 @@ function getApiRootForHealth() {
   return apiBase.replace(/\/api\/?$/i, '')
 }
 
+function getLanIPv4Addresses() {
+  const interfaces = os.networkInterfaces()
+  const ips = Object.values(interfaces)
+    .flat()
+    .filter((i) => i && i.family === 'IPv4' && !i.internal && i.address)
+    .map((i) => i.address)
+  return [...new Set(ips)]
+}
+
+function normalizeLicenseActivationFailure(errorMessage) {
+  const msg = String(errorMessage || '')
+  const lower = msg.toLowerCase()
+  if (lower.includes('invalid installation key')) {
+    return { code: 'INVALID_INSTALLATION_KEY', error: 'Installation key is invalid.' }
+  }
+  if (lower.includes('already') && (lower.includes('machine') || lower.includes('fingerprint') || lower.includes('bound'))) {
+    return { code: 'LICENSE_ALREADY_BOUND', error: 'This license is already activated on another machine.' }
+  }
+  if (
+    lower.includes('invalid license') ||
+    lower.includes('license key') ||
+    lower.includes('license not found') ||
+    lower.includes('not found')
+  ) {
+    return { code: 'INVALID_LICENSE_KEY', error: 'License key is invalid.' }
+  }
+  if (lower.includes('fetch failed') || lower.includes('econnrefused') || lower.includes('network') || lower.includes('license server')) {
+    return {
+      code: 'SERVER_ERROR',
+      error: 'License service is unreachable. Check internet connection and Google Script deployment URL.'
+    }
+  }
+  return { code: 'SERVER_ERROR', error: msg || 'License activation failed' }
+}
+
 async function waitForApiReady(apiRoot, timeoutMs = 15000, intervalMs = 300) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -136,17 +171,25 @@ async function waitForApiReady(apiRoot, timeoutMs = 15000, intervalMs = 300) {
   return false
 }
 
-async function resolveEffectiveConfig(initialConfig) {
+function resolveConfigByDbPresence(initialConfig) {
   const loaded = initialConfig || loadRuntimeConfig()
   if (!loaded?.setupCompleted || loaded?.mode !== 'server') return loaded
 
   const dbFile = loaded?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
   const hasServerDb = !!(dbFile && fs.existsSync(dbFile))
   if (!hasServerDb) return { ...loaded, setupCompleted: false }
+  return loaded
+}
+
+async function resolveLicenseState(initialConfig) {
+  const loaded = initialConfig || loadRuntimeConfig()
+  if (!loaded?.setupCompleted || loaded?.mode !== 'server') return loaded
 
   const fingerprint = getDeviceFingerprint()
   const status = await licenseManager.getStatus(fingerprint)
-  if (!status?.success || !status?.valid) {
+  // Only force setup if license is definitively invalid.
+  // Transient API unavailability should not trigger setup wizard repeatedly.
+  if (status?.success === true && status?.valid === false) {
     return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status }
   }
   return { ...loaded, licenseStatus: status }
@@ -247,6 +290,34 @@ ipcMain.handle('server:health', async () => {
   return await serverManager.checkApiHealth(getApiRootForHealth())
 })
 
+ipcMain.handle('server:connection-info', async () => {
+  const cfg = runtimeConfig || loadRuntimeConfig()
+  const mode = cfg?.mode || 'server'
+  if (mode === 'client') {
+    const serverUrl = normalizeServerUrl(cfg?.client?.serverUrl || '')
+    return {
+      success: true,
+      mode,
+      port: null,
+      localhostUrl: null,
+      apiRoot: serverUrl || null,
+      lanUrls: []
+    }
+  }
+
+  const port = Number(cfg?.server?.port || process.env.PORT || 4000)
+  const localhostUrl = `http://localhost:${port}`
+  const lanUrls = getLanIPv4Addresses().map((ip) => `http://${ip}:${port}`)
+  return {
+    success: true,
+    mode,
+    port,
+    localhostUrl,
+    apiRoot: `${localhostUrl}/api`,
+    lanUrls
+  }
+})
+
 
 
 ipcMain.handle('server:logs', async (event, service, lines) => {
@@ -262,13 +333,13 @@ ipcMain.handle('setup:get-config', async () => {
   const defaultDir = getDefaultDbDirectory()
   try { fs.mkdirSync(defaultDir, { recursive: true }) } catch (_) {}
   const fingerprint = getDeviceFingerprint()
-  let effectiveConfig = loaded
-  if (loaded?.setupCompleted && loaded?.mode === 'server') {
+  let effectiveConfig = resolveConfigByDbPresence(loaded)
+  if (effectiveConfig?.setupCompleted && effectiveConfig?.mode === 'server') {
     const status = await licenseManager.getStatus(fingerprint)
-    if (!status.success || !status.valid) {
-      effectiveConfig = { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status }
+    if (status?.success === true && status?.valid === false) {
+      effectiveConfig = { ...effectiveConfig, setupCompleted: false, licenseRequired: true, licenseStatus: status }
     } else {
-      effectiveConfig = { ...loaded, licenseStatus: status }
+      effectiveConfig = { ...effectiveConfig, licenseStatus: status }
     }
   }
   return {
@@ -310,11 +381,19 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
     applyRuntimeConfig(config)
     const serverStart = await serverManager.startServer({ port, dbFile })
     if (!serverStart?.success) {
-      return { success: false, error: serverStart?.error || 'Failed to start server during setup' }
+      return {
+        success: false,
+        code: 'SERVER_ERROR',
+        error: serverStart?.error || 'Failed to start server during setup'
+      }
     }
     const apiReady = await waitForApiReady(`http://localhost:${port}`)
     if (!apiReady) {
-      return { success: false, error: 'Server started but API is not ready yet. Please retry in a moment.' }
+      return {
+        success: false,
+        code: 'SERVER_ERROR',
+        error: 'Server started but API is not ready yet. Please retry in a moment.'
+      }
     }
 
     const currentStatus = await licenseManager.getStatus(deviceFingerprint)
@@ -330,7 +409,13 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
         company_phone: companyPhone
       })
       if (!activation?.success) {
-        return { success: false, error: activation?.error || 'License activation failed', details: activation?.details || null }
+        const normalizedFailure = normalizeLicenseActivationFailure(activation?.error)
+        return {
+          success: false,
+          code: normalizedFailure.code,
+          error: normalizedFailure.error,
+          details: activation?.details || null
+        }
       }
     }
 
@@ -398,8 +483,20 @@ app.on('activate', async () => {
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
-    const effectiveCfg = await resolveEffectiveConfig(runtimeConfig || loadRuntimeConfig())
+    let effectiveCfg = resolveConfigByDbPresence(runtimeConfig || loadRuntimeConfig())
     applyRuntimeConfig(effectiveCfg)
+
+    if (effectiveCfg?.setupCompleted && effectiveCfg?.mode === 'server') {
+      const dbFile = effectiveCfg?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
+      const port = Number(effectiveCfg?.server?.port || 4000)
+      await serverManager.startServer({ port, dbFile })
+      const apiReady = await waitForApiReady(`http://localhost:${port}`)
+      if (apiReady) {
+        effectiveCfg = await resolveLicenseState(effectiveCfg)
+        applyRuntimeConfig(effectiveCfg)
+      }
+    }
+
     if (effectiveCfg?.setupCompleted) createMainWindow()
     else createWizardWindow()
   }
@@ -412,12 +509,18 @@ app.on('before-quit', async () => {
 
 app.whenReady().then(async () => {
   const cfg = loadRuntimeConfig()
-  const effectiveCfg = await resolveEffectiveConfig(cfg)
+  let effectiveCfg = resolveConfigByDbPresence(cfg)
   applyRuntimeConfig(effectiveCfg)
+
   if (effectiveCfg?.setupCompleted && effectiveCfg?.mode === 'server') {
     const dbFile = effectiveCfg?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
     const port = Number(effectiveCfg?.server?.port || 4000)
     await serverManager.startServer({ port, dbFile })
+    const apiReady = await waitForApiReady(`http://localhost:${port}`)
+    if (apiReady) {
+      effectiveCfg = await resolveLicenseState(effectiveCfg)
+      applyRuntimeConfig(effectiveCfg)
+    }
   }
   if (effectiveCfg?.setupCompleted) createMainWindow()
   else createWizardWindow()

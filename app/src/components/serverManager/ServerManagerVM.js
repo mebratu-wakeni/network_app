@@ -34,6 +34,9 @@ export default class ServerManagerVM extends ViewModel {
     this.setState('docker-status', { installed: false, running: false, error: 'Not used in sqlite-only mode' });
     this.setState('server-status', null);
     this.setState('api-health', null);
+    this.setState('connection-info', null);
+    this.setState('license-status', null);
+    this.setState('license-expiry-info', null);
     this.setState('starting', false);
     this.setState('stopping', false);
     this.setState('refreshing', false);
@@ -41,6 +44,7 @@ export default class ServerManagerVM extends ViewModel {
     this.setState('success', null);
     this.setState('lastUpdated', null);
     this.setState('mode', 'server');
+    this.setState('fingerprint', null);
     this.setState('dev-server-status', null);
     this.refreshDebounceTimer = null;
   }
@@ -77,6 +81,12 @@ export default class ServerManagerVM extends ViewModel {
     this.updateState('error', null);
     
     try {
+      const setup = await window.ipcRenderer.invoke('setup:get-config')
+      const mode = setup?.config?.mode || 'server'
+      const fingerprint = setup?.defaults?.deviceFingerprint || null
+      this.updateState('mode', mode)
+      this.updateState('fingerprint', fingerprint)
+
       // Check server status
       const status = await window.ipcRenderer.getServerStatus()
       this.updateState('server-status', status)
@@ -87,6 +97,18 @@ export default class ServerManagerVM extends ViewModel {
       
       const devStatus = await window.ipcRenderer.checkDevServerStatus()
       this.updateState('dev-server-status', devStatus)
+
+      const connectionInfo = await window.ipcRenderer.getConnectionInfo()
+      this.updateState('connection-info', connectionInfo)
+
+      if (mode === 'server') {
+        const licenseStatus = await window.ipcRenderer.invoke('license:get-status', fingerprint)
+        this.updateState('license-status', licenseStatus)
+        this.updateState('license-expiry-info', this.computeLicenseExpiryInfo(licenseStatus))
+      } else {
+        this.updateState('license-status', null)
+        this.updateState('license-expiry-info', null)
+      }
       
       // Update last refreshed timestamp
       this.updateState('lastUpdated', new Date().toLocaleTimeString());
@@ -176,4 +198,33 @@ export default class ServerManagerVM extends ViewModel {
   }
 
   async toggleMode() {}
+
+  computeLicenseExpiryInfo(licenseStatus) {
+    const license = licenseStatus?.license
+    if (!license || !licenseStatus?.valid) {
+      return { expiringSoon: false, expired: false, daysLeft: null, label: null }
+    }
+
+    const type = String(license.subscription_type || '').toLowerCase()
+    if (type === 'lifetime') {
+      return { expiringSoon: false, expired: false, daysLeft: null, label: 'Lifetime' }
+    }
+
+    if (!license.expires_at) {
+      return { expiringSoon: false, expired: false, daysLeft: null, label: 'No expiry date' }
+    }
+
+    const now = new Date()
+    const expiryDate = new Date(String(license.expires_at).slice(0, 10))
+    const msPerDay = 24 * 60 * 60 * 1000
+    const daysLeft = Math.ceil((expiryDate.getTime() - now.getTime()) / msPerDay)
+    const expired = daysLeft < 0
+    const expiringSoon = !expired && daysLeft <= 30
+    return {
+      expiringSoon,
+      expired,
+      daysLeft,
+      label: expired ? 'Expired' : `${daysLeft} day(s) remaining`
+    }
+  }
 }

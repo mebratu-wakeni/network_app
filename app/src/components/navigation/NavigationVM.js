@@ -152,7 +152,7 @@ class NavigationVM extends ViewModel {
     try {
       const res = await window.ipcRenderer.invoke('setup:save-config', payload)
       if (!res?.success) {
-        this.updateState('setup-error', res?.error || 'Failed to save setup')
+        this.updateState('setup-error', this.normalizeSetupError(res?.error, res?.details, res?.code))
         return false
       }
       this.updateState('setup-config', res.config || null)
@@ -161,11 +161,51 @@ class NavigationVM extends ViewModel {
       } catch (_) {}
       return true
     } catch (e) {
-      this.updateState('setup-error', e.message || 'Failed to save setup')
+      this.updateState('setup-error', this.normalizeSetupError(e?.message, e?.details, e?.code))
       return false
     } finally {
       this.updateState('setup-loading', false)
     }
+  }
+
+  normalizeSetupError(errorMessage, details = null, code = null) {
+    if (code === 'INVALID_INSTALLATION_KEY') {
+      return 'Installation key is invalid. Please verify and try again.'
+    }
+    if (code === 'INVALID_LICENSE_KEY') {
+      return 'License key is invalid. Please verify the key and try again.'
+    }
+    if (code === 'LICENSE_ALREADY_BOUND') {
+      return 'This license is already activated on another machine. Contact admin for a manual reset.'
+    }
+    if (code === 'SERVER_ERROR') {
+      return 'Unable to reach the license validation service right now. Check internet and Google Script URL, then retry.'
+    }
+
+    const msg = String(errorMessage || '').toLowerCase()
+
+    if (msg.includes('invalid installation key')) {
+      return 'Installation key is invalid. Please verify and try again.'
+    }
+    if (msg.includes('license activation failed') || msg.includes('invalid license') || msg.includes('license key')) {
+      return String(errorMessage || 'License activation failed. Please verify the license key and try again.')
+    }
+    if (
+      msg.includes('fetch failed') ||
+      msg.includes('api_unavailable') ||
+      msg.includes('econnrefused') ||
+      msg.includes('networkerror') ||
+      msg.includes('license server') ||
+      msg.includes('timed out')
+    ) {
+      return 'Unable to reach the license validation service. Check internet and Google Script URL, then try again.'
+    }
+    if (msg.includes('license_script_url')) {
+      return 'License service URL is not configured on this machine. Please contact the administrator.'
+    }
+
+    if (details?.message) return String(details.message)
+    return String(errorMessage || 'Failed to save setup')
   }
 
 }

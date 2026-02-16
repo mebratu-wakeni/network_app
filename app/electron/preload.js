@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   stopServer: (mode) => ipcRenderer.invoke('server:stop', mode),
   getServerStatus: () => ipcRenderer.invoke('server:status'),
   checkServerHealth: () => ipcRenderer.invoke('server:health'),
+  getConnectionInfo: () => ipcRenderer.invoke('server:connection-info'),
   getServerLogs: (service, lines) => ipcRenderer.invoke('server:logs', service, lines),
   checkDevServerStatus: () => ipcRenderer.invoke('server:check-dev-status'),
 

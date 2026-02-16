@@ -33,6 +33,7 @@ export function App() {
 
 function SetupLayout(props) {
   const defaults = props.viewModel.getState('setup-defaults') || {}
+  const setupConfig = props.viewModel.getState('setup-config') || {}
   const setupError = props.viewModel.getState('setup-error')
   const loading = props.viewModel.getState('setup-loading')
   const stepLabelsByMode = {
@@ -64,6 +65,23 @@ function SetupLayout(props) {
   if (stepIndexRaw !== stepIndex) props.setLocalState('setup-step-index', stepIndex)
   const progressPercent = Math.round(((stepIndex + 1) / stepLabels.length) * 100)
   const currentStep = stepLabels[stepIndex]
+  const knownLicense = setupConfig?.licenseStatus?.license || null
+  const knownLicenseStatus = setupConfig?.licenseStatus || null
+
+  const maskedLicenseKey = (value) => {
+    const v = String(value || '')
+    if (!v) return '-'
+    if (v.length <= 8) return v
+    return `${v.slice(0, 4)}...${v.slice(-4)}`
+  }
+
+  const formatDuration = (license) => {
+    if (!license) return '-'
+    const type = String(license.subscription_type || '').toLowerCase()
+    if (type === 'lifetime') return 'Lifetime'
+    if (license.expires_at) return `Until ${String(license.expires_at).slice(0, 10)}`
+    return '-'
+  }
 
   const saveSetup = async () => {
     const payload = mode === 'server'
@@ -211,7 +229,13 @@ function SetupLayout(props) {
     return Row({ class: 'text-sm text-gray-700 space-y-2' }, [
       Row({ class: 'font-medium' }, 'Review setup'),
       Row({}, mode === 'server' ? `Mode: Server, Port: ${port}` : `Mode: Client, URL: ${serverUrl || '-'}`),
-      Row({}, mode === 'server' ? `Database: ${dbDir || '-'}` : '')
+      Row({}, mode === 'server' ? `Database: ${dbDir || '-'}` : ''),
+      mode === 'server' ? Row({}, `Installation key: ${installationKey ? 'Provided' : 'Not provided'}`) : null,
+      mode === 'server' ? Row({}, `Entered license key: ${maskedLicenseKey(licenseKey)}`) : null,
+      mode === 'server' ? Row({}, `Current local license status: ${knownLicenseStatus?.valid ? 'Valid' : (knownLicenseStatus?.reason || 'Not validated yet')}`) : null,
+      mode === 'server' ? Row({}, `Current local subscription: ${knownLicense?.subscription_type || '-'}`) : null,
+      mode === 'server' ? Row({}, `Current local duration: ${formatDuration(knownLicense)}`) : null,
+      mode === 'server' ? Row({ class: 'text-xs text-gray-500 mt-2' }, 'On Finish, the app validates license and installation keys online. If the service is unreachable, setup shows a clear retry message.') : null
     ])
   }
 

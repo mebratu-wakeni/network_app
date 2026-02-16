@@ -23,6 +23,7 @@ electron.contextBridge.exposeInMainWorld("ipcRenderer", {
   stopServer: (mode) => electron.ipcRenderer.invoke("server:stop", mode),
   getServerStatus: () => electron.ipcRenderer.invoke("server:status"),
   checkServerHealth: () => electron.ipcRenderer.invoke("server:health"),
+  getConnectionInfo: () => electron.ipcRenderer.invoke("server:connection-info"),
   getServerLogs: (service, lines) => electron.ipcRenderer.invoke("server:logs", service, lines),
   checkDevServerStatus: () => electron.ipcRenderer.invoke("server:check-dev-status")
   // Note: For user management and other APIs, use invoke() directly:
