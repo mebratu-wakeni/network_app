@@ -20,7 +20,8 @@ function ActionDropdown(props, children) {
     onToggle = () => { },
     class: className = '',
     buttonClass = '',
-    menuClass = ''
+    menuClass = '',
+    trigger = null
   } = props;
 
   const rootClass = twMerge(
@@ -40,7 +41,7 @@ function ActionDropdown(props, children) {
 
   const menuBaseClass = twMerge(
     `
-      absolute right-0 mt-2 min-w-40
+      absolute right-0 top-full mt-2 min-w-40
       rounded-md bg-gray-200
       border border-gray-300
       shadow-lg z-50 cursor-pointer
@@ -62,7 +63,7 @@ function ActionDropdown(props, children) {
         }
       }
     }, [
-      IonIcon({ name: 'ellipsis-vertical-outline', size: 'small' })
+      trigger || IonIcon({ name: 'ellipsis-vertical-outline', size: 'small' })
     ]),
 
     open && Row({ class: menuBaseClass }, children)

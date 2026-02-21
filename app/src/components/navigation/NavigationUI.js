@@ -60,7 +60,8 @@ export default function  NavigationUI(props) {
   const auth = props.viewModel.getState('auth') || {};
   const userRules = (auth.user && auth.user.rules) ? auth.user.rules : [];
   const menuOptions = props.viewModel.menuOptions.filter(opt =>
-    !opt.requireRule || (Array.isArray(userRules) && userRules.includes(opt.requireRule))
+    opt.showInNav !== false &&
+    (!opt.requireRule || (Array.isArray(userRules) && userRules.includes(opt.requireRule)))
   );
 
   return Row({ tagType: 'ul', class: "space-y-2" }, [

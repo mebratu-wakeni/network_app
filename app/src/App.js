@@ -27,7 +27,7 @@ export function App() {
     return MainLayout(props, main, router);
   };
 
-  return StatefulRow({id: 'App', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'setup-defaults', 'setup-error'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'setup-defaults', 'setup-error', 'auth'], viewModel: navigationVM }, render);
   
 }
 
@@ -286,7 +286,7 @@ function MainLayout(props, main, router) {
       NavigationUI({ router, ...props }),
     ]),
     Row({ class: 'h-screen flex-1 flex flex-col' }, [
-      HeaderUI(),
+      HeaderUI({ router, navigationVM: props.viewModel }),
       Row({ tagType: 'div', class: 'flex-1  min-h-0 overflow-hidden' }, [main]),
       FooterUI()
     ])

@@ -11368,14 +11368,7 @@ var _eval = EvalError;
 var range = RangeError;
 var ref = ReferenceError;
 var syntax = SyntaxError;
-var type;
-var hasRequiredType;
-function requireType() {
-  if (hasRequiredType) return type;
-  hasRequiredType = 1;
-  type = TypeError;
-  return type;
-}
+var type = TypeError;
 var uri = URIError;
 var abs$1 = Math.abs;
 var floor$1 = Math.floor;
@@ -11621,7 +11614,7 @@ function requireCallBindApplyHelpers() {
   if (hasRequiredCallBindApplyHelpers) return callBindApplyHelpers;
   hasRequiredCallBindApplyHelpers = 1;
   var bind3 = functionBind;
-  var $TypeError2 = requireType();
+  var $TypeError2 = type;
   var $call2 = requireFunctionCall();
   var $actualApply = requireActualApply();
   callBindApplyHelpers = function callBindBasic(args) {
@@ -11694,7 +11687,7 @@ var $EvalError = _eval;
 var $RangeError = range;
 var $ReferenceError = ref;
 var $SyntaxError = syntax;
-var $TypeError$1 = requireType();
+var $TypeError$1 = type;
 var $URIError = uri;
 var abs = abs$1;
 var floor = floor$1;
@@ -12025,7 +12018,7 @@ var GetIntrinsic2 = getIntrinsic;
 var $defineProperty = GetIntrinsic2("%Object.defineProperty%", true);
 var hasToStringTag = requireShams()();
 var hasOwn$1 = hasown;
-var $TypeError = requireType();
+var $TypeError = type;
 var toStringTag = hasToStringTag ? Symbol.toStringTag : null;
 var esSetTostringtag = function setToStringTag(object, value) {
   var overrideIfSet = arguments.length > 2 && !!arguments[2] && arguments[2].force;
@@ -16328,7 +16321,16 @@ function getDefaultDbDirectory() {
 function getRuntimeConfigPath() {
   return path$2.join(app.getPath("userData"), "runtime-config.json");
 }
-function getDeviceFingerprint() {
+function getMachineFingerprintPath() {
+  return path$2.join(app.getPath("userData"), "machine-fingerprint.json");
+}
+function getLegacyDbPath() {
+  return path$2.join(process.env.APP_ROOT || path$2.join(__dirname, ".."), "..", "api", "data", DB_FILE_NAME);
+}
+function isValidFingerprint(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+function computeVolatileFingerprint() {
   const interfaces = os.networkInterfaces();
   const macs = Object.values(interfaces).flat().filter((i) => i && !i.internal && i.mac && i.mac !== "00:00:00:00:00:00").map((i) => i.mac).sort().join("|");
   const seed = [
@@ -16339,6 +16341,39 @@ function getDeviceFingerprint() {
     macs
   ].join("::");
   return crypto$1.createHash("sha256").update(seed).digest("hex");
+}
+function readPersistedFingerprint() {
+  try {
+    const fpPath = getMachineFingerprintPath();
+    if (!fs$1.existsSync(fpPath)) return null;
+    const parsed = JSON.parse(fs$1.readFileSync(fpPath, "utf8"));
+    const value = parsed == null ? void 0 : parsed.fingerprint;
+    return isValidFingerprint(value) ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+function persistFingerprint(fingerprint) {
+  if (!isValidFingerprint(fingerprint)) return;
+  const fpPath = getMachineFingerprintPath();
+  fs$1.mkdirSync(path$2.dirname(fpPath), { recursive: true });
+  fs$1.writeFileSync(fpPath, JSON.stringify({
+    fingerprint,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  }, null, 2), "utf8");
+}
+function getDeviceFingerprint() {
+  var _a;
+  const persisted = readPersistedFingerprint();
+  if (persisted) return persisted;
+  const fromConfig = (runtimeConfig == null ? void 0 : runtimeConfig.machineFingerprint) || ((_a = loadRuntimeConfig()) == null ? void 0 : _a.machineFingerprint) || null;
+  if (isValidFingerprint(fromConfig)) {
+    persistFingerprint(fromConfig);
+    return fromConfig;
+  }
+  const computed = computeVolatileFingerprint();
+  persistFingerprint(computed);
+  return computed;
 }
 function normalizeServerUrl(url) {
   if (!url) return null;
@@ -16408,23 +16443,68 @@ async function waitForApiReady(apiRoot, timeoutMs = 15e3, intervalMs = 300) {
   return false;
 }
 function resolveConfigByDbPresence(initialConfig) {
-  var _a;
+  var _a, _b;
   const loaded = initialConfig || loadRuntimeConfig();
-  if (!(loaded == null ? void 0 : loaded.setupCompleted) || (loaded == null ? void 0 : loaded.mode) !== "server") return loaded;
-  const dbFile = ((_a = loaded == null ? void 0 : loaded.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
-  const hasServerDb = !!(dbFile && fs$1.existsSync(dbFile));
-  if (!hasServerDb) return { ...loaded, setupCompleted: false };
+  const configuredPort = Number(((_a = loaded == null ? void 0 : loaded.server) == null ? void 0 : _a.port) || 4e3);
+  const dbCandidates = [
+    (_b = loaded == null ? void 0 : loaded.server) == null ? void 0 : _b.dbFile,
+    process.env.DB_FILE,
+    path$2.join(getDefaultDbDirectory(), DB_FILE_NAME),
+    getLegacyDbPath()
+  ].filter(Boolean);
+  const existingDbFile = dbCandidates.find((candidate) => {
+    try {
+      return fs$1.existsSync(candidate);
+    } catch (_) {
+      return false;
+    }
+  }) || null;
+  if ((loaded == null ? void 0 : loaded.setupCompleted) && (loaded == null ? void 0 : loaded.mode) === "server") {
+    if (!existingDbFile) return { ...loaded, setupCompleted: false };
+    return {
+      ...loaded,
+      server: {
+        dbDirectory: path$2.dirname(existingDbFile),
+        dbFile: existingDbFile,
+        port: configuredPort
+      },
+      apiBaseUrl: `http://localhost:${configuredPort}/api`
+    };
+  }
+  if (!(loaded == null ? void 0 : loaded.setupCompleted) && existingDbFile) {
+    return {
+      ...loaded,
+      setupCompleted: true,
+      mode: "server",
+      server: {
+        dbDirectory: path$2.dirname(existingDbFile),
+        dbFile: existingDbFile,
+        port: configuredPort
+      },
+      apiBaseUrl: `http://localhost:${configuredPort}/api`
+    };
+  }
   return loaded;
 }
 async function resolveLicenseState(initialConfig) {
+  var _a;
   const loaded = initialConfig || loadRuntimeConfig();
   if (!(loaded == null ? void 0 : loaded.setupCompleted) || (loaded == null ? void 0 : loaded.mode) !== "server") return loaded;
-  const fingerprint = getDeviceFingerprint();
-  const status = await licenseManager.getStatus(fingerprint);
-  if ((status == null ? void 0 : status.success) === true && (status == null ? void 0 : status.valid) === false) {
-    return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status };
+  let fingerprint = getDeviceFingerprint();
+  let status = await licenseManager.getStatus(fingerprint);
+  if ((status == null ? void 0 : status.success) === true && (status == null ? void 0 : status.valid) === false && (status == null ? void 0 : status.reason) === "fingerprint_mismatch") {
+    const localStatus = await licenseManager.getStatus(null);
+    const localFingerprint = (_a = localStatus == null ? void 0 : localStatus.license) == null ? void 0 : _a.device_fingerprint;
+    if ((localStatus == null ? void 0 : localStatus.success) === true && (localStatus == null ? void 0 : localStatus.valid) === true && isValidFingerprint(localFingerprint)) {
+      persistFingerprint(localFingerprint);
+      fingerprint = localFingerprint;
+      status = await licenseManager.getStatus(fingerprint);
+    }
   }
-  return { ...loaded, licenseStatus: status };
+  if ((status == null ? void 0 : status.success) === true && (status == null ? void 0 : status.valid) === false) {
+    return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status, machineFingerprint: fingerprint };
+  }
+  return { ...loaded, licenseStatus: status, machineFingerprint: fingerprint };
 }
 const iconPath = path$2.join(__dirname, "..", "public", "masatech-logo.png");
 const iconImage = nativeImage.createFromPath(iconPath);
@@ -16544,21 +16624,19 @@ ipcMain.handle("server:check-dev-status", async () => {
   return await serverManager.checkDevServerStatus();
 });
 ipcMain.handle("setup:get-config", async () => {
+  var _a, _b;
   const loaded = runtimeConfig || loadRuntimeConfig();
   const defaultDir = getDefaultDbDirectory();
   try {
     fs$1.mkdirSync(defaultDir, { recursive: true });
   } catch (_) {
   }
-  const fingerprint = getDeviceFingerprint();
   let effectiveConfig = resolveConfigByDbPresence(loaded);
-  if ((effectiveConfig == null ? void 0 : effectiveConfig.setupCompleted) && (effectiveConfig == null ? void 0 : effectiveConfig.mode) === "server") {
-    const status = await licenseManager.getStatus(fingerprint);
-    if ((status == null ? void 0 : status.success) === true && (status == null ? void 0 : status.valid) === false) {
-      effectiveConfig = { ...effectiveConfig, setupCompleted: false, licenseRequired: true, licenseStatus: status };
-    } else {
-      effectiveConfig = { ...effectiveConfig, licenseStatus: status };
-    }
+  effectiveConfig = await resolveLicenseState(effectiveConfig);
+  const fingerprint = getDeviceFingerprint();
+  if ((effectiveConfig == null ? void 0 : effectiveConfig.setupCompleted) && (effectiveConfig == null ? void 0 : effectiveConfig.mode) === "server" && (!(loaded == null ? void 0 : loaded.setupCompleted) || ((_a = loaded == null ? void 0 : loaded.server) == null ? void 0 : _a.dbFile) !== ((_b = effectiveConfig == null ? void 0 : effectiveConfig.server) == null ? void 0 : _b.dbFile))) {
+    saveRuntimeConfig(effectiveConfig);
+    applyRuntimeConfig(effectiveConfig);
   }
   return {
     success: true,
@@ -16578,7 +16656,7 @@ ipcMain.handle("app:quit", async () => {
 });
 ipcMain.handle("setup:save-config", async (_event, payload) => {
   const mode = (payload == null ? void 0 : payload.mode) === "client" ? "client" : "server";
-  const base = { setupCompleted: true, mode };
+  const base = { setupCompleted: true, mode, machineFingerprint: getDeviceFingerprint() };
   if (mode === "server") {
     const dbDirectory = path$2.resolve((payload == null ? void 0 : payload.dbDirectory) || getDefaultDbDirectory());
     fs$1.mkdirSync(dbDirectory, { recursive: true });

@@ -10,8 +10,8 @@ const MENU = [
   { title: 'Customers', route: '/customers', icon: "business-outline" },
   { title: 'Server', route: '/server', icon: "server-outline" },
   { title: 'Users', route: '/users', icon: "people-outline" },
-  { title: 'Settings', route: '/settings', icon: 'settings-outline', requireRule: 'CanEditSettings' },
-  { title: 'Profile', route: '/user-profile', icon: 'person-outline' }
+  { title: 'Settings', route: '/settings', icon: 'settings-outline', requireRule: 'CanEditSettings', showInNav: false },
+  { title: 'Profile', route: '/user-profile', icon: 'person-outline', showInNav: false }
 ]
 
 class NavigationVM extends ViewModel {
@@ -101,7 +101,7 @@ class NavigationVM extends ViewModel {
   // Logout: clear token and reset auth state
   logout() {
     try { localStorage.removeItem('authToken') } catch (e) {}
-    this.setState('auth', {
+    this.updateState('auth', {
       isAuthenticated: false,
       user: null,
       token: null,

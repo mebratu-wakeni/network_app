@@ -71,7 +71,20 @@ function getRuntimeConfigPath() {
   return path.join(app.getPath('userData'), 'runtime-config.json')
 }
 
-function getDeviceFingerprint() {
+function getMachineFingerprintPath() {
+  return path.join(app.getPath('userData'), 'machine-fingerprint.json')
+}
+
+function getLegacyDbPath() {
+  // Legacy/dev location used before runtime config-driven dbDirectory.
+  return path.join(process.env.APP_ROOT || path.join(__dirname, '..'), '..', 'api', 'data', DB_FILE_NAME)
+}
+
+function isValidFingerprint(value) {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
+
+function computeVolatileFingerprint() {
   const interfaces = os.networkInterfaces()
   const macs = Object.values(interfaces)
     .flat()
@@ -87,6 +100,44 @@ function getDeviceFingerprint() {
     macs
   ].join('::')
   return crypto.createHash('sha256').update(seed).digest('hex')
+}
+
+function readPersistedFingerprint() {
+  try {
+    const fpPath = getMachineFingerprintPath()
+    if (!fs.existsSync(fpPath)) return null
+    const parsed = JSON.parse(fs.readFileSync(fpPath, 'utf8'))
+    const value = parsed?.fingerprint
+    return isValidFingerprint(value) ? value : null
+  } catch (_) {
+    return null
+  }
+}
+
+function persistFingerprint(fingerprint) {
+  if (!isValidFingerprint(fingerprint)) return
+  const fpPath = getMachineFingerprintPath()
+  fs.mkdirSync(path.dirname(fpPath), { recursive: true })
+  fs.writeFileSync(fpPath, JSON.stringify({
+    fingerprint,
+    createdAt: new Date().toISOString()
+  }, null, 2), 'utf8')
+}
+
+function getDeviceFingerprint() {
+  const persisted = readPersistedFingerprint()
+  if (persisted) return persisted
+
+  const fromConfig = runtimeConfig?.machineFingerprint || loadRuntimeConfig()?.machineFingerprint || null
+  if (isValidFingerprint(fromConfig)) {
+    persistFingerprint(fromConfig)
+    return fromConfig
+  }
+
+  // One-time bootstrap from legacy algorithm, then persist forever.
+  const computed = computeVolatileFingerprint()
+  persistFingerprint(computed)
+  return computed
 }
 
 function normalizeServerUrl(url) {
@@ -173,11 +224,49 @@ async function waitForApiReady(apiRoot, timeoutMs = 15000, intervalMs = 300) {
 
 function resolveConfigByDbPresence(initialConfig) {
   const loaded = initialConfig || loadRuntimeConfig()
-  if (!loaded?.setupCompleted || loaded?.mode !== 'server') return loaded
+  const configuredPort = Number(loaded?.server?.port || 4000)
+  const dbCandidates = [
+    loaded?.server?.dbFile,
+    process.env.DB_FILE,
+    path.join(getDefaultDbDirectory(), DB_FILE_NAME),
+    getLegacyDbPath()
+  ].filter(Boolean)
+  const existingDbFile = dbCandidates.find((candidate) => {
+    try {
+      return fs.existsSync(candidate)
+    } catch (_) {
+      return false
+    }
+  }) || null
 
-  const dbFile = loaded?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
-  const hasServerDb = !!(dbFile && fs.existsSync(dbFile))
-  if (!hasServerDb) return { ...loaded, setupCompleted: false }
+  if (loaded?.setupCompleted && loaded?.mode === 'server') {
+    if (!existingDbFile) return { ...loaded, setupCompleted: false }
+    return {
+      ...loaded,
+      server: {
+        dbDirectory: path.dirname(existingDbFile),
+        dbFile: existingDbFile,
+        port: configuredPort
+      },
+      apiBaseUrl: `http://localhost:${configuredPort}/api`
+    }
+  }
+
+  // Recovery path: infer server setup when config is missing/stale but DB exists.
+  if (!loaded?.setupCompleted && existingDbFile) {
+    return {
+      ...loaded,
+      setupCompleted: true,
+      mode: 'server',
+      server: {
+        dbDirectory: path.dirname(existingDbFile),
+        dbFile: existingDbFile,
+        port: configuredPort
+      },
+      apiBaseUrl: `http://localhost:${configuredPort}/api`
+    }
+  }
+
   return loaded
 }
 
@@ -185,14 +274,27 @@ async function resolveLicenseState(initialConfig) {
   const loaded = initialConfig || loadRuntimeConfig()
   if (!loaded?.setupCompleted || loaded?.mode !== 'server') return loaded
 
-  const fingerprint = getDeviceFingerprint()
-  const status = await licenseManager.getStatus(fingerprint)
+  let fingerprint = getDeviceFingerprint()
+  let status = await licenseManager.getStatus(fingerprint)
+
+  // Compatibility path: if fingerprint changed but a valid local active license exists,
+  // adopt that stored fingerprint once and persist it as stable machine identity.
+  if (status?.success === true && status?.valid === false && status?.reason === 'fingerprint_mismatch') {
+    const localStatus = await licenseManager.getStatus(null)
+    const localFingerprint = localStatus?.license?.device_fingerprint
+    if (localStatus?.success === true && localStatus?.valid === true && isValidFingerprint(localFingerprint)) {
+      persistFingerprint(localFingerprint)
+      fingerprint = localFingerprint
+      status = await licenseManager.getStatus(fingerprint)
+    }
+  }
+
   // Only force setup if license is definitively invalid.
   // Transient API unavailability should not trigger setup wizard repeatedly.
   if (status?.success === true && status?.valid === false) {
-    return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status }
+    return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status, machineFingerprint: fingerprint }
   }
-  return { ...loaded, licenseStatus: status }
+  return { ...loaded, licenseStatus: status, machineFingerprint: fingerprint }
 }
 
 const iconPath = path.join(__dirname, '..', 'public', 'masatech-logo.png');
@@ -332,15 +434,17 @@ ipcMain.handle('setup:get-config', async () => {
   const loaded = runtimeConfig || loadRuntimeConfig()
   const defaultDir = getDefaultDbDirectory()
   try { fs.mkdirSync(defaultDir, { recursive: true }) } catch (_) {}
-  const fingerprint = getDeviceFingerprint()
   let effectiveConfig = resolveConfigByDbPresence(loaded)
-  if (effectiveConfig?.setupCompleted && effectiveConfig?.mode === 'server') {
-    const status = await licenseManager.getStatus(fingerprint)
-    if (status?.success === true && status?.valid === false) {
-      effectiveConfig = { ...effectiveConfig, setupCompleted: false, licenseRequired: true, licenseStatus: status }
-    } else {
-      effectiveConfig = { ...effectiveConfig, licenseStatus: status }
-    }
+  effectiveConfig = await resolveLicenseState(effectiveConfig)
+  const fingerprint = getDeviceFingerprint()
+  // Persist recovered setup so restart path is stable.
+  if (
+    effectiveConfig?.setupCompleted &&
+    effectiveConfig?.mode === 'server' &&
+    (!loaded?.setupCompleted || loaded?.server?.dbFile !== effectiveConfig?.server?.dbFile)
+  ) {
+    saveRuntimeConfig(effectiveConfig)
+    applyRuntimeConfig(effectiveConfig)
   }
   return {
     success: true,
@@ -362,7 +466,7 @@ ipcMain.handle('app:quit', async () => {
 
 ipcMain.handle('setup:save-config', async (_event, payload) => {
   const mode = payload?.mode === 'client' ? 'client' : 'server'
-  const base = { setupCompleted: true, mode }
+  const base = { setupCompleted: true, mode, machineFingerprint: getDeviceFingerprint() }
   if (mode === 'server') {
     const dbDirectory = path.resolve(payload?.dbDirectory || getDefaultDbDirectory())
     fs.mkdirSync(dbDirectory, { recursive: true })

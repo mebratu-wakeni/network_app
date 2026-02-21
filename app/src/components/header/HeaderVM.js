@@ -8,10 +8,11 @@ import { HEALTH_CHECK_INTERVAL } from './headerConfig.js';
 import { getApiUrl } from '../../../electron/config/apiConfig.js';
 
 export default class HeaderVM extends ViewModel {
-  constructor(stateManager = new SharedStateManager()) {
+  constructor(stateManager = new SharedStateManager(), options = {}) {
     super(stateManager);
     this.initializeState();
-    this.navigationVM = navigationVM;
+    this.navigationVM = options.navigationVM || navigationVM;
+    this.router = options.router || null;
     this.intervalId = null;
     this.checkHealthStatus();
   }
@@ -25,6 +26,7 @@ export default class HeaderVM extends ViewModel {
     this.setState('dbHealth', null);
     this.setState('apiHealth', null);
     this.setState('user', {});
+    this.setState('userMenuActionId', null);
   }
 
   /**
@@ -34,21 +36,46 @@ export default class HeaderVM extends ViewModel {
     const authUser = this.navigationVM.getState('auth')?.user || null;
     
     if (!authUser) {
-      this.updateState('user', {
+      const guestUser = {
         name: 'Guest',
         display_name: null,
         avatar_url: null,
-        username: null
-      });
+        username: null,
+        rules: []
+      };
+      const current = this.getState('user') || {};
+      if (
+        current.name !== guestUser.name ||
+        current.display_name !== guestUser.display_name ||
+        current.avatar_url !== guestUser.avatar_url ||
+        current.username !== guestUser.username
+      ) {
+        this.updateState('user', guestUser);
+      }
       return;
     }
     
-    this.updateState('user', {
+    const nextUser = {
       name: authUser.display_name || 'User',
       avatar_url: authUser.avatar_url || null,
       display_name: authUser.display_name || null,
-      username: authUser.username || null
-    });
+      username: authUser.username || null,
+      rules: Array.isArray(authUser.rules) ? authUser.rules : []
+    };
+
+    const current = this.getState('user') || {};
+    const currentRules = Array.isArray(current.rules) ? current.rules : [];
+    const nextRules = nextUser.rules;
+    const sameRules = currentRules.length === nextRules.length && currentRules.every((rule, idx) => rule === nextRules[idx]);
+    if (
+      current.name !== nextUser.name ||
+      current.display_name !== nextUser.display_name ||
+      current.avatar_url !== nextUser.avatar_url ||
+      current.username !== nextUser.username ||
+      !sameRules
+    ) {
+      this.updateState('user', nextUser);
+    }
   }
 
   /**
@@ -135,6 +162,68 @@ export default class HeaderVM extends ViewModel {
   toggleNav() {
     const current = this.getState('navCollapsed');
     this.updateState('navCollapsed', !current);
+  }
+
+  goToProfile() {
+    this.navigationVM.updateState('active-menu', 'Profile');
+    if (this.router && typeof this.router.navigate === 'function') {
+      this.router.navigate('/user-profile');
+    }
+  }
+
+  goToSettings() {
+    this.navigationVM.updateState('active-menu', 'Settings');
+    if (this.router && typeof this.router.navigate === 'function') {
+      this.router.navigate('/settings');
+    }
+  }
+
+  async logout() {
+    await this.navigationVM.logout();
+  }
+
+  getUserRules() {
+    const user = this.getState('user') || {};
+    const rules = user.rules || this.navigationVM.getState('auth')?.user?.rules || [];
+    return Array.isArray(rules) ? rules : [];
+  }
+
+  hasUserRule(ruleKey) {
+    const rules = this.getUserRules();
+    return rules.includes('admin') || rules.includes(ruleKey);
+  }
+
+  getUserMenuOptions() {
+    const auth = this.navigationVM.getState('auth') || {};
+    if (!auth.isAuthenticated) return [];
+
+    const options = [
+      {
+        key: 'profile',
+        label: 'Profile',
+        icon: 'person-circle-outline',
+        onClick: () => this.goToProfile()
+      }
+    ];
+
+    if (this.hasUserRule('CanEditSettings')) {
+      options.push({
+        key: 'settings',
+        label: 'Settings',
+        icon: 'settings-outline',
+        onClick: () => this.goToSettings()
+      });
+    }
+
+    options.push({
+      key: 'logout',
+      label: 'Logout',
+      icon: 'log-out-outline',
+      danger: true,
+      onClick: () => this.logout()
+    });
+
+    return options;
   }
 
   /**
