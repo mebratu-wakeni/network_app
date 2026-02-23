@@ -57,6 +57,9 @@ const APP_NAME = 'PharmaSuitLAN'
 const DB_FILE_NAME = 'pharmasuit_lan.db'
 
 function getDefaultDbDirectory() {
+  if (VITE_DEV_SERVER_URL) {
+    return path.dirname(getLegacyDbPath())
+  }
   if (process.platform === 'win32') {
     const programData = process.env.ProgramData || 'C:\\ProgramData'
     return path.join(programData, APP_NAME, 'data')
@@ -81,25 +84,14 @@ function getLegacyDbPath() {
 }
 
 function isValidFingerprint(value) {
-  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+  if (typeof value !== 'string') return false
+  const legacySha256 = /^[a-f0-9]{64}$/i
+  const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return legacySha256.test(value) || uuidV4.test(value)
 }
 
-function computeVolatileFingerprint() {
-  const interfaces = os.networkInterfaces()
-  const macs = Object.values(interfaces)
-    .flat()
-    .filter((i) => i && !i.internal && i.mac && i.mac !== '00:00:00:00:00:00')
-    .map((i) => i.mac)
-    .sort()
-    .join('|')
-  const seed = [
-    os.hostname(),
-    os.platform(),
-    os.arch(),
-    os.release(),
-    macs
-  ].join('::')
-  return crypto.createHash('sha256').update(seed).digest('hex')
+function generateStableFingerprint() {
+  return crypto.randomUUID()
 }
 
 function readPersistedFingerprint() {
@@ -128,16 +120,9 @@ function getDeviceFingerprint() {
   const persisted = readPersistedFingerprint()
   if (persisted) return persisted
 
-  const fromConfig = runtimeConfig?.machineFingerprint || loadRuntimeConfig()?.machineFingerprint || null
-  if (isValidFingerprint(fromConfig)) {
-    persistFingerprint(fromConfig)
-    return fromConfig
-  }
-
-  // One-time bootstrap from legacy algorithm, then persist forever.
-  const computed = computeVolatileFingerprint()
-  persistFingerprint(computed)
-  return computed
+  const generated = generateStableFingerprint()
+  persistFingerprint(generated)
+  return generated
 }
 
 function normalizeServerUrl(url) {
@@ -151,25 +136,77 @@ function loadRuntimeConfig() {
   try {
     const cfgPath = getRuntimeConfigPath()
     if (!fs.existsSync(cfgPath)) {
-      return { setupCompleted: false }
+      return normalizeRuntimeConfig({ setupCompleted: false })
     }
     const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
-    return parsed && typeof parsed === 'object' ? parsed : { setupCompleted: false }
+    return normalizeRuntimeConfig(parsed && typeof parsed === 'object' ? parsed : { setupCompleted: false })
   } catch (e) {
-    return { setupCompleted: false }
+    return normalizeRuntimeConfig({ setupCompleted: false })
   }
 }
 
 function saveRuntimeConfig(config) {
+  const normalized = normalizeRuntimeConfig(config)
   const cfgPath = getRuntimeConfigPath()
   fs.mkdirSync(path.dirname(cfgPath), { recursive: true })
-  fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2), 'utf8')
+  fs.writeFileSync(cfgPath, JSON.stringify(normalized, null, 2), 'utf8')
+}
+
+function normalizeRuntimeConfig(inputConfig) {
+  const source = inputConfig && typeof inputConfig === 'object' ? inputConfig : {}
+  const mode = source?.mode === 'client' ? 'client' : 'server'
+  const profiles = source?.profiles && typeof source.profiles === 'object' ? source.profiles : {}
+  const existingServerProfile = profiles?.server && typeof profiles.server === 'object' ? profiles.server : {}
+  const existingClientProfile = profiles?.client && typeof profiles.client === 'object' ? profiles.client : {}
+
+  const migratedServerProfile = {
+    ...existingServerProfile,
+    ...(source?.server ? { server: source.server } : {}),
+    ...(source?.mode === 'server' && typeof source?.setupCompleted === 'boolean'
+      ? { setupCompleted: source.setupCompleted }
+      : {})
+  }
+
+  const migratedClientProfile = {
+    ...existingClientProfile,
+    ...(source?.client ? { client: source.client } : {}),
+    ...(source?.mode === 'client' && typeof source?.setupCompleted === 'boolean'
+      ? { setupCompleted: source.setupCompleted }
+      : {})
+  }
+
+  if (typeof migratedServerProfile.setupCompleted !== 'boolean') {
+    migratedServerProfile.setupCompleted = !!(migratedServerProfile?.server?.dbFile || migratedServerProfile?.server?.dbDirectory)
+  }
+  if (typeof migratedClientProfile.setupCompleted !== 'boolean') {
+    migratedClientProfile.setupCompleted = !!migratedClientProfile?.client
+  }
+
+  const effectiveServer = migratedServerProfile.server || source?.server || null
+  const effectiveClient = migratedClientProfile.client || source?.client || null
+  const setupCompleted = mode === 'client'
+    ? migratedClientProfile.setupCompleted
+    : migratedServerProfile.setupCompleted
+
+  return {
+    ...source,
+    setupCompleted,
+    mode,
+    ...(effectiveServer ? { server: effectiveServer } : {}),
+    ...(effectiveClient ? { client: effectiveClient } : {}),
+    profiles: {
+      server: migratedServerProfile,
+      client: migratedClientProfile
+    }
+  }
 }
 
 function applyRuntimeConfig(config) {
   runtimeConfig = config
   if (config?.apiBaseUrl) process.env.API_BASE_URL = config.apiBaseUrl
+  else delete process.env.API_BASE_URL
   if (config?.server?.dbFile) process.env.DB_FILE = config.server.dbFile
+  else delete process.env.DB_FILE
 }
 
 function getApiRootForHealth() {
@@ -222,6 +259,22 @@ async function waitForApiReady(apiRoot, timeoutMs = 15000, intervalMs = 300) {
   return false
 }
 
+async function validateClientServerUrl(rawUrl) {
+  const serverUrl = normalizeServerUrl(rawUrl)
+  if (!serverUrl) {
+    return { success: false, error: 'Server URL is required in client mode' }
+  }
+  const health = await serverManager.checkApiHealth(serverUrl)
+  if (!health?.success || !health?.healthy) {
+    return { success: false, error: 'Unable to connect to the server URL. Verify the address and server availability.' }
+  }
+  return {
+    success: true,
+    serverUrl,
+    apiBaseUrl: `${serverUrl}/api`
+  }
+}
+
 function resolveConfigByDbPresence(initialConfig) {
   const loaded = initialConfig || loadRuntimeConfig()
   const configuredPort = Number(loaded?.server?.port || 4000)
@@ -240,61 +293,120 @@ function resolveConfigByDbPresence(initialConfig) {
   }) || null
 
   if (loaded?.setupCompleted && loaded?.mode === 'server') {
-    if (!existingDbFile) return { ...loaded, setupCompleted: false }
-    return {
-      ...loaded,
-      server: {
-        dbDirectory: path.dirname(existingDbFile),
-        dbFile: existingDbFile,
-        port: configuredPort
-      },
-      apiBaseUrl: `http://localhost:${configuredPort}/api`
+    if (!existingDbFile) {
+      return {
+        ...loaded,
+        setupCompleted: false,
+        profiles: {
+          ...(loaded?.profiles || {}),
+          server: {
+            ...((loaded?.profiles && loaded.profiles.server) || {}),
+            setupCompleted: false
+          }
+        }
+      }
     }
-  }
-
-  // Recovery path: infer server setup when config is missing/stale but DB exists.
-  if (!loaded?.setupCompleted && existingDbFile) {
     return {
       ...loaded,
-      setupCompleted: true,
-      mode: 'server',
       server: {
         dbDirectory: path.dirname(existingDbFile),
         dbFile: existingDbFile,
         port: configuredPort
       },
-      apiBaseUrl: `http://localhost:${configuredPort}/api`
+      apiBaseUrl: `http://localhost:${configuredPort}/api`,
+      profiles: {
+        ...(loaded?.profiles || {}),
+        server: {
+          ...((loaded?.profiles && loaded.profiles.server) || {}),
+          setupCompleted: true,
+          server: {
+            dbDirectory: path.dirname(existingDbFile),
+            dbFile: existingDbFile,
+            port: configuredPort
+          }
+        }
+      }
     }
   }
 
   return loaded
 }
 
-async function resolveLicenseState(initialConfig) {
+function activateModeConfig(initialConfig, selectedMode) {
   const loaded = initialConfig || loadRuntimeConfig()
-  if (!loaded?.setupCompleted || loaded?.mode !== 'server') return loaded
+  const mode = selectedMode === 'client' ? 'client' : 'server'
+  const serverProfile = loaded?.profiles?.server || {}
+  const clientProfile = loaded?.profiles?.client || {}
 
-  let fingerprint = getDeviceFingerprint()
-  let status = await licenseManager.getStatus(fingerprint)
-
-  // Compatibility path: if fingerprint changed but a valid local active license exists,
-  // adopt that stored fingerprint once and persist it as stable machine identity.
-  if (status?.success === true && status?.valid === false && status?.reason === 'fingerprint_mismatch') {
-    const localStatus = await licenseManager.getStatus(null)
-    const localFingerprint = localStatus?.license?.device_fingerprint
-    if (localStatus?.success === true && localStatus?.valid === true && isValidFingerprint(localFingerprint)) {
-      persistFingerprint(localFingerprint)
-      fingerprint = localFingerprint
-      status = await licenseManager.getStatus(fingerprint)
+  if (mode === 'client') {
+    const clientConfig = clientProfile?.client || loaded?.client || { serverUrl: '' }
+    const serverUrl = normalizeServerUrl(clientConfig?.serverUrl || '')
+    return {
+      ...loaded,
+      mode: 'client',
+      setupCompleted: clientProfile?.setupCompleted === true,
+      client: { serverUrl: serverUrl || '' },
+      ...(serverUrl ? { apiBaseUrl: `${serverUrl}/api` } : {}),
+      profiles: {
+        ...(loaded?.profiles || {}),
+        client: {
+          ...clientProfile,
+          setupCompleted: clientProfile?.setupCompleted === true,
+          client: { serverUrl: serverUrl || '' }
+        }
+      }
     }
   }
 
-  // Only force setup if license is definitively invalid.
-  // Transient API unavailability should not trigger setup wizard repeatedly.
-  if (status?.success === true && status?.valid === false) {
-    return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status, machineFingerprint: fingerprint }
+  const configuredServer = serverProfile?.server || loaded?.server || null
+  const legacyDbFile = getLegacyDbPath()
+  const defaultDbFile = path.join(getDefaultDbDirectory(), DB_FILE_NAME)
+  const configuredDbFile = configuredServer?.dbFile || null
+  const existingDbFile = [configuredDbFile, legacyDbFile, defaultDbFile].find((candidate) => {
+    if (!candidate) return false
+    try {
+      return fs.existsSync(candidate)
+    } catch (_) {
+      return false
+    }
+  }) || configuredDbFile
+  const serverPort = Number(configuredServer?.port || 4000)
+  const serverConfig = existingDbFile
+    ? {
+        dbDirectory: path.dirname(existingDbFile),
+        dbFile: existingDbFile,
+        port: serverPort
+      }
+    : configuredServer
+  const serverBaseConfig = {
+    ...loaded,
+    mode: 'server',
+    setupCompleted: serverProfile?.setupCompleted === true && !!serverConfig?.dbFile,
+    ...(serverConfig ? { server: serverConfig } : {}),
+    ...(serverConfig ? { apiBaseUrl: `http://localhost:${serverPort}/api` } : {}),
+    profiles: {
+      ...(loaded?.profiles || {}),
+      server: {
+        ...serverProfile,
+        setupCompleted: serverProfile?.setupCompleted === true && !!serverConfig?.dbFile,
+        ...(serverConfig ? { server: serverConfig } : {})
+      }
+    }
   }
-  return { ...loaded, licenseStatus: status, machineFingerprint: fingerprint }
+  return resolveConfigByDbPresence(serverBaseConfig)
+}
+
+async function resolveLicenseState(initialConfig) {
+  const loaded = initialConfig || loadRuntimeConfig()
+  if (!loaded?.setupCompleted || loaded?.mode !== 'server') {
+    return { ...loaded, licenseRequired: false, licenseStatus: null }
+  }
+
+  const status = await licenseManager.getStatus(getDeviceFingerprint())
+  if (status?.success === true && status?.valid === false) {
+    return { ...loaded, licenseRequired: true, licenseStatus: status }
+  }
+  return { ...loaded, licenseRequired: false, licenseStatus: status || null }
 }
 
 const iconPath = path.join(__dirname, '..', 'public', 'masatech-logo.png');
@@ -363,6 +475,25 @@ function createMainWindow() {
     },
   })
   loadRenderer(win)
+}
+
+async function bootstrapRuntimeConfig() {
+  let effectiveCfg = resolveConfigByDbPresence(runtimeConfig || loadRuntimeConfig())
+  applyRuntimeConfig(effectiveCfg)
+
+  if (effectiveCfg?.setupCompleted && effectiveCfg?.mode === 'server') {
+    const dbFile = effectiveCfg?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
+    const port = Number(effectiveCfg?.server?.port || 4000)
+    await serverManager.startServer({ port, dbFile })
+    const apiReady = await waitForApiReady(`http://localhost:${port}`)
+    if (apiReady) {
+      effectiveCfg = await resolveLicenseState(effectiveCfg)
+      applyRuntimeConfig(effectiveCfg)
+      saveRuntimeConfig(effectiveCfg)
+    }
+  }
+
+  return effectiveCfg
 }
 
 // IPC Handlers for service management
@@ -434,17 +565,17 @@ ipcMain.handle('setup:get-config', async () => {
   const loaded = runtimeConfig || loadRuntimeConfig()
   const defaultDir = getDefaultDbDirectory()
   try { fs.mkdirSync(defaultDir, { recursive: true }) } catch (_) {}
-  let effectiveConfig = resolveConfigByDbPresence(loaded)
-  effectiveConfig = await resolveLicenseState(effectiveConfig)
+  const normalizedConfig = resolveConfigByDbPresence(loaded)
+  const effectiveConfig = await resolveLicenseState(normalizedConfig)
   const fingerprint = getDeviceFingerprint()
-  // Persist recovered setup so restart path is stable.
+  // Persist normalized setup paths so restart behavior is deterministic.
   if (
-    effectiveConfig?.setupCompleted &&
-    effectiveConfig?.mode === 'server' &&
-    (!loaded?.setupCompleted || loaded?.server?.dbFile !== effectiveConfig?.server?.dbFile)
+    normalizedConfig?.setupCompleted &&
+    normalizedConfig?.mode === 'server' &&
+    (!loaded?.setupCompleted || loaded?.server?.dbFile !== normalizedConfig?.server?.dbFile)
   ) {
-    saveRuntimeConfig(effectiveConfig)
-    applyRuntimeConfig(effectiveConfig)
+    saveRuntimeConfig(normalizedConfig)
+    applyRuntimeConfig(normalizedConfig)
   }
   return {
     success: true,
@@ -459,6 +590,34 @@ ipcMain.handle('setup:get-config', async () => {
   }
 })
 
+ipcMain.handle('startup:select-mode', async (_event, payload) => {
+  const selectedMode = payload?.mode === 'client' ? 'client' : 'server'
+  const loaded = runtimeConfig || loadRuntimeConfig()
+  let effectiveConfig = activateModeConfig(loaded, selectedMode)
+
+  if (selectedMode === 'server') {
+    if (effectiveConfig?.setupCompleted && effectiveConfig?.server?.dbFile) {
+      const dbFile = effectiveConfig.server.dbFile
+      const port = Number(effectiveConfig?.server?.port || 4000)
+      const serverStart = await serverManager.startServer({ port, dbFile })
+      if (serverStart?.success) {
+        const apiReady = await waitForApiReady(`http://localhost:${port}`)
+        if (apiReady) {
+          effectiveConfig = await resolveLicenseState(effectiveConfig)
+        }
+      }
+    }
+  } else {
+    await serverManager.stopServer()
+    effectiveConfig = { ...effectiveConfig, licenseRequired: false, licenseStatus: null }
+  }
+
+  saveRuntimeConfig(effectiveConfig)
+  applyRuntimeConfig(effectiveConfig)
+
+  return { success: true, config: effectiveConfig }
+})
+
 ipcMain.handle('app:quit', async () => {
   app.quit()
   return { success: true }
@@ -466,7 +625,8 @@ ipcMain.handle('app:quit', async () => {
 
 ipcMain.handle('setup:save-config', async (_event, payload) => {
   const mode = payload?.mode === 'client' ? 'client' : 'server'
-  const base = { setupCompleted: true, mode, machineFingerprint: getDeviceFingerprint() }
+  const base = { setupCompleted: true, mode }
+  const loaded = runtimeConfig || loadRuntimeConfig()
   if (mode === 'server') {
     const dbDirectory = path.resolve(payload?.dbDirectory || getDefaultDbDirectory())
     fs.mkdirSync(dbDirectory, { recursive: true })
@@ -480,7 +640,15 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
     const config = {
       ...base,
       server: { dbDirectory, dbFile, port },
-      apiBaseUrl: `http://localhost:${port}/api`
+      apiBaseUrl: `http://localhost:${port}/api`,
+      profiles: {
+        ...(loaded?.profiles || {}),
+        server: {
+          ...((loaded?.profiles && loaded.profiles.server) || {}),
+          setupCompleted: true,
+          server: { dbDirectory, dbFile, port }
+        }
+      }
     }
     applyRuntimeConfig(config)
     const serverStart = await serverManager.startServer({ port, dbFile })
@@ -534,12 +702,50 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
     }, 80)
     return { success: true, config }
   }
-  const serverUrl = normalizeServerUrl(payload?.serverUrl)
-  if (!serverUrl) return { success: false, error: 'Server URL is required in client mode' }
+  const serverUrl = normalizeServerUrl(payload?.serverUrl || '')
   const config = {
+    ...loaded,
     ...base,
-    client: { serverUrl },
-    apiBaseUrl: `${serverUrl}/api`
+    client: { serverUrl: serverUrl || '' },
+    ...(serverUrl ? { apiBaseUrl: `${serverUrl}/api` } : {}),
+    profiles: {
+      ...(loaded?.profiles || {}),
+      client: {
+        ...((loaded?.profiles && loaded.profiles.client) || {}),
+        setupCompleted: true,
+        client: { serverUrl: serverUrl || '' }
+      }
+    }
+  }
+  saveRuntimeConfig(config)
+  applyRuntimeConfig(config)
+  await serverManager.stopServer()
+  return { success: true, config }
+})
+
+ipcMain.handle('client:test-server-url', async (_event, payload) => {
+  return await validateClientServerUrl(payload?.serverUrl)
+})
+
+ipcMain.handle('client:connect', async (_event, payload) => {
+  const validation = await validateClientServerUrl(payload?.serverUrl)
+  if (!validation?.success) return validation
+
+  const loaded = runtimeConfig || loadRuntimeConfig()
+  const config = {
+    ...loaded,
+    setupCompleted: true,
+    mode: 'client',
+    client: { serverUrl: validation.serverUrl },
+    apiBaseUrl: validation.apiBaseUrl,
+    profiles: {
+      ...(loaded?.profiles || {}),
+      client: {
+        ...((loaded?.profiles && loaded.profiles.client) || {}),
+        setupCompleted: true,
+        client: { serverUrl: validation.serverUrl }
+      }
+    }
   }
   saveRuntimeConfig(config)
   applyRuntimeConfig(config)
@@ -587,22 +793,8 @@ app.on('activate', async () => {
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
-    let effectiveCfg = resolveConfigByDbPresence(runtimeConfig || loadRuntimeConfig())
-    applyRuntimeConfig(effectiveCfg)
-
-    if (effectiveCfg?.setupCompleted && effectiveCfg?.mode === 'server') {
-      const dbFile = effectiveCfg?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
-      const port = Number(effectiveCfg?.server?.port || 4000)
-      await serverManager.startServer({ port, dbFile })
-      const apiReady = await waitForApiReady(`http://localhost:${port}`)
-      if (apiReady) {
-        effectiveCfg = await resolveLicenseState(effectiveCfg)
-        applyRuntimeConfig(effectiveCfg)
-      }
-    }
-
-    if (effectiveCfg?.setupCompleted) createMainWindow()
-    else createWizardWindow()
+    await bootstrapRuntimeConfig()
+    createMainWindow()
   }
 })
 
@@ -612,20 +804,6 @@ app.on('before-quit', async () => {
 })
 
 app.whenReady().then(async () => {
-  const cfg = loadRuntimeConfig()
-  let effectiveCfg = resolveConfigByDbPresence(cfg)
-  applyRuntimeConfig(effectiveCfg)
-
-  if (effectiveCfg?.setupCompleted && effectiveCfg?.mode === 'server') {
-    const dbFile = effectiveCfg?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
-    const port = Number(effectiveCfg?.server?.port || 4000)
-    await serverManager.startServer({ port, dbFile })
-    const apiReady = await waitForApiReady(`http://localhost:${port}`)
-    if (apiReady) {
-      effectiveCfg = await resolveLicenseState(effectiveCfg)
-      applyRuntimeConfig(effectiveCfg)
-    }
-  }
-  if (effectiveCfg?.setupCompleted) createMainWindow()
-  else createWizardWindow()
+  await bootstrapRuntimeConfig()
+  createMainWindow()
 })

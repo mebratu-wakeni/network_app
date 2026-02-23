@@ -34,6 +34,7 @@ class NavigationVM extends ViewModel {
     this.setState('pending-sales-filter', null);
     this.setState('pending-purchase-filter', null);
     this.setState('setup-loading', true);
+    this.setState('startup-mode', null);
     this.setState('setup-config', null);
     this.setState('setup-defaults', null);
     this.setState('setup-error', null);
@@ -109,6 +110,7 @@ class NavigationVM extends ViewModel {
       error: null,
       loginForm: { username: '', password: '' }
     })
+    this.updateState('startup-mode', null)
   }
 
   // Try to restore session from localStorage token (optimistic)
@@ -131,10 +133,12 @@ class NavigationVM extends ViewModel {
     try {
       const res = await window.ipcRenderer.invoke('setup:get-config')
       if (res?.success) {
-        this.updateState('setup-config', res.config || null)
+        let config = this.normalizeSetupConfig(res.config)
+        config = await this.enrichClientConnectionState(config)
+        this.updateState('setup-config', config)
         this.updateState('setup-defaults', res.defaults || null)
         try {
-          if (res?.config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', res.config.apiBaseUrl)
+          if (config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', config.apiBaseUrl)
         } catch (_) {}
       } else {
         this.updateState('setup-error', res?.error || 'Failed to load setup')
@@ -155,9 +159,20 @@ class NavigationVM extends ViewModel {
         this.updateState('setup-error', this.normalizeSetupError(res?.error, res?.details, res?.code))
         return false
       }
-      this.updateState('setup-config', res.config || null)
+      const isClientMode = payload?.mode === 'client'
+      const config = res.config
+        ? {
+            ...res.config,
+            licenseRequired: false,
+            licenseStatus: null,
+            clientConnected: !isClientMode,
+            clientConnectionError: null,
+            clientConnectionMessage: null
+          }
+        : null
+      this.updateState('setup-config', config)
       try {
-        if (res.config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', res.config.apiBaseUrl)
+        if (config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', config.apiBaseUrl)
       } catch (_) {}
       return true
     } catch (e) {
@@ -165,6 +180,68 @@ class NavigationVM extends ViewModel {
       return false
     } finally {
       this.updateState('setup-loading', false)
+    }
+  }
+
+  async chooseStartupMode(mode) {
+    const selectedMode = mode === 'client' ? 'client' : 'server'
+    this.updateState('setup-loading', true)
+    this.updateState('setup-error', null)
+    this.updateState('startup-mode', selectedMode)
+    try {
+      const res = await window.ipcRenderer.invoke('startup:select-mode', { mode: selectedMode })
+      if (!res?.success) {
+        this.updateState('setup-error', res?.error || 'Failed to activate selected mode')
+        return
+      }
+
+      let config = this.normalizeSetupConfig(res.config)
+      config = await this.enrichClientConnectionState(config)
+
+      this.updateState('setup-config', config)
+      try {
+        if (config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', config.apiBaseUrl)
+      } catch (_) {}
+    } catch (e) {
+      this.updateState('setup-error', e.message || 'Failed to activate selected mode')
+    } finally {
+      this.updateState('setup-loading', false)
+    }
+  }
+
+  normalizeSetupConfig(rawConfig) {
+    if (!rawConfig) return null
+    return {
+      ...rawConfig,
+      licenseRequired: rawConfig?.licenseRequired === true,
+      licenseStatus: rawConfig?.licenseStatus || null,
+      clientConnected: false,
+      clientConnectionError: null,
+      clientConnectionMessage: null
+    }
+  }
+
+  async enrichClientConnectionState(config) {
+    if (!config || config?.mode !== 'client') return config
+    const currentUrl = String(config?.client?.serverUrl || '').trim()
+    if (!currentUrl) return config
+
+    const probe = await window.ipcRenderer.invoke('client:test-server-url', { serverUrl: currentUrl })
+    if (probe?.success) {
+      return {
+        ...config,
+        client: { ...(config.client || {}), serverUrl: probe.serverUrl },
+        apiBaseUrl: probe.apiBaseUrl,
+        clientConnected: true,
+        clientConnectionError: null,
+        clientConnectionMessage: `Connected to ${probe.serverUrl}`
+      }
+    }
+    return {
+      ...config,
+      clientConnected: false,
+      clientConnectionError: probe?.error || 'Unable to connect to configured server URL.',
+      clientConnectionMessage: null
     }
   }
 
@@ -206,6 +283,115 @@ class NavigationVM extends ViewModel {
 
     if (details?.message) return String(details.message)
     return String(errorMessage || 'Failed to save setup')
+  }
+
+  markClientDisconnected() {
+    const config = this.getState('setup-config') || null
+    if (!config || config.mode !== 'client') return
+    this.updateState('setup-config', {
+      ...config,
+      clientConnected: false,
+      clientConnectionError: null,
+      clientConnectionMessage: null
+    })
+  }
+
+  async testClientServerUrl(serverUrl) {
+    const currentConfig = this.getState('setup-config') || null
+    const normalizedUrl = String(serverUrl || '').trim()
+    if (!normalizedUrl) {
+      const next = currentConfig
+        ? {
+            ...currentConfig,
+            clientConnected: false,
+            clientConnectionError: 'Server URL is required.',
+            clientConnectionMessage: null
+          }
+        : currentConfig
+      if (next) this.updateState('setup-config', next)
+      return { success: false, error: 'Server URL is required.' }
+    }
+
+    const result = await window.ipcRenderer.invoke('client:test-server-url', { serverUrl: normalizedUrl })
+    if (!result?.success) {
+      const error = result?.error || 'Unable to connect to server.'
+      const next = currentConfig
+        ? {
+            ...currentConfig,
+            clientConnected: false,
+            clientConnectionError: error,
+            clientConnectionMessage: null
+          }
+        : currentConfig
+      if (next) this.updateState('setup-config', next)
+      return { success: false, error }
+    }
+
+    const next = currentConfig
+      ? {
+          ...currentConfig,
+          client: { ...(currentConfig.client || {}), serverUrl: result.serverUrl },
+          apiBaseUrl: result.apiBaseUrl || currentConfig.apiBaseUrl,
+          clientConnected: true,
+          clientConnectionError: null,
+          clientConnectionMessage: `Connection check passed for ${result.serverUrl}`
+        }
+      : currentConfig
+    if (next) this.updateState('setup-config', next)
+    return { success: true, serverUrl: result.serverUrl }
+  }
+
+  async connectClientServerUrl(serverUrl) {
+    const currentConfig = this.getState('setup-config') || null
+    const normalizedUrl = String(serverUrl || '').trim()
+    if (!normalizedUrl) {
+      const next = currentConfig
+        ? {
+            ...currentConfig,
+            clientConnected: false,
+            clientConnectionError: 'Server URL is required.',
+            clientConnectionMessage: null
+          }
+        : currentConfig
+      if (next) this.updateState('setup-config', next)
+      return { success: false, error: 'Server URL is required.' }
+    }
+
+    const probe = await this.testClientServerUrl(normalizedUrl)
+    if (!probe?.success) {
+      return probe
+    }
+
+    const result = await window.ipcRenderer.invoke('client:connect', { serverUrl: normalizedUrl })
+    if (!result?.success) {
+      const error = result?.error || 'Unable to connect to server.'
+      const next = currentConfig
+        ? {
+            ...currentConfig,
+            clientConnected: false,
+            clientConnectionError: error,
+            clientConnectionMessage: null
+          }
+        : currentConfig
+      if (next) this.updateState('setup-config', next)
+      return { success: false, error }
+    }
+
+    const config = result.config
+      ? {
+          ...result.config,
+          licenseRequired: false,
+          licenseStatus: null,
+          clientConnected: true,
+          clientConnectionError: null,
+          clientConnectionMessage: `Connected to ${result?.config?.client?.serverUrl || normalizedUrl}`
+        }
+      : null
+    this.updateState('setup-config', config)
+    try {
+      if (config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', config.apiBaseUrl)
+    } catch (_) {}
+    return { success: true }
   }
 
 }

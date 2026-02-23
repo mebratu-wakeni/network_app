@@ -22,6 +22,10 @@ import {
  * @returns {HTMLElement} Health indicators container
  */
 function renderHealthIndicators(props) {
+  const appMode = props.viewModel.getState('appMode');
+  if (appMode === 'client') {
+    return renderClientConnectionIndicator(props);
+  }
   const serverHealth = props.viewModel.getState('serverHealth');
   const dbHealth = props.viewModel.getState('dbHealth');
   const apiHealth = props.viewModel.getState('apiHealth');
@@ -50,6 +54,30 @@ function renderHealthIndicators(props) {
       tagType: 'ion-icon',
       attributes: { name: HEALTH_ICONS.api }
     })
+  ]);
+}
+
+function renderClientConnectionIndicator(props) {
+  const connected = props.viewModel.getState('clientConnected') === true;
+  const serverUrl = props.viewModel.getState('clientServerUrl');
+  const connectionError = props.viewModel.getState('clientConnectionError');
+  const indicatorColor = connected ? 'text-green-600' : 'text-red-500';
+  const tooltip = connected
+    ? `Connected to ${serverUrl || 'server'}`
+    : (connectionError || `Disconnected${serverUrl ? ` from ${serverUrl}` : ''}`);
+
+  return Row({
+    class: `${HEADER_CLASSES.healthContainer} ${indicatorColor}`,
+    attributes: {
+      title: tooltip
+    }
+  }, [
+    Row({
+      tagType: 'ion-icon',
+      attributes: { name: connected ? 'checkmark-circle' : 'alert-circle' }
+    }),
+    Row({ tagType: 'span', class: 'text-sm font-medium' }, connected ? 'Connected' : 'Disconnected'),
+    serverUrl ? Row({ tagType: 'span', class: 'text-xs text-gray-500 ml-1 max-w-[240px] truncate' }, serverUrl) : null
   ]);
 }
 
@@ -130,9 +158,14 @@ function renderHeader(props) {
   props.ensureStateKey('serverHealth');
   props.ensureStateKey('dbHealth');
   props.ensureStateKey('apiHealth');
+  props.ensureStateKey('appMode');
+  props.ensureStateKey('clientConnected');
+  props.ensureStateKey('clientServerUrl');
+  props.ensureStateKey('clientConnectionError');
   props.ensureStateKey('user');
   props.ensureStateKey('userMenuActionId');
   
+  props.viewModel.syncRuntimeStatus();
   // Sync user data from navigation VM
   props.viewModel.syncUser();
   
@@ -157,5 +190,5 @@ function renderHeader(props) {
 export default function HeaderUI({ router = null, navigationVM = null } = {}) {
   const viewModel = new HeaderVM(undefined, { router, navigationVM });
   
-  return StatefulRow({ viewModel, stateKeys: ['serverHealth', 'dbHealth', 'apiHealth', 'user', 'userMenuActionId'] }, renderHeader);
+  return StatefulRow({ viewModel, stateKeys: ['serverHealth', 'dbHealth', 'apiHealth', 'appMode', 'clientConnected', 'clientServerUrl', 'clientConnectionError', 'user', 'userMenuActionId'] }, renderHeader);
 }

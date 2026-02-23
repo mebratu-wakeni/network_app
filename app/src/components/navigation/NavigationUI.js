@@ -36,6 +36,10 @@ export default function  NavigationUI(props) {
   props.viewModel.menuOptions.forEach(option => {
     router.addRoute(option.route, () => {
       if (option.route === '/server') {
+        const setupConfig = props.viewModel.getState('setup-config') || {};
+        if (setupConfig?.mode === 'client') {
+          return Row({ class: 'p-6 text-sm text-gray-600' }, 'Server Manager is unavailable in client mode.')
+        }
         return ServerManagerUI();
       }
       if (option.route === '/') return DashboardUI({ router, navigationVM: props.viewModel });
@@ -57,9 +61,12 @@ export default function  NavigationUI(props) {
 
   const activeMenu = props.viewModel.getState('active-menu');
   const navCollapsed = props.getLocalState('navCollapsed');
+  const setupConfig = props.viewModel.getState('setup-config') || {};
+  const isClientMode = setupConfig?.mode === 'client';
   const auth = props.viewModel.getState('auth') || {};
   const userRules = (auth.user && auth.user.rules) ? auth.user.rules : [];
   const menuOptions = props.viewModel.menuOptions.filter(opt =>
+    !(isClientMode && opt.route === '/server') &&
     opt.showInNav !== false &&
     (!opt.requireRule || (Array.isArray(userRules) && userRules.includes(opt.requireRule)))
   );

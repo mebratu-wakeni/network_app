@@ -25,8 +25,25 @@ export default class HeaderVM extends ViewModel {
     this.setState('serverHealth', null);
     this.setState('dbHealth', null);
     this.setState('apiHealth', null);
+    this.setState('appMode', 'server');
+    this.setState('clientConnected', false);
+    this.setState('clientServerUrl', null);
+    this.setState('clientConnectionError', null);
     this.setState('user', {});
     this.setState('userMenuActionId', null);
+  }
+
+  syncRuntimeStatus() {
+    const setupConfig = this.navigationVM.getState('setup-config') || {};
+    const appMode = setupConfig?.mode === 'client' ? 'client' : 'server';
+    const clientServerUrl = setupConfig?.client?.serverUrl || null;
+    const clientConnectionError = setupConfig?.clientConnectionError || null;
+    const clientConnected = setupConfig?.clientConnected === true;
+
+    if (this.getState('appMode') !== appMode) this.updateState('appMode', appMode);
+    if (this.getState('clientServerUrl') !== clientServerUrl) this.updateState('clientServerUrl', clientServerUrl);
+    if (this.getState('clientConnectionError') !== clientConnectionError) this.updateState('clientConnectionError', clientConnectionError);
+    if (this.getState('clientConnected') !== clientConnected) this.updateState('clientConnected', clientConnected);
   }
 
   /**
@@ -95,6 +112,16 @@ export default class HeaderVM extends ViewModel {
    */
   async checkHealth(showLoading = true) {
     try {
+      this.syncRuntimeStatus();
+      const appMode = this.getState('appMode');
+      if (appMode === 'client') {
+        await this.checkApiHealth();
+        this.updateState('serverHealth', null);
+        this.updateState('dbHealth', null);
+        const apiHealth = this.getState('apiHealth');
+        this.updateState('clientConnected', apiHealth?.healthy === true);
+        return;
+      }
       await Promise.allSettled([
         this.checkApiHealth(),
         this.checkDbHealth(),
@@ -103,6 +130,9 @@ export default class HeaderVM extends ViewModel {
     } catch (error) {
       console.error('[HeaderVM] Error checking health:', error);
       this.updateState('apiHealth', { healthy: false, error: error.message });
+      if (this.getState('appMode') === 'client') {
+        this.updateState('clientConnected', false);
+      }
     }
   }
 

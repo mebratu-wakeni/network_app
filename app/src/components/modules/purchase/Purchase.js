@@ -62,7 +62,7 @@ export function PurchaseUI(props = {}) {
       CardHeader({ 
         class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0' 
       }, 'Purchase Management'),
-      CardBody({ class: 'p-6 flex flex-row h-full overflow-hidden gap-4'}, [
+      CardBody({ class: 'px-4 py-2 flex flex-row h-full overflow-hidden gap-4'}, [
         LeftPanel(mergedProps),
         RightPanel(mergedProps)
       ]),
@@ -107,10 +107,10 @@ function RightPanel(props) {
     }
   };
 
-  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-4 min-h-0 overflow-hidden border border-gray-200 rounded-lg min-w-0` }, [
+  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-2 min-h-0 overflow-hidden border border-gray-200 rounded-lg min-w-0` }, [
     PurchaseTabs(props),
     Row(
-      { class: 'flex justify-between pt-4 px-6 items-center' },
+      { class: 'flex justify-between px-6 items-center' },
       [
         Row({ class: 'flex items-center gap-4' }, [
           Button({ variant: 'outline', class: 'text-nowrap', onClick: handleImportPurchaseOrder }, 'Import Purchase Order'),

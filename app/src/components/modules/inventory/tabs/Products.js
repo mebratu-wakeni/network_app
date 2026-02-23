@@ -106,7 +106,7 @@ export function Products(props) {
     !searchInputValueInitialized && !loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'No products found'),
     
     // Header Section with Actions
-    Row({ class: 'flex items-center justify-between gap-6 p-6 border-b border-gray-200' }, [
+    Row({ class: 'flex items-center justify-between gap-6 px-4 py-2  border-b border-gray-200' }, [
       Row({ class: 'flex items-center gap-4' }, [
         Button({ 
           variant: 'primary', 

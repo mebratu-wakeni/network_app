@@ -15,11 +15,17 @@ export function App() {
   const render = (props) => {
     const setupLoading = props.viewModel.getState('setup-loading')
     const setupConfig = props.viewModel.getState('setup-config')
-    const setupDone = !!setupConfig?.setupCompleted
+    const startupMode = props.viewModel.getState('startup-mode')
+    const setupDone = !!setupConfig?.setupCompleted && setupConfig?.mode === startupMode
+    const licenseRequired = startupMode === 'server' && setupConfig?.licenseRequired === true
+    const clientNeedsConnection = startupMode === 'client' && setupConfig?.clientConnected !== true
     if (setupLoading) {
       return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 text-gray-600' }, 'Loading setup...')
     }
-    if (!setupDone) return SetupLayout(props)
+    if (!startupMode) return StartupModeLayout(props)
+    if (!setupDone) return SetupLayout(props, { forcedMode: startupMode })
+    if (licenseRequired) return LicenseRequiredLayout(props)
+    if (clientNeedsConnection) return ClientConnectionLayout(props)
 
     const auth = props.viewModel.getState('auth') || { isAuthenticated: false };
     if (!auth.isAuthenticated) return LoginLayout(props);
@@ -27,33 +33,146 @@ export function App() {
     return MainLayout(props, main, router);
   };
 
-  return StatefulRow({id: 'App', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'setup-defaults', 'setup-error', 'auth'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'auth'], viewModel: navigationVM }, render);
   
 }
 
-function SetupLayout(props) {
+function StartupModeLayout(props) {
+  const loading = props.viewModel.getState('setup-loading')
+  const chooseMode = async (mode) => {
+    if (loading) return
+    await props.viewModel.chooseStartupMode(mode)
+  }
+
+  const onCancel = async () => {
+    try {
+      await window.ipcRenderer.invoke('app:quit')
+    } catch (_) {
+      // no-op fallback if quit IPC is unavailable
+    }
+  }
+
+  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 p-2' }, [
+    Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
+      Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
+        Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Choose Runtime Mode'),
+        Row({ class: 'text-sm text-gray-600' }, 'Select how to run this session. You can choose again after logout.')
+      ]),
+      Row({ class: 'px-8 py-6 flex flex-col gap-3' }, [
+        Row({ class: 'text-sm text-gray-700' }, 'Server mode hosts local API/database and checks license before login.'),
+        Row({ class: 'text-sm text-gray-700' }, 'Client mode connects to a remote server URL and logs in after connection succeeds.')
+      ]),
+      Row({ class: 'px-8 py-4 border-t border-gray-100 flex items-center justify-end gap-2' }, [
+        Button({
+          variant: 'outline',
+          onClick: onCancel,
+          disabled: loading
+        }, 'Exit'),
+        Button({
+          variant: 'outline',
+          onClick: () => chooseMode('client'),
+          disabled: loading
+        }, 'Client'),
+        Button({
+          variant: 'primary',
+          onClick: () => chooseMode('server'),
+          disabled: loading
+        }, 'Server')
+      ])
+    ])
+  ])
+}
+
+function LicenseRequiredLayout(props) {
+  const setupConfig = props.viewModel.getState('setup-config') || {}
+  const licenseStatus = setupConfig?.licenseStatus || {}
+  const reason = String(licenseStatus?.reason || '').trim()
+  const reasonLabelByCode = {
+    fingerprint_mismatch: 'This license is activated for a different machine fingerprint.',
+    expired: 'The active license has expired.',
+    no_active_license: 'No active license was found on this machine.',
+    inactive: 'The local license is inactive and needs reactivation.'
+  }
+
+  const reasonMessage = reasonLabelByCode[reason] || 'License validation failed. Please reactivate your license.'
+  const errorMessage = String(licenseStatus?.error || '').trim()
+
+  const retryLicenseCheck = async () => {
+    await props.viewModel.loadSetupConfig()
+  }
+
+  const reopenSetup = () => {
+    const cfg = props.viewModel.getState('setup-config') || {}
+    props.viewModel.updateState('setup-config', { ...cfg, setupCompleted: false })
+  }
+
+  const onCancel = async () => {
+    try {
+      await window.ipcRenderer.invoke('app:quit')
+    } catch (_) {
+      // no-op fallback if quit IPC is unavailable
+    }
+  }
+
+  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 p-2' }, [
+    Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
+      Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
+        Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'License Action Required'),
+        Row({ class: 'text-sm text-gray-600' }, 'Setup is complete, but license validation must be resolved before continuing.')
+      ]),
+      Row({ class: 'px-8 py-6 flex flex-col gap-3' }, [
+        Row({ class: 'text-sm text-gray-800' }, reasonMessage),
+        reason ? Row({ class: 'text-xs text-gray-500' }, `Reason code: ${reason}`) : null,
+        errorMessage ? Row({ class: 'text-sm text-red-600' }, errorMessage) : null
+      ]),
+      Row({ class: 'px-8 py-4 border-t border-gray-100 flex items-center justify-end gap-2' }, [
+        Button({
+          variant: 'outline',
+          onClick: retryLicenseCheck
+        }, 'Retry'),
+        Button({
+          variant: 'outline',
+          onClick: reopenSetup
+        }, 'Reactivate License'),
+        Button({
+          variant: 'primary',
+          onClick: onCancel
+        }, 'Exit')
+      ])
+    ])
+  ])
+}
+
+function SetupLayout(props, options = {}) {
+  const forcedMode = options?.forcedMode || null
   const defaults = props.viewModel.getState('setup-defaults') || {}
   const setupConfig = props.viewModel.getState('setup-config') || {}
   const setupError = props.viewModel.getState('setup-error')
   const loading = props.viewModel.getState('setup-loading')
-  const stepLabelsByMode = {
-    server: ['Welcome', 'Mode', 'Server', 'License', 'Finish'],
-    client: ['Welcome', 'Mode', 'Client', 'Finish']
-  }
-  props.ensureLocalStateKey('setup-mode', defaults.mode || 'server')
+  const stepLabelsByMode = forcedMode
+    ? {
+        server: ['Welcome', 'Server', 'License', 'Finish'],
+        client: ['Welcome', 'Finish']
+      }
+    : {
+        server: ['Welcome', 'Mode', 'Server', 'License', 'Finish'],
+        client: ['Welcome', 'Mode', 'Finish']
+      }
+  props.ensureLocalStateKey('setup-mode', forcedMode || setupConfig.mode || defaults.mode || 'server')
   props.ensureLocalStateKey('setup-db-dir', defaults.dbDirectory || '')
   props.ensureLocalStateKey('setup-port', defaults.port || 4000)
-  props.ensureLocalStateKey('setup-server-url', '')
   props.ensureLocalStateKey('setup-installation-key', '')
   props.ensureLocalStateKey('setup-license-key', '')
   props.ensureLocalStateKey('setup-company-name', '')
   props.ensureLocalStateKey('setup-company-phone', '')
   props.ensureLocalStateKey('setup-step-index', 0)
 
-  const mode = props.getLocalState('setup-mode')
+  if (forcedMode && props.getLocalState('setup-mode') !== forcedMode) {
+    props.setLocalState('setup-mode', forcedMode)
+  }
+  const mode = forcedMode || props.getLocalState('setup-mode')
   const dbDir = props.getLocalState('setup-db-dir')
   const port = props.getLocalState('setup-port')
-  const serverUrl = props.getLocalState('setup-server-url')
   const installationKey = props.getLocalState('setup-installation-key')
   const licenseKey = props.getLocalState('setup-license-key')
   const companyName = props.getLocalState('setup-company-name')
@@ -94,7 +213,7 @@ function SetupLayout(props) {
           companyName: String(companyName || '').trim(),
           companyPhone: String(companyPhone || '').trim()
         }
-      : { mode: 'client', serverUrl: String(serverUrl || '').trim() }
+      : { mode: 'client' }
     await props.viewModel.saveSetupConfig(payload)
   }
 
@@ -112,7 +231,6 @@ function SetupLayout(props) {
     if (currentStep === 'License') {
       return String(licenseKey || '').trim() !== '' && String(companyName || '').trim() !== '' && String(companyPhone || '').trim() !== ''
     }
-    if (currentStep === 'Client') return String(serverUrl || '').trim() !== ''
     return true
   }
 
@@ -214,28 +332,17 @@ function SetupLayout(props) {
         ])
       ])
     }
-    if (currentStep === 'Client') {
-      return Row({ class: 'flex flex-col gap-3' }, [
-        Row({}, [
-          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Server URL'),
-          Input({
-            value: serverUrl,
-            onChange: (e) => props.setLocalState('setup-server-url', e.target.value),
-            placeholder: 'e.g. http://192.168.1.20:4000'
-          })
-        ])
-      ])
-    }
     return Row({ class: 'text-sm text-gray-700 space-y-2' }, [
       Row({ class: 'font-medium' }, 'Review setup'),
-      Row({}, mode === 'server' ? `Mode: Server, Port: ${port}` : `Mode: Client, URL: ${serverUrl || '-'}`),
+      Row({}, mode === 'server' ? `Mode: Server, Port: ${port}` : 'Mode: Client'),
       Row({}, mode === 'server' ? `Database: ${dbDir || '-'}` : ''),
       mode === 'server' ? Row({}, `Installation key: ${installationKey ? 'Provided' : 'Not provided'}`) : null,
       mode === 'server' ? Row({}, `Entered license key: ${maskedLicenseKey(licenseKey)}`) : null,
       mode === 'server' ? Row({}, `Current local license status: ${knownLicenseStatus?.valid ? 'Valid' : (knownLicenseStatus?.reason || 'Not validated yet')}`) : null,
       mode === 'server' ? Row({}, `Current local subscription: ${knownLicense?.subscription_type || '-'}`) : null,
       mode === 'server' ? Row({}, `Current local duration: ${formatDuration(knownLicense)}`) : null,
-      mode === 'server' ? Row({ class: 'text-xs text-gray-500 mt-2' }, 'On Finish, the app validates license and installation keys online. If the service is unreachable, setup shows a clear retry message.') : null
+      mode === 'server' ? Row({ class: 'text-xs text-gray-500 mt-2' }, 'On Finish, the app validates license and installation keys online. If the service is unreachable, setup shows a clear retry message.') : null,
+      mode === 'client' ? Row({ class: 'text-xs text-gray-500 mt-2' }, 'After finish, you will enter a connection screen where you can set and validate server URL before login.') : null
     ])
   }
 
@@ -274,6 +381,102 @@ function SetupLayout(props) {
   ])
 }
 
+function ClientConnectionLayout(props) {
+  const setupConfig = props.viewModel.getState('setup-config') || {}
+  const savedUrl = String(setupConfig?.client?.serverUrl || '').trim()
+  const vmError = String(setupConfig?.clientConnectionError || '').trim()
+  const vmMessage = String(setupConfig?.clientConnectionMessage || '').trim()
+  const vmConnected = setupConfig?.clientConnected === true
+  props.ensureLocalStateKey('client-connect-url', savedUrl)
+  props.ensureLocalStateKey('client-connect-loading', false)
+  props.ensureLocalStateKey('client-connect-error', vmError)
+  props.ensureLocalStateKey('client-connect-message', vmMessage)
+
+  const urlValue = props.getLocalState('client-connect-url')
+  const loading = !!props.getLocalState('client-connect-loading')
+  const error = props.getLocalState('client-connect-error')
+  const message = props.getLocalState('client-connect-message')
+
+  const testConnection = async () => {
+    props.setLocalState('client-connect-error', '')
+    props.setLocalState('client-connect-message', '')
+    props.setLocalState('client-connect-loading', true)
+    try {
+      const result = await props.viewModel.testClientServerUrl(urlValue)
+      if (!result?.success) {
+        props.setLocalState('client-connect-error', result?.error || 'Unable to connect to server.')
+        return
+      }
+      props.setLocalState('client-connect-message', `Connection check passed for ${result.serverUrl}`)
+    } finally {
+      props.setLocalState('client-connect-loading', false)
+    }
+  }
+
+  const connect = async () => {
+    props.setLocalState('client-connect-error', '')
+    props.setLocalState('client-connect-message', '')
+    props.setLocalState('client-connect-loading', true)
+    try {
+      const result = await props.viewModel.connectClientServerUrl(urlValue)
+      if (!result?.success) {
+        props.setLocalState('client-connect-error', result?.error || 'Unable to connect to server.')
+      }
+    } finally {
+      props.setLocalState('client-connect-loading', false)
+    }
+  }
+
+  const onCancel = async () => {
+    try {
+      await window.ipcRenderer.invoke('app:quit')
+    } catch (_) {
+      // no-op fallback if quit IPC is unavailable
+    }
+  }
+
+  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 p-2' }, [
+    Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
+      Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
+        Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Connect to Server'),
+        Row({ class: 'text-sm text-gray-600' }, 'Client mode works like a browser: choose a server URL, verify connection, then continue to login.')
+      ]),
+      Row({ class: 'px-8 py-6 flex flex-col gap-3' }, [
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Server URL'),
+          Input({
+            value: urlValue,
+            onChange: (e) => props.setLocalState('client-connect-url', e.target.value),
+            placeholder: 'e.g. http://192.168.1.20:4000'
+          })
+        ]),
+        Row({ class: `text-sm ${vmConnected ? 'text-green-700' : 'text-gray-600'}` }, vmConnected
+          ? `Status: Connected${savedUrl ? ` (${savedUrl})` : ''}`
+          : 'Status: Not connected'),
+        message ? Row({ class: 'text-sm text-green-700' }, message) : null,
+        error ? Row({ class: 'text-sm text-red-600' }, error) : null
+      ]),
+      Row({ class: 'px-8 py-4 border-t border-gray-100 flex items-center justify-end gap-2' }, [
+        Button({
+          variant: 'outline',
+          onClick: onCancel,
+          disabled: loading
+        }, 'Cancel'),
+        Button({
+          variant: 'outline',
+          onClick: testConnection,
+          disabled: loading
+        }, loading ? 'Testing...' : 'Test Connection'),
+        Button({
+          variant: 'primary',
+          onClick: connect,
+          disabled: loading
+        }, loading ? 'Connecting...' : 'Connect')
+      ])
+    ])
+  ])
+}
+
 function MainLayout(props, main, router) { 
   props.ensureLocalStateKey('navCollapsed', false);
 
@@ -306,6 +509,10 @@ function HeadNav(props) {
 
 function LoginLayout(props) {
   const auth = props.viewModel.getState('auth') || {};
+  const setupConfig = props.viewModel.getState('setup-config') || {}
+  const isClientMode = setupConfig?.mode === 'client'
+  const clientUrl = String(setupConfig?.client?.serverUrl || '').trim()
+  const clientConnected = setupConfig?.clientConnected === true
   const loginForm = auth.loginForm || { username: '', password: '' };
   props.ensureLocalStateKey('localError', '');
   const localError = props.getLocalState('localError');
@@ -349,6 +556,9 @@ function LoginLayout(props) {
       ]),
 
       Row({ tagType: 'h2', class: 'text-2xl font-semibold mb-4' }, 'Sign in'),
+      isClientMode ? Row({ class: `mb-3 text-sm ${clientConnected ? 'text-green-700' : 'text-red-600'}` }, clientConnected
+        ? `Connected to ${clientUrl || 'server'}`
+        : 'Client is not connected to a server. Change URL and connect first.') : null,
 
       Row({ class: 'space-y-4' }, [
         Row({}, [ Row({ tagType: 'label', attributes: { for: 'username' }, class: 'block text-sm font-medium text-gray-700 mb-1' }, 'Username'),
@@ -363,6 +573,12 @@ function LoginLayout(props) {
         localError ? Row({ class: 'text-sm text-red-600' }, localError) : (auth.error ? Row({ class: 'text-sm text-red-600' }, auth.error) : null),
 
         Row({ class: 'flex justify-end' }, [
+          isClientMode ? Button({
+            type: 'button',
+            variant: 'outline',
+            onClick: () => props.viewModel.markClientDisconnected(),
+            class: 'px-4 py-2 rounded-md mr-2'
+          }, 'Change Server URL') : null,
           Button({ type: 'button', variant: 'primary', onClick: handleSubmit, disabled: !!auth.loading, attributes: { 'aria-busy': !!auth.loading }, class: 'px-6 py-2 rounded-md' }, [
             auth.loading ? Row({ class: 'flex items-center' }, [
               Row({ tagType: 'svg', attributes: { xmlns: 'http://www.w3.org/2000/svg', fill: 'none', viewBox: '0 0 24 24', class: 'animate-spin h-4 w-4 mr-2 text-white' } }, [

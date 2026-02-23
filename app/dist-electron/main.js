@@ -16309,6 +16309,9 @@ let runtimeConfig = null;
 const APP_NAME = "PharmaSuitLAN";
 const DB_FILE_NAME = "pharmasuit_lan.db";
 function getDefaultDbDirectory() {
+  if (VITE_DEV_SERVER_URL) {
+    return path$2.dirname(getLegacyDbPath());
+  }
   if (process.platform === "win32") {
     const programData = process.env.ProgramData || "C:\\ProgramData";
     return path$2.join(programData, APP_NAME, "data");
@@ -16328,19 +16331,13 @@ function getLegacyDbPath() {
   return path$2.join(process.env.APP_ROOT || path$2.join(__dirname, ".."), "..", "api", "data", DB_FILE_NAME);
 }
 function isValidFingerprint(value) {
-  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+  if (typeof value !== "string") return false;
+  const legacySha256 = /^[a-f0-9]{64}$/i;
+  const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return legacySha256.test(value) || uuidV4.test(value);
 }
-function computeVolatileFingerprint() {
-  const interfaces = os.networkInterfaces();
-  const macs = Object.values(interfaces).flat().filter((i) => i && !i.internal && i.mac && i.mac !== "00:00:00:00:00:00").map((i) => i.mac).sort().join("|");
-  const seed = [
-    os.hostname(),
-    os.platform(),
-    os.arch(),
-    os.release(),
-    macs
-  ].join("::");
-  return crypto$1.createHash("sha256").update(seed).digest("hex");
+function generateStableFingerprint() {
+  return crypto$1.randomUUID();
 }
 function readPersistedFingerprint() {
   try {
@@ -16363,17 +16360,11 @@ function persistFingerprint(fingerprint) {
   }, null, 2), "utf8");
 }
 function getDeviceFingerprint() {
-  var _a;
   const persisted = readPersistedFingerprint();
   if (persisted) return persisted;
-  const fromConfig = (runtimeConfig == null ? void 0 : runtimeConfig.machineFingerprint) || ((_a = loadRuntimeConfig()) == null ? void 0 : _a.machineFingerprint) || null;
-  if (isValidFingerprint(fromConfig)) {
-    persistFingerprint(fromConfig);
-    return fromConfig;
-  }
-  const computed = computeVolatileFingerprint();
-  persistFingerprint(computed);
-  return computed;
+  const generated = generateStableFingerprint();
+  persistFingerprint(generated);
+  return generated;
 }
 function normalizeServerUrl(url) {
   if (!url) return null;
@@ -16385,24 +16376,65 @@ function loadRuntimeConfig() {
   try {
     const cfgPath = getRuntimeConfigPath();
     if (!fs$1.existsSync(cfgPath)) {
-      return { setupCompleted: false };
+      return normalizeRuntimeConfig({ setupCompleted: false });
     }
     const parsed = JSON.parse(fs$1.readFileSync(cfgPath, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : { setupCompleted: false };
+    return normalizeRuntimeConfig(parsed && typeof parsed === "object" ? parsed : { setupCompleted: false });
   } catch (e) {
-    return { setupCompleted: false };
+    return normalizeRuntimeConfig({ setupCompleted: false });
   }
 }
 function saveRuntimeConfig(config) {
+  const normalized = normalizeRuntimeConfig(config);
   const cfgPath = getRuntimeConfigPath();
   fs$1.mkdirSync(path$2.dirname(cfgPath), { recursive: true });
-  fs$1.writeFileSync(cfgPath, JSON.stringify(config, null, 2), "utf8");
+  fs$1.writeFileSync(cfgPath, JSON.stringify(normalized, null, 2), "utf8");
+}
+function normalizeRuntimeConfig(inputConfig) {
+  var _a, _b;
+  const source = inputConfig && typeof inputConfig === "object" ? inputConfig : {};
+  const mode = (source == null ? void 0 : source.mode) === "client" ? "client" : "server";
+  const profiles = (source == null ? void 0 : source.profiles) && typeof source.profiles === "object" ? source.profiles : {};
+  const existingServerProfile = (profiles == null ? void 0 : profiles.server) && typeof profiles.server === "object" ? profiles.server : {};
+  const existingClientProfile = (profiles == null ? void 0 : profiles.client) && typeof profiles.client === "object" ? profiles.client : {};
+  const migratedServerProfile = {
+    ...existingServerProfile,
+    ...(source == null ? void 0 : source.server) ? { server: source.server } : {},
+    ...(source == null ? void 0 : source.mode) === "server" && typeof (source == null ? void 0 : source.setupCompleted) === "boolean" ? { setupCompleted: source.setupCompleted } : {}
+  };
+  const migratedClientProfile = {
+    ...existingClientProfile,
+    ...(source == null ? void 0 : source.client) ? { client: source.client } : {},
+    ...(source == null ? void 0 : source.mode) === "client" && typeof (source == null ? void 0 : source.setupCompleted) === "boolean" ? { setupCompleted: source.setupCompleted } : {}
+  };
+  if (typeof migratedServerProfile.setupCompleted !== "boolean") {
+    migratedServerProfile.setupCompleted = !!(((_a = migratedServerProfile == null ? void 0 : migratedServerProfile.server) == null ? void 0 : _a.dbFile) || ((_b = migratedServerProfile == null ? void 0 : migratedServerProfile.server) == null ? void 0 : _b.dbDirectory));
+  }
+  if (typeof migratedClientProfile.setupCompleted !== "boolean") {
+    migratedClientProfile.setupCompleted = !!(migratedClientProfile == null ? void 0 : migratedClientProfile.client);
+  }
+  const effectiveServer = migratedServerProfile.server || (source == null ? void 0 : source.server) || null;
+  const effectiveClient = migratedClientProfile.client || (source == null ? void 0 : source.client) || null;
+  const setupCompleted = mode === "client" ? migratedClientProfile.setupCompleted : migratedServerProfile.setupCompleted;
+  return {
+    ...source,
+    setupCompleted,
+    mode,
+    ...effectiveServer ? { server: effectiveServer } : {},
+    ...effectiveClient ? { client: effectiveClient } : {},
+    profiles: {
+      server: migratedServerProfile,
+      client: migratedClientProfile
+    }
+  };
 }
 function applyRuntimeConfig(config) {
   var _a;
   runtimeConfig = config;
   if (config == null ? void 0 : config.apiBaseUrl) process.env.API_BASE_URL = config.apiBaseUrl;
+  else delete process.env.API_BASE_URL;
   if ((_a = config == null ? void 0 : config.server) == null ? void 0 : _a.dbFile) process.env.DB_FILE = config.server.dbFile;
+  else delete process.env.DB_FILE;
 }
 function getApiRootForHealth() {
   const apiBase = process.env.API_BASE_URL || "http://localhost:4000/api";
@@ -16442,6 +16474,21 @@ async function waitForApiReady(apiRoot, timeoutMs = 15e3, intervalMs = 300) {
   }
   return false;
 }
+async function validateClientServerUrl(rawUrl) {
+  const serverUrl = normalizeServerUrl(rawUrl);
+  if (!serverUrl) {
+    return { success: false, error: "Server URL is required in client mode" };
+  }
+  const health = await serverManager.checkApiHealth(serverUrl);
+  if (!(health == null ? void 0 : health.success) || !(health == null ? void 0 : health.healthy)) {
+    return { success: false, error: "Unable to connect to the server URL. Verify the address and server availability." };
+  }
+  return {
+    success: true,
+    serverUrl,
+    apiBaseUrl: `${serverUrl}/api`
+  };
+}
 function resolveConfigByDbPresence(initialConfig) {
   var _a, _b;
   const loaded = initialConfig || loadRuntimeConfig();
@@ -16460,7 +16507,19 @@ function resolveConfigByDbPresence(initialConfig) {
     }
   }) || null;
   if ((loaded == null ? void 0 : loaded.setupCompleted) && (loaded == null ? void 0 : loaded.mode) === "server") {
-    if (!existingDbFile) return { ...loaded, setupCompleted: false };
+    if (!existingDbFile) {
+      return {
+        ...loaded,
+        setupCompleted: false,
+        profiles: {
+          ...(loaded == null ? void 0 : loaded.profiles) || {},
+          server: {
+            ...(loaded == null ? void 0 : loaded.profiles) && loaded.profiles.server || {},
+            setupCompleted: false
+          }
+        }
+      };
+    }
     return {
       ...loaded,
       server: {
@@ -16468,43 +16527,93 @@ function resolveConfigByDbPresence(initialConfig) {
         dbFile: existingDbFile,
         port: configuredPort
       },
-      apiBaseUrl: `http://localhost:${configuredPort}/api`
-    };
-  }
-  if (!(loaded == null ? void 0 : loaded.setupCompleted) && existingDbFile) {
-    return {
-      ...loaded,
-      setupCompleted: true,
-      mode: "server",
-      server: {
-        dbDirectory: path$2.dirname(existingDbFile),
-        dbFile: existingDbFile,
-        port: configuredPort
-      },
-      apiBaseUrl: `http://localhost:${configuredPort}/api`
+      apiBaseUrl: `http://localhost:${configuredPort}/api`,
+      profiles: {
+        ...(loaded == null ? void 0 : loaded.profiles) || {},
+        server: {
+          ...(loaded == null ? void 0 : loaded.profiles) && loaded.profiles.server || {},
+          setupCompleted: true,
+          server: {
+            dbDirectory: path$2.dirname(existingDbFile),
+            dbFile: existingDbFile,
+            port: configuredPort
+          }
+        }
+      }
     };
   }
   return loaded;
 }
-async function resolveLicenseState(initialConfig) {
-  var _a;
+function activateModeConfig(initialConfig, selectedMode) {
+  var _a, _b;
   const loaded = initialConfig || loadRuntimeConfig();
-  if (!(loaded == null ? void 0 : loaded.setupCompleted) || (loaded == null ? void 0 : loaded.mode) !== "server") return loaded;
-  let fingerprint = getDeviceFingerprint();
-  let status = await licenseManager.getStatus(fingerprint);
-  if ((status == null ? void 0 : status.success) === true && (status == null ? void 0 : status.valid) === false && (status == null ? void 0 : status.reason) === "fingerprint_mismatch") {
-    const localStatus = await licenseManager.getStatus(null);
-    const localFingerprint = (_a = localStatus == null ? void 0 : localStatus.license) == null ? void 0 : _a.device_fingerprint;
-    if ((localStatus == null ? void 0 : localStatus.success) === true && (localStatus == null ? void 0 : localStatus.valid) === true && isValidFingerprint(localFingerprint)) {
-      persistFingerprint(localFingerprint);
-      fingerprint = localFingerprint;
-      status = await licenseManager.getStatus(fingerprint);
+  const mode = selectedMode === "client" ? "client" : "server";
+  const serverProfile = ((_a = loaded == null ? void 0 : loaded.profiles) == null ? void 0 : _a.server) || {};
+  const clientProfile = ((_b = loaded == null ? void 0 : loaded.profiles) == null ? void 0 : _b.client) || {};
+  if (mode === "client") {
+    const clientConfig = (clientProfile == null ? void 0 : clientProfile.client) || (loaded == null ? void 0 : loaded.client) || { serverUrl: "" };
+    const serverUrl = normalizeServerUrl((clientConfig == null ? void 0 : clientConfig.serverUrl) || "");
+    return {
+      ...loaded,
+      mode: "client",
+      setupCompleted: (clientProfile == null ? void 0 : clientProfile.setupCompleted) === true,
+      client: { serverUrl: serverUrl || "" },
+      ...serverUrl ? { apiBaseUrl: `${serverUrl}/api` } : {},
+      profiles: {
+        ...(loaded == null ? void 0 : loaded.profiles) || {},
+        client: {
+          ...clientProfile,
+          setupCompleted: (clientProfile == null ? void 0 : clientProfile.setupCompleted) === true,
+          client: { serverUrl: serverUrl || "" }
+        }
+      }
+    };
+  }
+  const configuredServer = (serverProfile == null ? void 0 : serverProfile.server) || (loaded == null ? void 0 : loaded.server) || null;
+  const legacyDbFile = getLegacyDbPath();
+  const defaultDbFile = path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
+  const configuredDbFile = (configuredServer == null ? void 0 : configuredServer.dbFile) || null;
+  const existingDbFile = [configuredDbFile, legacyDbFile, defaultDbFile].find((candidate) => {
+    if (!candidate) return false;
+    try {
+      return fs$1.existsSync(candidate);
+    } catch (_) {
+      return false;
     }
+  }) || configuredDbFile;
+  const serverPort = Number((configuredServer == null ? void 0 : configuredServer.port) || 4e3);
+  const serverConfig = existingDbFile ? {
+    dbDirectory: path$2.dirname(existingDbFile),
+    dbFile: existingDbFile,
+    port: serverPort
+  } : configuredServer;
+  const serverBaseConfig = {
+    ...loaded,
+    mode: "server",
+    setupCompleted: (serverProfile == null ? void 0 : serverProfile.setupCompleted) === true && !!(serverConfig == null ? void 0 : serverConfig.dbFile),
+    ...serverConfig ? { server: serverConfig } : {},
+    ...serverConfig ? { apiBaseUrl: `http://localhost:${serverPort}/api` } : {},
+    profiles: {
+      ...(loaded == null ? void 0 : loaded.profiles) || {},
+      server: {
+        ...serverProfile,
+        setupCompleted: (serverProfile == null ? void 0 : serverProfile.setupCompleted) === true && !!(serverConfig == null ? void 0 : serverConfig.dbFile),
+        ...serverConfig ? { server: serverConfig } : {}
+      }
+    }
+  };
+  return resolveConfigByDbPresence(serverBaseConfig);
+}
+async function resolveLicenseState(initialConfig) {
+  const loaded = initialConfig || loadRuntimeConfig();
+  if (!(loaded == null ? void 0 : loaded.setupCompleted) || (loaded == null ? void 0 : loaded.mode) !== "server") {
+    return { ...loaded, licenseRequired: false, licenseStatus: null };
   }
+  const status = await licenseManager.getStatus(getDeviceFingerprint());
   if ((status == null ? void 0 : status.success) === true && (status == null ? void 0 : status.valid) === false) {
-    return { ...loaded, setupCompleted: false, licenseRequired: true, licenseStatus: status, machineFingerprint: fingerprint };
+    return { ...loaded, licenseRequired: true, licenseStatus: status };
   }
-  return { ...loaded, licenseStatus: status, machineFingerprint: fingerprint };
+  return { ...loaded, licenseRequired: false, licenseStatus: status || null };
 }
 const iconPath = path$2.join(__dirname, "..", "public", "masatech-logo.png");
 const iconImage = nativeImage.createFromPath(iconPath);
@@ -16521,33 +16630,6 @@ function loadRenderer(targetWindow) {
   } else {
     targetWindow.loadFile(path$2.join(RENDERER_DIST, "index.html"));
   }
-}
-function createWizardWindow() {
-  const wizardWidth = 720;
-  const wizardHeight = 540;
-  win = new BrowserWindow({
-    icon: iconPath,
-    width: wizardWidth,
-    height: wizardHeight,
-    minWidth: wizardWidth,
-    minHeight: wizardHeight,
-    maxWidth: wizardWidth,
-    maxHeight: wizardHeight,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    fullscreen: false,
-    fullscreenable: false,
-    frame: false,
-    autoHideMenuBar: true,
-    thickFrame: false,
-    titleBarStyle: "hidden",
-    webPreferences: {
-      preload: path$2.join(__dirname, "preload.mjs")
-    }
-  });
-  win.setMenuBarVisibility(false);
-  loadRenderer(win);
 }
 function createMainWindow() {
   win = new BrowserWindow({
@@ -16567,6 +16649,23 @@ function createMainWindow() {
     }
   });
   loadRenderer(win);
+}
+async function bootstrapRuntimeConfig() {
+  var _a, _b;
+  let effectiveCfg = resolveConfigByDbPresence(runtimeConfig || loadRuntimeConfig());
+  applyRuntimeConfig(effectiveCfg);
+  if ((effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) && (effectiveCfg == null ? void 0 : effectiveCfg.mode) === "server") {
+    const dbFile = ((_a = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
+    const port = Number(((_b = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _b.port) || 4e3);
+    await serverManager.startServer({ port, dbFile });
+    const apiReady = await waitForApiReady(`http://localhost:${port}`);
+    if (apiReady) {
+      effectiveCfg = await resolveLicenseState(effectiveCfg);
+      applyRuntimeConfig(effectiveCfg);
+      saveRuntimeConfig(effectiveCfg);
+    }
+  }
+  return effectiveCfg;
 }
 ipcMain.handle("server:check-docker", async () => {
   return await serverManager.checkDocker();
@@ -16631,12 +16730,12 @@ ipcMain.handle("setup:get-config", async () => {
     fs$1.mkdirSync(defaultDir, { recursive: true });
   } catch (_) {
   }
-  let effectiveConfig = resolveConfigByDbPresence(loaded);
-  effectiveConfig = await resolveLicenseState(effectiveConfig);
+  const normalizedConfig = resolveConfigByDbPresence(loaded);
+  const effectiveConfig = await resolveLicenseState(normalizedConfig);
   const fingerprint = getDeviceFingerprint();
-  if ((effectiveConfig == null ? void 0 : effectiveConfig.setupCompleted) && (effectiveConfig == null ? void 0 : effectiveConfig.mode) === "server" && (!(loaded == null ? void 0 : loaded.setupCompleted) || ((_a = loaded == null ? void 0 : loaded.server) == null ? void 0 : _a.dbFile) !== ((_b = effectiveConfig == null ? void 0 : effectiveConfig.server) == null ? void 0 : _b.dbFile))) {
-    saveRuntimeConfig(effectiveConfig);
-    applyRuntimeConfig(effectiveConfig);
+  if ((normalizedConfig == null ? void 0 : normalizedConfig.setupCompleted) && (normalizedConfig == null ? void 0 : normalizedConfig.mode) === "server" && (!(loaded == null ? void 0 : loaded.setupCompleted) || ((_a = loaded == null ? void 0 : loaded.server) == null ? void 0 : _a.dbFile) !== ((_b = normalizedConfig == null ? void 0 : normalizedConfig.server) == null ? void 0 : _b.dbFile))) {
+    saveRuntimeConfig(normalizedConfig);
+    applyRuntimeConfig(normalizedConfig);
   }
   return {
     success: true,
@@ -16650,13 +16749,39 @@ ipcMain.handle("setup:get-config", async () => {
     }
   };
 });
+ipcMain.handle("startup:select-mode", async (_event, payload) => {
+  var _a, _b;
+  const selectedMode = (payload == null ? void 0 : payload.mode) === "client" ? "client" : "server";
+  const loaded = runtimeConfig || loadRuntimeConfig();
+  let effectiveConfig = activateModeConfig(loaded, selectedMode);
+  if (selectedMode === "server") {
+    if ((effectiveConfig == null ? void 0 : effectiveConfig.setupCompleted) && ((_a = effectiveConfig == null ? void 0 : effectiveConfig.server) == null ? void 0 : _a.dbFile)) {
+      const dbFile = effectiveConfig.server.dbFile;
+      const port = Number(((_b = effectiveConfig == null ? void 0 : effectiveConfig.server) == null ? void 0 : _b.port) || 4e3);
+      const serverStart = await serverManager.startServer({ port, dbFile });
+      if (serverStart == null ? void 0 : serverStart.success) {
+        const apiReady = await waitForApiReady(`http://localhost:${port}`);
+        if (apiReady) {
+          effectiveConfig = await resolveLicenseState(effectiveConfig);
+        }
+      }
+    }
+  } else {
+    await serverManager.stopServer();
+    effectiveConfig = { ...effectiveConfig, licenseRequired: false, licenseStatus: null };
+  }
+  saveRuntimeConfig(effectiveConfig);
+  applyRuntimeConfig(effectiveConfig);
+  return { success: true, config: effectiveConfig };
+});
 ipcMain.handle("app:quit", async () => {
   app.quit();
   return { success: true };
 });
 ipcMain.handle("setup:save-config", async (_event, payload) => {
   const mode = (payload == null ? void 0 : payload.mode) === "client" ? "client" : "server";
-  const base = { setupCompleted: true, mode, machineFingerprint: getDeviceFingerprint() };
+  const base = { setupCompleted: true, mode };
+  const loaded = runtimeConfig || loadRuntimeConfig();
   if (mode === "server") {
     const dbDirectory = path$2.resolve((payload == null ? void 0 : payload.dbDirectory) || getDefaultDbDirectory());
     fs$1.mkdirSync(dbDirectory, { recursive: true });
@@ -16670,7 +16795,15 @@ ipcMain.handle("setup:save-config", async (_event, payload) => {
     const config2 = {
       ...base,
       server: { dbDirectory, dbFile, port },
-      apiBaseUrl: `http://localhost:${port}/api`
+      apiBaseUrl: `http://localhost:${port}/api`,
+      profiles: {
+        ...(loaded == null ? void 0 : loaded.profiles) || {},
+        server: {
+          ...(loaded == null ? void 0 : loaded.profiles) && loaded.profiles.server || {},
+          setupCompleted: true,
+          server: { dbDirectory, dbFile, port }
+        }
+      }
     };
     applyRuntimeConfig(config2);
     const serverStart = await serverManager.startServer({ port, dbFile });
@@ -16722,12 +16855,47 @@ ipcMain.handle("setup:save-config", async (_event, payload) => {
     }, 80);
     return { success: true, config: config2 };
   }
-  const serverUrl = normalizeServerUrl(payload == null ? void 0 : payload.serverUrl);
-  if (!serverUrl) return { success: false, error: "Server URL is required in client mode" };
+  const serverUrl = normalizeServerUrl((payload == null ? void 0 : payload.serverUrl) || "");
   const config = {
+    ...loaded,
     ...base,
-    client: { serverUrl },
-    apiBaseUrl: `${serverUrl}/api`
+    client: { serverUrl: serverUrl || "" },
+    ...serverUrl ? { apiBaseUrl: `${serverUrl}/api` } : {},
+    profiles: {
+      ...(loaded == null ? void 0 : loaded.profiles) || {},
+      client: {
+        ...(loaded == null ? void 0 : loaded.profiles) && loaded.profiles.client || {},
+        setupCompleted: true,
+        client: { serverUrl: serverUrl || "" }
+      }
+    }
+  };
+  saveRuntimeConfig(config);
+  applyRuntimeConfig(config);
+  await serverManager.stopServer();
+  return { success: true, config };
+});
+ipcMain.handle("client:test-server-url", async (_event, payload) => {
+  return await validateClientServerUrl(payload == null ? void 0 : payload.serverUrl);
+});
+ipcMain.handle("client:connect", async (_event, payload) => {
+  const validation = await validateClientServerUrl(payload == null ? void 0 : payload.serverUrl);
+  if (!(validation == null ? void 0 : validation.success)) return validation;
+  const loaded = runtimeConfig || loadRuntimeConfig();
+  const config = {
+    ...loaded,
+    setupCompleted: true,
+    mode: "client",
+    client: { serverUrl: validation.serverUrl },
+    apiBaseUrl: validation.apiBaseUrl,
+    profiles: {
+      ...(loaded == null ? void 0 : loaded.profiles) || {},
+      client: {
+        ...(loaded == null ? void 0 : loaded.profiles) && loaded.profiles.client || {},
+        setupCompleted: true,
+        client: { serverUrl: validation.serverUrl }
+      }
+    }
   };
   saveRuntimeConfig(config);
   applyRuntimeConfig(config);
@@ -16761,43 +16929,16 @@ app.on("window-all-closed", () => {
   }
 });
 app.on("activate", async () => {
-  var _a, _b;
   if (BrowserWindow.getAllWindows().length === 0) {
-    let effectiveCfg = resolveConfigByDbPresence(runtimeConfig || loadRuntimeConfig());
-    applyRuntimeConfig(effectiveCfg);
-    if ((effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) && (effectiveCfg == null ? void 0 : effectiveCfg.mode) === "server") {
-      const dbFile = ((_a = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
-      const port = Number(((_b = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _b.port) || 4e3);
-      await serverManager.startServer({ port, dbFile });
-      const apiReady = await waitForApiReady(`http://localhost:${port}`);
-      if (apiReady) {
-        effectiveCfg = await resolveLicenseState(effectiveCfg);
-        applyRuntimeConfig(effectiveCfg);
-      }
-    }
-    if (effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) createMainWindow();
-    else createWizardWindow();
+    await bootstrapRuntimeConfig();
+    createMainWindow();
   }
 });
 app.on("before-quit", async () => {
 });
 app.whenReady().then(async () => {
-  var _a, _b;
-  const cfg = loadRuntimeConfig();
-  let effectiveCfg = resolveConfigByDbPresence(cfg);
-  applyRuntimeConfig(effectiveCfg);
-  if ((effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) && (effectiveCfg == null ? void 0 : effectiveCfg.mode) === "server") {
-    const dbFile = ((_a = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _a.dbFile) || path$2.join(getDefaultDbDirectory(), DB_FILE_NAME);
-    const port = Number(((_b = effectiveCfg == null ? void 0 : effectiveCfg.server) == null ? void 0 : _b.port) || 4e3);
-    await serverManager.startServer({ port, dbFile });
-    const apiReady = await waitForApiReady(`http://localhost:${port}`);
-    if (apiReady) {
-      effectiveCfg = await resolveLicenseState(effectiveCfg);
-      applyRuntimeConfig(effectiveCfg);
-    }
-  }
-  if (effectiveCfg == null ? void 0 : effectiveCfg.setupCompleted) createMainWindow();
-  else createWizardWindow();
+  await bootstrapRuntimeConfig();
+  createMainWindow();
 });
 export {
   MAIN_DIST,
