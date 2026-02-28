@@ -342,8 +342,6 @@ function CreateExpenseModalContent(viewModel, delegator, handleClose) {
     const labelClass = 'block text-sm font-medium text-gray-700 mb-1'
     const fieldClass = 'w-full'
 
-    console.log('customerList', customerList)
-
     return Row({ class: 'w-full max-w-2xl bg-white rounded-xl shadow-xl p-6' }, [
     Row({ class: 'text-lg font-semibold mb-4' }, 'Add Expense'),
     Row({ tagType: 'form', class: 'space-y-4', events: { submit: handleSubmit }, delegator }, [

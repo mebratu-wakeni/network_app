@@ -39,11 +39,6 @@ const ModalContent = (viewModel, delegator, handleClose) => {
 
     // Data should already be loaded before modal opens (in button click handler)
     // Just read from state - no loading calls here to avoid infinite re-rendering
-    console.log('[BorrowFromModal] Product list count:', productList.length);
-    console.log('[BorrowFromModal] Partner list count:', partnerList.length);
-    console.log('[BorrowFromModal] Product list sample:', productList.slice(0, 3));
-    console.log('[BorrowFromModal] Partner list sample:', partnerList.slice(0, 3));
-    
     const showProductDropdown = props.getLocalState('show-product-dropdown');
     const productSearchQuery = props.getLocalState('product-search-query');
     const showPartnerDropdown = props.getLocalState('show-partner-dropdown');
@@ -165,12 +160,8 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           location: null // Can be added later if needed
         };
         
-        console.log('[BorrowFromModal] Submitting borrow from data:', JSON.stringify(borrowFromData, null, 2));
-        
         // Call ViewModel method to create borrowed-from inventory item
         const result = await props.viewModel.createBorrowedFromStock(borrowFromData);
-        
-        console.log('[BorrowFromModal] Borrow from result:', JSON.stringify(result, null, 2));
         
         if (!result || !result.success) {
           throw new Error(result?.error || 'Failed to create borrowed from stock');

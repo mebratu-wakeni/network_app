@@ -70,15 +70,6 @@ export class BinCardsController {
       if (dateTo) filter.dateTo = dateTo
       if (location) filter.location = location
 
-      console.log(`[BinCardsController] Export request for product ${productId}:`, {
-        limit: limit || 10000,
-        offset: offset || 0,
-        search: search || '',
-        filter,
-        sortBy: sortBy || 'transaction_date',
-        orderBy: orderBy || 'desc'
-      })
-
       const csvContent = await this.service.exportToCSV(productId, {
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
@@ -87,8 +78,6 @@ export class BinCardsController {
         sortBy: sortBy || 'transaction_date',
         orderBy: orderBy || 'desc'
       })
-
-      console.log(`[BinCardsController] Export response: ${csvContent.split('\n').length - 1} rows`)
 
       // Set headers for CSV download
       res.setHeader('Content-Type', 'text/csv')

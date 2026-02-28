@@ -33,7 +33,7 @@ export function SupplierSection(props) {
       ]),
       formItem('Invoice No.', Input({
         type: 'text',
-        value: '',
+        value: props.viewModel.getState('current-order')?.invoice_no || '',
         onChange: (e) => props.viewModel.updateCurrentOrderField('invoice_no', e.target.value),
         class: 'w-full'
       })),

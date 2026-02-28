@@ -168,7 +168,6 @@ export const requireAnyRule = (requiredRules = []) => {
  */
 export const requireRole = (allowedRoles = []) => {
   return async (req, res, next) => {
-    console.log('authentication req: ', req.user);
     try {
       // First, try to authenticate if JWT token is present
       const authHeader = req.headers.authorization

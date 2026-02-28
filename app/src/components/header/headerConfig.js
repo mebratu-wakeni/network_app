@@ -18,7 +18,7 @@ export const HEALTH_LABELS = {
 export const HEALTH_CHECK_INTERVAL = 10000; // 10 seconds
 
 export const HEADER_CLASSES = {
-  container: 'h-18 w-full bg-white border-b border-gray-200 shadow-sm px-6 py-4 flex items-center justify-between',
+  container: 'h-14 w-full bg-white border-b border-gray-200 shadow-sm px-3 md:px-6 py-2 flex items-center justify-between',
   leftSection: 'flex items-center gap-4',
   healthContainer: 'flex items-center gap-3 ml-2',
   rightSection: 'flex items-center gap-3',

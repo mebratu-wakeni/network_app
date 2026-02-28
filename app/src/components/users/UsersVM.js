@@ -117,7 +117,7 @@ export default class UsersVM extends ViewModel {
 
       throw new Error(result.error || 'Failed to export users');
     } catch (error) {
-      console.log('Error exporting users: ', error);
+      console.error('Error exporting users: ', error);
       this.updateState('error', error.message || 'Failed to export users');
     } finally {
       this.updateState('loading', false);
@@ -326,8 +326,6 @@ export default class UsersVM extends ViewModel {
   async deleteUser(userId) {
     try {
       const result = await window.ipcRenderer.invoke('users:delete-user', userId);
-      console.log('deleting user result: ', result)
-
       if ( result.success ) {
         this.loadUsers()
         return result.user

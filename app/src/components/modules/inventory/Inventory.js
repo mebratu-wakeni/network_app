@@ -12,9 +12,9 @@ export function InventoryUI() {
 
   const render = (props) => {
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden'}, [
-      CardHeader({ class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0' }, 'Inventory Management'),
-      CardBody({ class: 'px-4 py-2 flex flex-col overflow-hidden flex-1 min-h-0'}, [
-        Row({ class: 'bg-white border border-gray-200 rounded-lg flex-1 w-full flex flex-col min-h-0 overflow-hidden' }, [
+      CardHeader({ class: 'px-4 md:px-6 text-gray-900 text-md font-semibold flex items-center h-11 flex-shrink-0' }, 'Inventory Management'),
+      CardBody({ class: 'px-3 md:px-4 py-2 flex flex-col overflow-y-auto flex-1 min-h-0'}, [
+        Row({ class: 'bg-white border border-gray-200 rounded-lg w-full flex flex-col min-h-full' }, [
           InventoryTabs(props),
           InventoryTabContents(props)
         ])
@@ -22,11 +22,25 @@ export function InventoryUI() {
     ])
   } 
 
-  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading']}, render)
+  return StatefulRow({
+    class: 'w-full h-full overflow-hidden',
+    viewModel,
+    stateKeys: [
+      'loading',
+      'inventory-tab',
+      'product-list',
+      'product-total-count',
+      'product-table-config',
+      'product-search-query',
+      'product-filter',
+      'product-stats',
+      'stock-list'
+    ]
+  }, render)
 }
 
 function InventoryTabs(props) {
-  return Row({ class: 'mb-2'}, [
+  return Row({ class: 'mb-1'}, [
     Tabs({
       tabs: [
         { key: 'products', label: 'Products'},
@@ -56,7 +70,7 @@ function InventoryTabContents(props) {
   }
 
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden'}, [
+  return Row({ class: 'flex flex-col'}, [
     tabContent()
   ])
 }

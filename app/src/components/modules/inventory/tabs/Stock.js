@@ -180,7 +180,7 @@ function StockUI(props) {
     },
   ];
 
-  return Row({ class: 'w-full flex-1 flex flex-col overflow-hidden' }, [
+  return Row({ class: 'w-full flex flex-col' }, [
     // Header Section with Actions
     Row({ class: 'flex items-center justify-between gap-6 px-4 py-2 border-b border-gray-200' }, [
       Row({ class: 'flex items-center gap-4' }, [
@@ -252,7 +252,7 @@ function StockUI(props) {
         //   ])
         // ])
       ]),
-      Row({ class: 'w-full grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3' }, 
+      Row({ class: 'w-full grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(170px,1fr))]' }, 
         stockStatsArray.map(stat => 
           StockCard({
             ...stat,
@@ -363,7 +363,7 @@ function StockSearchAndPaginationRow(props, { searchInputValue, handleSearchChan
   const totalItems = totalCount;
   const initRow = totalItems > 0 ? paginationOffset + 1 : 0;
   const endRow = totalItems > 0 ? Math.min(paginationOffset + paginationLimit, totalItems) : 0;
-  return Row({ class: 'flex items-center justify-between gap-4 px-6 py-3 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
+  return Row({ class: 'sticky top-0 z-30 flex items-center justify-between gap-4 px-6 py-3 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
     Row({ class: 'flex-1 min-w-[200px] max-w-md' }, [
       Row({ class: 'relative' }, [
         IonIcon({ name: 'search-outline', class: 'absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xl pointer-events-none' }),
@@ -542,34 +542,36 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
     return false;
   };
 
-  return Row({ class: 'flex-1 flex flex-col overflow-hidden min-h-0' }, [
+  return Row({ class: 'flex flex-col' }, [
     // Stock Table (search + pagination are in parent row)
-    Row({ class: 'flex-1 flex flex-col overflow-hidden min-h-0 pb-6' }, [
-      Row({ class: 'px-4 py-2 text-sm text-gray-500 border-b border-gray-100' }, 
-        tableType === 'inventories' ? 'Showing: Inventories' : 
-        tableType === 'borrow_from' ? 'Showing: Borrowed From (borrow_from_inventories)' : 
-        'Showing: Borrowed To (borrow_to_inventories)'
-      ),
+    Row({ class: 'flex flex-col pb-2' }, [
       Table({ 
-        class: 'flex-1 flex flex-col min-h-0', 
+        class: 'flex flex-col',
+        tableClass: 'min-w-[1050px]',
+        pageScrollable: true
       }, [
-      TableHeader({ class: 'sticky top-0 z-10 bg-white' }, [
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('product_code') }, ['Product Code', sortIcon('product_code')]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('name') }, ['Product Name', sortIcon('name')]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('category') }, ['Category', sortIcon('category')]),
+      TableHeader({ class: 'bg-white' }, [
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('product_code') }, ['Product Code', sortIcon('product_code')]),
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('name') }, ['Product Name', sortIcon('name')]),
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('category') }, ['Category', sortIcon('category')]),
         tableType === 'inventories'
-          ? TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('location') }, ['Location', sortIcon('location')])
-          : TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Partner'),
-        TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('quantity') }, [
+          ? TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('location') }, ['Location', sortIcon('location')])
+          : TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide` }, 'Partner'),
+        TableHCell({ class: `text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('quantity') }, [
           tableType === 'inventories' ? 'Quantity' : (tableType === 'borrow_from' || tableType === 'borrow_to') ? 'Remaining' : 'Qty Lent',
           sortIcon('quantity')
         ]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('unit') }, ['Unit', sortIcon('unit')]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('expiry_date') }, ['Expiry Date', sortIcon('expiry_date')]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Status'),
-        TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Action')
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('unit') }, ['Unit', sortIcon('unit')]),
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('expiry_date') }, ['Expiry Date', sortIcon('expiry_date')]),
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide` }, 'Status'),
+        TableHCell({ class: `text-center text-xs font-semibold text-gray-500 uppercase tracking-wide` }, 'Action')
       ]),
-      TableBody({ class: 'flex-1 overflow-y-auto bg-white' }, 
+      TableBody({
+        class: 'bg-white',
+        showEndMarker: paginatedItems.length > 0,
+        endMarkerLabel: 'End of table',
+        endMarkerColspan: 9
+      }, 
         paginatedItems.length === 0 
           ? TableRow({}, [
               TableDCell({ 
@@ -581,16 +583,16 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
                 TableRow({ 
                   class: `transition-colors duration-150 cursor-pointer ${selectedRowId === item.id ? 'bg-blue-50 border-l-2 border-indigo-500' : ''} hover:bg-blue-50` 
                 }, [
-                  TableDCell({ class: 'px-4 py-3 text-sm font-medium text-gray-900' }, item.productCode ?? ''),
-                  TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.name ?? ''),
-                  TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.category ?? ''),
-                  TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, tableType === 'inventories' ? (item.location ?? '—') : (item.partnerName ?? '—')),
-                  TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-medium' }, 
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm font-medium text-gray-900' }, item.productCode ?? ''),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[220px] lg:max-w-[320px] truncate', attributes: { title: item.name ?? '' } }, item.name ?? ''),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[160px] truncate', attributes: { title: item.category ?? '' } }, item.category ?? ''),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[170px] truncate', attributes: { title: tableType === 'inventories' ? (item.location ?? '—') : (item.partnerName ?? '—') } }, tableType === 'inventories' ? (item.location ?? '—') : (item.partnerName ?? '—')),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 text-right font-medium' }, 
                     (tableType === 'borrow_from' || tableType === 'borrow_to') && item.remaining !== undefined ? (item.remaining ?? 0).toLocaleString() : (item.quantity ?? 0).toLocaleString()
                   ),
-                  TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.unit ?? ''),
-                  TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, formatDateDDMMYYYY(item.expiryDate)),
-                  TableDCell({ class: 'px-4 py-3 text-sm' }, getStatusBadge(item.status, item.expiryDate, item)),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900' }, item.unit ?? ''),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900' }, formatDateDDMMYYYY(item.expiryDate)),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm' }, getStatusBadge(item.status, item.expiryDate, item)),
                   ActionDropdown({
                     actionId: item.id,
                     open: item.id === actionId,
@@ -731,17 +733,6 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
       // Normalize expiryDate: empty string becomes null, otherwise use the value
       const normalizedExpiryDate = (formExpiryDate === '' || formExpiryDate === null || formExpiryDate === undefined) ? null : formExpiryDate;
       
-      console.log('[Stock.js] handleSaveDetails - Using fresh form state:', {
-        currentForm: JSON.stringify(currentForm, null, 2),
-        formExpiryDate,
-        normalizedExpiryDate,
-        formBatchNo,
-        formUnitCost,
-        isBorrowedItem,
-        staleExpiryDate: expiryDate, // This is the stale value from render
-        staleBatchNo: batchNo // This is the stale value from render
-      });
-      
       await props.viewModel.updateStock(stockItem.id, {
         inventoryCode: formInventoryCode,
         productCode: formProductCode, // Read-only, but included for completeness
@@ -880,11 +871,6 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
                   value: toDateInputValue(expiryDate),
                   onChange: (e) => {
                     const newValue = e.target.value || null;
-                    console.log('[Stock.js] Expiry date onChange:', {
-                      targetValue: e.target.value,
-                      newValue,
-                      currentFormValue: stockDetailsForm.expiryDate
-                    });
                     props.viewModel.updateStockDetailsForm('expiryDate', newValue);
                   },
                   placeholder: 'Select expiry date',
@@ -1385,13 +1371,6 @@ function TransferStockDrawer({ stockItem, showSlide, onClose, ...props }) {
     }
 
     // Handle stock transfer save
-    console.log('Transferring stock:', {
-      item: stockItem,
-      quantity: transferQuantity,
-      from: transferFromLocation,
-      to: transferToLocation,
-      notes: transferNotes
-    });
     onClose();
   };
 
@@ -1522,26 +1501,9 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
   const totalBorrowed = returnStatus?.totalBorrowed ?? 0;
   const totalReturned = returnStatus?.totalReturned ?? 0;
   
-  // Debug logging for return status display
-  console.log('[ReturnBorrowedDrawer] Return status display:', {
-    returnStatus,
-    remaining,
-    totalBorrowed,
-    totalReturned,
-    returnStatusLoaded,
-    formStateReturnStatus: formState.returnStatus
-  });
-
   // Use borrowFromId when from borrowed-from list (row id = borrow_from_inventories.id)
   const borrowFromId = stockItem?.borrowFromId ?? stockItem?.id;
   const productId = stockItem?.productId ?? null;
-  
-  // Debug: Log stockItem to see what fields are available
-  console.log('[ReturnBorrowedDrawer] stockItem:', stockItem);
-  console.log('[ReturnBorrowedDrawer] stockItem.inventoryId:', stockItem?.inventoryId);
-  console.log('[ReturnBorrowedDrawer] stockItem keys:', stockItem ? Object.keys(stockItem) : 'stockItem is null');
-  console.log('[ReturnBorrowedDrawer] productId:', productId);
-  console.log('[ReturnBorrowedDrawer] showSlide:', showSlide, 'availableStocksLoaded:', availableStocksLoaded);
 
   // Fetch return status when drawer opens
   // Frontend must always provide borrowFromId and borrowedInventoryId
@@ -1555,11 +1517,6 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
       ? Number(stockItem.inventoryId) 
       : (stockItem?.inventory_id ? Number(stockItem.inventory_id) : null);
     
-    console.log('[ReturnBorrowedDrawer] Extracted borrowedInventoryId:', borrowedInventoryId, 'from stockItem:', {
-      inventoryId: stockItem?.inventoryId,
-      inventory_id: stockItem?.inventory_id
-    });
-    
     if (!borrowedInventoryId) {
       console.error('[ReturnBorrowedDrawer] Error: stockItem.inventoryId is missing. Full stockItem:', JSON.stringify(stockItem, null, 2));
       showAlert({
@@ -1571,11 +1528,9 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
       return;
     }
     
-    props.viewModel.getBorrowFromReturnStatus({ 
+    props.viewModel.getBorrowFromReturnStatus({
       borrowFromId: Number(borrowFromId),
       borrowedInventoryId: borrowedInventoryId
-    }).then((status) => {
-      console.log('[ReturnBorrowedDrawer] Return status received:', status);
     }).catch((error) => {
       console.error('[ReturnBorrowedDrawer] Error fetching return status:', error);
     });
@@ -1583,10 +1538,7 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
   // Fetch available stock from inventories by product (all have valid inventory id)
   if (showSlide && productId && !availableStocksLoaded) {
     props.setLocalState('available-stocks-loaded', true);
-    console.log('[ReturnBorrowedDrawer] Loading inventories for productId:', productId);
-    props.viewModel.loadInventoriesByProduct(Number(productId)).then((items) => {
-      console.log('[ReturnBorrowedDrawer] Loaded inventories:', items?.length || 0, items);
-    }).catch((error) => {
+    props.viewModel.loadInventoriesByProduct(Number(productId)).catch((error) => {
       console.error('[ReturnBorrowedDrawer] Error loading inventories:', error);
     });
   }
@@ -1698,19 +1650,6 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
       const unitPrice = Number(stock?.purchaseUnitPrice || stock?.unitCost || 0);
       const totalValue = quantity * unitPrice;
       
-      console.log('[ReturnBorrowedDrawer] Summary item calculation:', {
-        inventory_id: s.inventory_id,
-        quantity,
-        unitPrice,
-        totalValue,
-        stock: stock ? {
-          id: stock.id,
-          inventoryCode: stock.inventoryCode,
-          purchaseUnitPrice: stock.purchaseUnitPrice,
-          unitCost: stock.unitCost
-        } : 'stock not found'
-      });
-      
       return {
         inventoryCode: stock?.inventoryCode || `ID: ${s.inventory_id}`,
         quantity: quantity,
@@ -1725,11 +1664,6 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
     return sum + value;
   }, 0);
   
-  console.log('[ReturnBorrowedDrawer] Summary calculation:', {
-    summaryData,
-    totalReturnValue,
-    summaryDataLength: summaryData.length
-  });
   const showSummary = summaryData.length > 0 && returnDate && returnQuantity > 0;
 
   const handleProcessReturn = async () => {
@@ -2205,16 +2139,6 @@ function ReturnBorrowedToDrawer({ stockItem, showSlide, onClose, ...props }) {
         return;
       }
       
-      console.log('[ReturnBorrowedToDrawer] Preparing return items:', {
-        stockItem: {
-          productId: stockItem.productId,
-          unitCost: stockItem.unitCost,
-          borrowToId: stockItem.borrowToId
-        },
-        normalized: { productId, unitCost },
-        validItemsCount: validItems.length
-      });
-      
       const returnItemsData = validItems.map(item => ({
         product_id: productId, // Use normalized number
         unit_cost: unitCost, // Use normalized number
@@ -2224,8 +2148,6 @@ function ReturnBorrowedToDrawer({ stockItem, showSlide, onClose, ...props }) {
         location: item.location || null
       }));
       
-      console.log('[ReturnBorrowedToDrawer] Sending returnItemsData:', returnItemsData);
-
       // Show confirmation modal before processing
       const confirmed = await showConfirmation({
         title: 'Confirm Return',
@@ -2507,12 +2429,10 @@ async function handleExportCSV(props) {
 
 async function openBorrowFromModal(props) {
   // Load data before opening modal to avoid infinite re-rendering
-  console.log('[Stock] openBorrowFromModal - Loading products and partners...');
   await Promise.all([
     props.viewModel.loadAllProducts(),
     props.viewModel.loadPartners()
   ]);
-  console.log('[Stock] openBorrowFromModal - Data loaded, opening modal');
   Modal({}, (delegator, closeHandler) => BorrowFromModalContent(props.viewModel, delegator, closeHandler));
 }
 

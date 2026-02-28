@@ -88,7 +88,7 @@ export function Payments(props) {
           Row({ class: 'p-8 text-center text-gray-500' }, 'No payments recorded'),
         paymentHistory.payments && paymentHistory.payments.length > 0 ?
           TableBody({}, [
-            paymentHistory.payments.map(payment => 
+            ...paymentHistory.payments.map(payment => 
               TableRow({ key: payment.id }, [
                 TableDCell({}, formatDateDDMMYYYY(payment.payment_date)),
                 TableDCell({ class: 'font-medium' }, 
@@ -138,7 +138,7 @@ export function Payments(props) {
       ]),
       ordersWithOutstanding.length > 0 ?
         TableBody({}, [
-          ordersWithOutstanding.map(order => 
+          ...ordersWithOutstanding.map(order => 
             TableRow({ key: order.id }, [
               TableDCell({ class: 'font-medium' }, order.receipt_number || `PO${order.id}`),
               TableDCell({}, order.supplier_name || 'Unknown'),

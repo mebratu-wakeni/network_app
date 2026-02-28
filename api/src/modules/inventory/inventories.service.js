@@ -18,12 +18,8 @@ export class InventoriesService {
       throw new Error('Stock items array is required and must not be empty')
     }
 
-    console.log(`[InventoriesService] Bulk import: ${stockItems.length} items`)
-    
     // Stock items are already transformed to backend format in the controller
     const result = await this.repository.bulkImport(stockItems, options)
-
-    console.log(`[InventoriesService] Import summary: ${result.summary.successful} successful, ${result.summary.failed} failed`)
 
     return {
       total: result.summary.total,

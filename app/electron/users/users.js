@@ -69,7 +69,6 @@ class UsersManager {
 
   async updateAvatar(userId, formData, token) {
     try {
-      console.log('avatar formData: ', formData)
       if (!(formData instanceof FormData)) {
         throw new Error("updateAvatar expects FormData");
       }
@@ -229,8 +228,6 @@ class UsersManager {
         body: JSON.stringify(cleanedForm)
       }, token);
 
-      console.log('user create response: ', response);
-
       return {
         success: response.ok === true,
         user: response.user,
@@ -266,8 +263,6 @@ class UsersManager {
       }
 
       const permissionsRes = await this.getUserPermissions(userId, token);
-
-      console.log('permission result: ', permissionsRes)
 
       if(!permissionsRes.success) return permissionsRes;
 
@@ -385,9 +380,6 @@ class UsersManager {
         method: 'PUT',
         body: JSON.stringify(userData)
       }, token);
-
-      console.log('profile res: ', profileRes)
-
 
       return {
         success: profileRes.ok,
@@ -528,8 +520,6 @@ class UsersManager {
       const response = await this.apiRequest(`/users/${userId}/avatar`, {
         method: 'DELETE'
       }, token);
-
-      console.log('remove avatar response: ', response)
 
       return {
         success: response.ok,

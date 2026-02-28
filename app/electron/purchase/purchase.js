@@ -24,8 +24,6 @@ class PurchaseManager {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    console.log(`[PurchaseManager] ${options.method || 'GET'} ${url}`);
-
     const response = await fetch(url, {
       method: options.method || 'GET',
       headers,

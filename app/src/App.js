@@ -8,7 +8,7 @@ import { Input } from './components/utils/Input.js';
 import { Button } from './components/utils/Button.js';
 
 export function App() {
-  const main = Row({ tagType: 'div', class: 'relative h-full flex flex-col' });
+  const main = Row({ tagType: 'div', class: 'relative h-full min-h-0 flex flex-col' });
 
   const router = new Router(main);
 
@@ -20,7 +20,7 @@ export function App() {
     const licenseRequired = startupMode === 'server' && setupConfig?.licenseRequired === true
     const clientNeedsConnection = startupMode === 'client' && setupConfig?.clientConnected !== true
     if (setupLoading) {
-      return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 text-gray-600' }, 'Loading setup...')
+      return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 text-gray-600' }, 'Loading setup...')
     }
     if (!startupMode) return StartupModeLayout(props)
     if (!setupDone) return SetupLayout(props, { forcedMode: startupMode })
@@ -33,7 +33,7 @@ export function App() {
     return MainLayout(props, main, router);
   };
 
-  return StatefulRow({id: 'App', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'auth'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'auth'], viewModel: navigationVM }, render);
   
 }
 
@@ -52,7 +52,7 @@ function StartupModeLayout(props) {
     }
   }
 
-  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 p-2' }, [
+  return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
       Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
         Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Choose Runtime Mode'),
@@ -114,7 +114,7 @@ function LicenseRequiredLayout(props) {
     }
   }
 
-  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 p-2' }, [
+  return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
       Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
         Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'License Action Required'),
@@ -346,7 +346,7 @@ function SetupLayout(props, options = {}) {
     ])
   }
 
-  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 p-2' }, [
+  return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl min-h-[410px] bg-white rounded-2xl shadow-xl flex flex-col' }, [
       Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
         Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Initial Setup'),
@@ -435,7 +435,7 @@ function ClientConnectionLayout(props) {
     }
   }
 
-  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50 p-2' }, [
+  return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
       Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
         Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Connect to Server'),
@@ -482,13 +482,13 @@ function MainLayout(props, main, router) {
 
   const navCollapsed = props.getLocalState('navCollapsed');
 
-  return Row({ class: "flex" }, [
-    Row({ class: `bg-indigo-950 h-screen py-5 ${navCollapsed ? 'w-20 px-3' : 'w-72 px-5'} duration-300 relative` }, [
+  return Row({ class: "flex h-full min-h-0 overflow-hidden" }, [
+    Row({ class: `bg-indigo-950 h-full py-4 ${navCollapsed ? 'w-20 px-2' : 'w-64 px-4'} duration-300 relative overflow-visible` }, [
       MenuToggleButton(props),
       HeadNav(props),
       NavigationUI({ router, ...props }),
     ]),
-    Row({ class: 'h-screen flex-1 flex flex-col' }, [
+    Row({ class: 'h-full min-h-0 flex-1 flex flex-col overflow-hidden' }, [
       HeaderUI({ router, navigationVM: props.viewModel }),
       Row({ tagType: 'div', class: 'flex-1  min-h-0 overflow-hidden' }, [main]),
       FooterUI()
@@ -548,7 +548,7 @@ function LoginLayout(props) {
 
   // props.ensureStateKey('auth');
 
-  return Row({ class: 'h-screen w-full flex items-center justify-center bg-gray-50' }, [
+  return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-md p-10 bg-white rounded-2xl shadow-xl' }, [
       Row({ tagType: 'div', class: 'mb-6 text-center' }, [
         Row({ tagType: 'h1', class: 'text-3xl font-extrabold text-indigo-700' }, 'PharmaSuit'),
@@ -596,7 +596,7 @@ function LoginLayout(props) {
 function MenuToggleButton(props) {
   const navCollapsed = props.getLocalState('navCollapsed');
   return Row({
-    tagType: 'span', class: `bg-white text-indigo-950 h-8 w-8 flex items-center justify-center rounded-full absolute -right-3 top-6 cursor-pointer transform transition-transform duration-300 ${navCollapsed ? 'rotate-180' : ''}`,
+    tagType: 'span', class: `z-50 bg-white text-indigo-950 h-8 w-8 flex items-center justify-center rounded-full absolute -right-3 top-6 cursor-pointer transform transition-transform duration-300 ${navCollapsed ? 'rotate-180' : ''}`,
     events: { click: () => props.setLocalState('navCollapsed', !props.getLocalState('navCollapsed')) }
   }, [
     Row({ tagType: 'ion-icon', attributes: { name: 'caret-forward-circle-outline', class: 'text-3xl' } })

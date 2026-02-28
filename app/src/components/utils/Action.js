@@ -4,12 +4,24 @@ import { registerActionDropdownOutsideClickByTag } from './OutsideClick';
 
 const { Row } = Liteframe;
 
-/** Current open ActionDropdown ref; updated by each ActionDropdown when it is open. One listener uses this. */
-const currentOpenRef = { current: null };
+/** Registry of open ActionDropdown controllers keyed by actionId. */
+const openDropdownControllers = new Map();
+
+function closeAllOpenDropdowns(exceptActionId = null) {
+  openDropdownControllers.forEach((controller, key) => {
+    if (exceptActionId != null && key === exceptActionId) return;
+    if (controller && controller.getOpenState && controller.getOpenState()) {
+      controller.setOpenState();
+    }
+  });
+}
 
 let actionDropdownOutsideClickRegistered = false;
 if (!actionDropdownOutsideClickRegistered) {
-  registerActionDropdownOutsideClickByTag(() => currentOpenRef.current);
+  registerActionDropdownOutsideClickByTag(() => ({
+    getOpenState: () => openDropdownControllers.size > 0,
+    setOpenState: () => closeAllOpenDropdowns()
+  }));
   actionDropdownOutsideClickRegistered = true;
 }
 
@@ -41,10 +53,10 @@ function ActionDropdown(props, children) {
 
   const menuBaseClass = twMerge(
     `
-      absolute right-0 top-full mt-2 min-w-40
+      
       rounded-md bg-gray-200
       border border-gray-300
-      shadow-lg z-50 cursor-pointer
+      shadow-lg cursor-pointer
     `,
     menuClass
   );
@@ -59,6 +71,9 @@ function ActionDropdown(props, children) {
       events: {
         click: (e) => {
           e.stopPropagation(); // critical
+          if (!open) {
+            closeAllOpenDropdowns(actionId);
+          }
           onToggle();
         }
       }
@@ -66,14 +81,20 @@ function ActionDropdown(props, children) {
       trigger || IonIcon({ name: 'ellipsis-vertical-outline', size: 'small' })
     ]),
 
-    open && Row({ class: menuBaseClass }, children)
+    open && Row({
+      class: `z-50 absolute right-0 mt-2 min-w-40` }, [
+      Row({ class: menuBaseClass }, children),
+      Row({ class: 'h-8' })
+    ])
   ]);
 
   if (open) {
-    currentOpenRef.current = {
+    openDropdownControllers.set(actionId, {
       getOpenState: () => true,
       setOpenState: () => onToggle()
-    };
+    });
+  } else {
+    openDropdownControllers.delete(actionId);
   }
 
   return container;

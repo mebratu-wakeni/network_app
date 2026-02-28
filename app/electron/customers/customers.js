@@ -104,8 +104,6 @@ class CustomersManager {
         body: JSON.stringify(customerData)
       });
 
-      console.log('[CustomersManager] updateCustomer - Response Status:', response.status, response.statusText);
-
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error('[CustomersManager] updateCustomer - Error Response:', errorData);
@@ -113,7 +111,6 @@ class CustomersManager {
       }
 
       const data = await response.json();
-      console.log('[CustomersManager] updateCustomer - Success Response:', data);
       return {
         success: true,
         customer: data.customer

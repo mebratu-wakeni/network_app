@@ -79,10 +79,7 @@ function validateProductRow(row, rowIndex, existingCategories = [], existingUnit
   const category = row.category || row.cat || row['product category'] || '';
   const unit = row.unit || row['unit of measure'] || row['unit_of_measure'] || row['unitofmeasure'] || '';
   
-  // Debug: Log if we can't find the name field
   if (!name && rowIndex === 0) {
-    console.log('Available row keys:', Object.keys(row));
-    console.log('Row data:', row);
   }
   
   if (!name || name.trim() === '') {
@@ -204,14 +201,6 @@ const ModalContent = (viewModel, delegator, handleClose) => {
             throw new Error('CSV file has headers but no data rows');
           }
           
-          // Debug: Log parsed data (can be removed in production)
-          console.log('Parsed headers:', headers);
-          console.log('Parsed rows count:', rows.length);
-          if (rows.length > 0) {
-            console.log('First row sample:', rows[0]);
-            console.log('First row keys:', Object.keys(rows[0]));
-          }
-          
           // Validate each row
           const validationResults = rows.map((row, index) => {
             try {
@@ -243,12 +232,6 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           props.setLocalState('validationResults', validationResults);
           props.setLocalState('parsedData', rows);
           
-          // Debug: Verify state was set correctly
-          console.log('Set validationResults:', validationResults.length, 'results');
-          console.log('Set parsedData:', rows.length, 'rows');
-          if (validationResults.length > 0) {
-            console.log('First validation result:', validationResults[0]);
-          }
         } catch (error) {
           console.error('Error parsing CSV:', error);
           showAlert({
@@ -309,6 +292,12 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       try {
         // Use viewModel method for bulk import (it handles the actual import)
         const result = await props.viewModel.bulkImportProducts(validRows);
+        if (!result) {
+          throw new Error('Import did not return a result. Please try again.');
+        }
+        if (result.success === false) {
+          throw new Error(result.error || 'Import failed. Please try again.');
+        }
         
         // Store results in local state for display
         props.setLocalState('importResults', {

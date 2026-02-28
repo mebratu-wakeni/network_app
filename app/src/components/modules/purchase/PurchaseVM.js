@@ -51,6 +51,7 @@ export class PurchaseVM extends ViewModel {
     this.setState('product-list', []);
     this.setState('product-search-query', '');
     this.setState('supplier-list', []);
+    this.setState('selected-supplier', null);
     this.setState('withhold-percentage', null);
 
     this.setState('supplier-search-query', '');
@@ -260,13 +261,19 @@ export class PurchaseVM extends ViewModel {
     this.updateState('selected-supplier', supplier);
   }
 
-  toggleWithholding() {
+  async toggleWithholding() {
     const currentOrder = this.getState('current-order') || {};
     const isWithholding = !currentOrder.is_withholding;
     this.updateState('current-order', {
       ...currentOrder,
       is_withholding: isWithholding
     });
+
+    // Always refresh from DB setting when user turns withholding on.
+    // This avoids stale zero/null values carried from previously loaded hold orders.
+    if (isWithholding) {
+      await this.loadWithholdPercentage(true);
+    }
 
     this.updateState('loading', true);
     setTimeout(() => {
@@ -420,13 +427,15 @@ export class PurchaseVM extends ViewModel {
     })
   }
 
-  async loadWithholdPercentage() {
-    if (this.getState('loading')) return null;
+  async loadWithholdPercentage(force = false) {
+    const existing = this.getState('withhold-percentage');
+    if (!force && existing != null) return Number(existing);
     try {
       const result = await window.ipcRenderer.invoke('purchase:get-withhold-percentage');
-      if (result.success) {
-        this.updateState('withhold-percentage', result.withhold_percentage);
-        return result.withhold_percentage;
+      const numeric = Number(result?.withhold_percentage);
+      if (result?.success && Number.isFinite(numeric)) {
+        this.updateState('withhold-percentage', numeric);
+        return numeric;
       }
     } catch (error) {
       console.error('[PurchaseVM] loadWithholdPercentage error:', error);
@@ -509,7 +518,9 @@ export class PurchaseVM extends ViewModel {
       return sum + (item.quantity * (item.unit_price || 0));
     }, 0);
 
-    const withholdPercentage = currentOrder.is_withholding ? this.getState('withhold-percentage') : 0;
+    const withholdPercentage = currentOrder.is_withholding
+      ? Number(this.getState('withhold-percentage') ?? 0)
+      : 0;
     const withholdAmount = (subtotal * withholdPercentage) / 100;
     const netAmount = subtotal - withholdAmount;
 
@@ -665,8 +676,8 @@ export class PurchaseVM extends ViewModel {
   // ==================== Order History Methods ====================
 
   async loadOrders() {
-    if (this.getState('loading')) return;
-    
+    // Allow order-history refresh even when another request is in-flight.
+    // This prevents tab switches from skipping the initial load due to a stale loading flag.
     this.updateState('loading', true);
     this.updateState('error', null);
 
@@ -768,8 +779,7 @@ export class PurchaseVM extends ViewModel {
   }
 
   async loadHoldOrders() {
-    if (this.getState('loading')) return;
-
+    // Same rationale as loadOrders(): don't skip hold-order loading during quick tab/filter changes.
     this.updateState('loading', true);
     this.updateState('error', null);
 
@@ -851,21 +861,41 @@ export class PurchaseVM extends ViewModel {
               ? JSON.parse(holdOrder.cheque_details)
               : holdOrder.cheque_details;
 
+        const withholdPercentage =
+          holdOrder.withhold_percentage == null ? null : Number(holdOrder.withhold_percentage);
+        const hasWithholding = withholdPercentage != null && withholdPercentage > 0;
+        const restoredSupplier = holdOrder.supplier_id
+          ? {
+              id: holdOrder.supplier_id,
+              name: holdOrder.supplier_name || ''
+            }
+          : null;
+        const normalizedItems = (items || []).map((item) => ({
+          ...item,
+          product_id: item.product_id != null ? Number(item.product_id) : item.product_id,
+          quantity: item.quantity != null ? Number(item.quantity) : item.quantity,
+          unit_price: item.unit_price != null ? Number(item.unit_price) : item.unit_price
+        }));
+
         // Restore full current-order snapshot so UI matches state before hold (including is_withholding)
         const currentOrder = {
+          ...DEFAULT_CURRENT_ORDER,
           supplier_id: holdOrder.supplier_id,
-          supplier: null,
+          supplier: restoredSupplier,
           order_date: normalizeOrderDate(holdOrder.order_date),
           invoice_no: holdOrder.invoice_no || '',
+          notes: holdOrder.remark || '',
           payment_mode: holdOrder.payment_mode,
-          is_withholding: holdOrder.withhold_percentage != null && Number(holdOrder.withhold_percentage) > 0,
+          is_withholding: hasWithholding,
           first_payment: holdOrder.first_payment ?? null,
           cheque_details: chequeDetails,
-          items,
+          items: normalizedItems,
           error: null,
         };
         this.updateState('current-order', currentOrder);
-        this.updateState('filtered-items', items);
+        this.updateState('selected-supplier', restoredSupplier);
+        this.updateState('supplier-search-query', restoredSupplier?.name || '');
+        this.updateState('filtered-items', normalizedItems);
 
         this.updateTab('current-order');
         return holdOrder;
@@ -1037,6 +1067,38 @@ export class PurchaseVM extends ViewModel {
         await this.loadOrders();
         await this.loadOrderDetails(orderId);
       }
+    }
+  }
+
+  async reverseOrder(orderId, reason = 'Order reversal requested by user') {
+    if (this.getState('loading')) return;
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    this.updateState('success', null);
+    try {
+      const result = await window.ipcRenderer.invoke('purchase:reverse-order', {
+        orderId,
+        reverseData: {
+          reason,
+          reverse_inventory: true,
+          reverse_ledger: true
+        }
+      });
+
+      if (result && result.success) {
+        this.updateState('success', { message: 'Order reversed successfully' });
+        this.closeOrderDrawer();
+        await this.loadOrders();
+        return result.reversed_order;
+      }
+
+      throw new Error(result?.error || 'Failed to reverse order');
+    } catch (error) {
+      console.error('[PurchaseVM] reverseOrder error:', error);
+      this.updateState('error', { message: error.message || 'Failed to reverse order' });
+      throw error;
+    } finally {
+      this.updateState('loading', false);
     }
   }
 

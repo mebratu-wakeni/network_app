@@ -79,8 +79,6 @@ function SuccessToast(props) {
   
   closeToast('success', props);
 
-  console.log('success message: ', success.message);
-
   const message =
     typeof success === 'string'
       ? success

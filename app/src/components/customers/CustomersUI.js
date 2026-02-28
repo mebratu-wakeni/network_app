@@ -418,7 +418,6 @@ function CustomerDetailsDrawer({ customer, showSlide, onClose, ...props }) {
       actionName: 'edit customers'
     });
     if (!hasPermission) {
-      console.log('[CustomerDetailsDrawer] handleSave - Permission denied');
       return;
     }
 
@@ -427,12 +426,8 @@ function CustomerDetailsDrawer({ customer, showSlide, onClose, ...props }) {
       return;
     }
 
-    console.log('[CustomerDetailsDrawer] handleSave - Customer ID:', currentCustomer.id);
-    console.log('[CustomerDetailsDrawer] handleSave - Form Data:', customerForm);
-
     try {
       await props.viewModel.updateCustomer(currentCustomer.id, customerForm);
-      console.log('[CustomerDetailsDrawer] handleSave - Update successful, exiting edit mode');
       props.viewModel.setCustomerDetailsEditMode(false);
     } catch (error) {
       // Error is handled by viewModel

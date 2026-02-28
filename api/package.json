@@ -4,6 +4,9 @@
   "description": "",
   "main": "index.js",
   "type": "module",
+  "engines": {
+    "node": ">=20 <21"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon --watch src --exec \"node src/index.js\"",
@@ -12,7 +15,11 @@
     "seed": "knex --knexfile db/knexfile.js seed:run",
     "db:reset": "node scripts/reset-db.js",
     "db:reset:seed": "node scripts/reset-db.js --seed",
-    "db:recreate-migration": "node scripts/recreate-migration.js"
+    "db:recreate-migration": "node scripts/recreate-migration.js",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run tests/integration --passWithNoTests"
   },
   "keywords": [],
   "author": "",
@@ -30,7 +37,10 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "@vitest/coverage-v8": "^0.34.6",
+    "nodemon": "^3.1.10",
+    "supertest": "^7.1.4",
+    "vitest": "^0.34.6"
   },
   "private": true
 }

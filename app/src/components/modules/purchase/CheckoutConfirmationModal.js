@@ -66,7 +66,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
   const withholdPct = viewModel.getState('withhold-percentage');
 
   const handleComplete = async () => {
-    if (loading) return;
+    if (viewModel.getState('loading')) return;
     try {
       // Cash balance validation: ensure sufficient funds before processing cash purchase
       if (paymentMode === 'cash' && netAmount > 0) {
@@ -92,7 +92,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
   };
 
   const handleHold = async () => {
-    if (loading) return;
+    if (viewModel.getState('loading')) return;
     try {
       await viewModel.saveAsHoldOrder();
       handleClose();

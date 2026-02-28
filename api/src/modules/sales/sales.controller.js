@@ -42,12 +42,9 @@ export class SalesController {
    * GET /api/sales/export — export sales order.
    */
   exportSalesOrder = async (req, res, next) => {
-    console.log('***** exportSalesOrder ***** controller ******')
     try {
       const csvContent = await this.service.exportSalesOrder()
-      
-      console.log(`[SalesController] Export response: ${csvContent.split('\n').length - 1} rows`)
-      
+
       // Set headers for CSV download
       res.setHeader('Content-Type', 'text/csv')
       res.setHeader('Content-Disposition', `attachment; filename="sales_orders_export_${new Date().toISOString().split('T')[0]}.csv"`)

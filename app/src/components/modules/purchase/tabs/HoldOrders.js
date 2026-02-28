@@ -59,6 +59,8 @@ export function HoldOrders(props) {
   const handleLoadHoldOrder = async (holdOrderId) => {
     try {
       await props.viewModel.loadHoldOrder(holdOrderId);
+      // Mirror tab-click behavior for "Current Order": collapse right panel when switching back.
+      props.setLocalState('isExpanded', false);
       await showAlert({ message: 'Hold order loaded into Current Order. You can review or checkout from the Current Order tab.', variant: 'success' });
     } catch (error) {
       await showAlert({ message: error.message || 'Failed to load hold order.', variant: 'error' });
@@ -165,7 +167,7 @@ export function HoldOrders(props) {
                 ])
               ]),
               TableBody({}, [
-                holdOrders.map((holdOrder, index) =>
+                ...holdOrders.map((holdOrder, index) =>
                   TableRow({ key: holdOrder.id }, [
                     TableDCell({ class: 'text-center text-gray-500' }, paginationOffset + index + 1),
                     TableDCell({ class: 'font-medium' }, holdOrder.supplier_name || 'Unknown'),

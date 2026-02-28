@@ -61,7 +61,7 @@ export function SalesUI(props = {}) {
       CardHeader({
         class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0'
       }, 'Sales Management'),
-      CardBody({ class: 'p-6 flex flex-row h-full overflow-hidden gap-4' }, [
+      CardBody({ class: 'px-3 md:px-4 py-2 flex flex-row h-full overflow-hidden gap-3' }, [
         LeftPanel(mergedProps),
         RightPanel(mergedProps),
       ]),
@@ -102,9 +102,9 @@ function RightPanel(props) {
       showAlert({ message: error.message || 'Failed to export sales order', variant: 'error' });
     }
   };
-  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-4 min-h-0 overflow-hidden border border-gray-200 rounded-lg min-w-0` }, [
+  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-2 min-h-0 overflow-x-visible overflow-y-hidden border border-gray-200 rounded-lg min-w-0` }, [
     SalesTabs(props),
-    Row({ class: 'flex justify-between pt-4 px-6 items-center' }, [
+    Row({ class: 'flex flex-wrap justify-between px-3 md:px-6 py-1 items-center gap-2' }, [
         Row({ class: 'flex items-center gap-4'}, [
           Button({ variant: 'outline', class: 'text-nowrap', onClick: handleImportSalesOrder }, 'Import Sales Order'),
           props.viewModel.getActiveTab() === 'sales-history' ? Button({ variant: 'secondary', class: 'text-nowrap', onClick: handleExportSalesOrder }, 'Export Sales Order') : null,
@@ -162,7 +162,7 @@ function SalesTabContents(props) {
     }
   }
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
+  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-auto' }, [
     tabContent(),
   ]);
 }

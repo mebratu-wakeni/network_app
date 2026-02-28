@@ -137,8 +137,6 @@ export function UserAvatar(props) {
 
   const loading = props.viewModel.getState('loading');
 
-  console.log('[avatar] loading: ', loading);
-
   const UserInitials = () => {
     if(avatarPreview) return false;
 

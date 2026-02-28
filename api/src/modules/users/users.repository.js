@@ -288,8 +288,6 @@ export class UsersRepository {
 
   async updateUserProfile(userId, profileData) {
     // Map camelCase to snake_case for database
-    console.log('in repo updating user id: ', userId, ' with userData: ', profileData)
-
     const updateData = {}
     if (profileData.email !== undefined) updateData.email = profileData.email
     if (profileData.display_name !== undefined) updateData.display_name = profileData.display_name

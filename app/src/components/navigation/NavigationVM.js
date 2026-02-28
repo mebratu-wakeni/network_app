@@ -56,7 +56,6 @@ class NavigationVM extends ViewModel {
 
   // Update the login form fields
   updateLoginForm(key, value) {
-    console.log('updateLoginForm called with: ', key, value);
     const auth = this.getState('auth') || {}
     const loginForm = auth.loginForm || { username: '', password: '' }
     this.updateState('auth', {
@@ -66,7 +65,6 @@ class NavigationVM extends ViewModel {
         [key]: value
       }
     })
-    console.log('updateLoginForm - auth state: ', this.getState('auth'));
   }
 
   // Attempt to login using IPC (auth:login). Stores token in localStorage on success.

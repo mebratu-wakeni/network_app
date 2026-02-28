@@ -424,6 +424,14 @@
   .receipt-print-area .watermark {
     font-size: 5rem !important;
     color: rgba(44, 62, 80, 0.025) !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .receipt-print-area .watermark.reversed {
+    color: rgba(220, 38, 38, 0.28) !important;
+    -webkit-text-fill-color: rgba(220, 38, 38, 0.28) !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   /* Header/parties/order: keep compact, readable fonts */
   .receipt-print-area .receipt-header-compact {

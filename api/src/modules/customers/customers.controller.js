@@ -77,14 +77,7 @@ export class CustomersController {
   update = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      console.log('[CustomersController] update - Customer ID:', id);
-      console.log('[CustomersController] update - Request Body:', req.body);
-      console.log('[CustomersController] update - Validated Body:', req.validBody);
-      
       const customer = await this.service.update(id, req.validBody)
-      
-      console.log('[CustomersController] update - Updated Customer:', customer);
-      console.log('[CustomersController] update - Success!');
 
       res.json({
         ok: true,
@@ -121,20 +114,7 @@ export class CustomersController {
     try {
       const { customers } = req.validBody
 
-      console.log(`[CustomersController] Bulk import request: ${customers.length} customers`)
-
       const result = await this.service.bulkImport(customers)
-
-      console.log(`[CustomersController] Import summary: ${result.successful} successful, ${result.failed} failed`)
-
-      if (result.failed > 0) {
-        console.log(`[CustomersController] Import failed for ${result.failed} customers:`)
-        result.results
-          .filter(r => !r.success)
-          .forEach(r => {
-            console.log(`  Row ${r.index + 1}: ${r.error}`)
-          })
-      }
 
       res.json({
         ok: true,
@@ -159,14 +139,6 @@ export class CustomersController {
       const params = req.query || {}
       const { limit, offset, search, sortBy, orderBy } = params
 
-      console.log(`[CustomersController] Export request:`, {
-        limit: limit || 10000,
-        offset: offset || 0,
-        search: search || '',
-        sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
-      })
-
       const csvContent = await this.service.exportToCSV({
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
@@ -174,8 +146,6 @@ export class CustomersController {
         sortBy: sortBy || 'id',
         orderBy: orderBy || 'desc'
       })
-
-      console.log(`[CustomersController] Export response: ${csvContent.split('\n').length - 1} rows`)
 
       // Set headers for CSV download
       res.setHeader('Content-Type', 'text/csv')

@@ -41,11 +41,13 @@ export function OrderDetailsDrawer(props) {
     try {
       const confirmed = await showConfirmation({
         title: 'Reverse Purchase Order',
-        message: 'Are you sure you want to reverse this purchase order? This action cannot be undone.',
-        variant: 'warning',
+        message: 'Reverse this purchase order? Inventory and ledger entries will be reversed. This cannot be undone.',
+        variant: 'danger',
       });
       if (!confirmed) return;
-      await showAlert({ message: 'Reverse order functionality coming soon', variant: 'info' });
+      await props.viewModel.reverseOrder(selectedOrder.id, `Order reversal from purchase drawer (${orderRef})`);
+      await showAlert({ message: 'Order reversed.', variant: 'success' });
+      onClose();
     } catch (error) {
       await showAlert({ message: error.message || 'Failed to reverse order', variant: 'error' });
     }
@@ -151,7 +153,7 @@ function renderDetailsContent(selectedOrder) {
       ? Row({}, [
           Row({ class: 'text-xs font-medium uppercase tracking-wide text-gray-500 mb-2' }, 'Payment History'),
           Row({ class: 'flex flex-col gap-1.5' }, [
-            selectedOrder.payments.map((payment, index) =>
+            ...selectedOrder.payments.map((payment, index) =>
               Row({
                 class: 'flex items-center justify-between py-2 px-3 bg-white border border-gray-200 rounded text-sm',
               }, [

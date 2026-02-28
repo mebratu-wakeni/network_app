@@ -44,7 +44,7 @@ export function SalesHistory(props) {
     props.setLocalState('pendingSalesOpenProcessed', false)
   }
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
+  return Row({ class: 'flex flex-col' }, [
     SalesHistoryStatsAndFilters(props),
     SalesHistoryTableSection(props),
     props.getLocalState('drawerOrderId') && salesOrderDetailsDrawer(props),
@@ -339,8 +339,8 @@ function SalesHistoryTableSection(props) {
     return null;
   };
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden py-4' }, [
-    Row({ class: 'flex items-center justify-between gap-4 px-4 py-4 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
+  return Row({ class: 'flex flex-col py-4' }, [
+    Row({ class: 'flex flex-wrap items-center justify-between gap-4 px-4 py-4 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
       Row({ class: 'flex-1 min-w-[200px] max-w-md' }, [
         Row({ class: 'relative' }, [
           IonIcon({ name: 'search-outline', class: 'absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xl pointer-events-none' }),
@@ -362,8 +362,8 @@ function SalesHistoryTableSection(props) {
       ? Row({ class: 'p-8 text-center text-gray-500' }, 'Loading sales...')
       : orders.length === 0
         ? Row({ class: 'p-8 text-center text-gray-500' }, 'No sales found')
-        : Row({ class: 'flex-1 flex flex-col min-h-0 border border-gray-200 rounded-lg overflow-hidden px-4 py-4' }, [
-            Table({ class: 'flex-1 min-w-full overflow-hidden' }, [
+        : Row({ class: 'flex flex-col border border-gray-200 rounded-lg' }, [
+            Table({ class: 'min-w-full', pageScrollable: true }, [
               TableHeader({}, [
                 TableRow({}, [
                   TableHCell({ class: 'text-nowrap', onClick: () => handleSortChange('receipt_no') }, [
@@ -391,7 +391,7 @@ function SalesHistoryTableSection(props) {
                   TableHCell({ class: 'w-24' }, 'Actions'),
                 ]),
               ]),
-              TableBody({ class: 'flex-1 min-h-0 overflow-y-auto' }, orders.map((order) =>
+              TableBody({}, orders.map((order) =>
                 TableRow({ key: order.id }, [
                   TableDCell({ class: 'font-medium' }, order.receipt_no || `SO${order.id}`),
                   TableDCell({}, order.customer_name || 'Walk-in'),

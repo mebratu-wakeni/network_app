@@ -346,12 +346,9 @@ export class ProductsService {
       sync_status: 'pending'
     }
 
-    console.log('[ProductsService] Creating product with data:', productData)
     const result = await this.repository.create(productData)
-    console.log('[ProductsService] Repository create result:', result)
     
     const createdProduct = Array.isArray(result) ? result[0] : result
-    console.log('[ProductsService] Created product:', createdProduct)
     
     if (!createdProduct || !createdProduct.id) {
       throw new Error('Product creation failed: No product returned from database')

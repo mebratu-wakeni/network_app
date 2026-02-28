@@ -59,7 +59,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
     paymentMode === 'cash' ? 0 : Math.max(0, netAmount - (paymentMode === 'cheque' ? chequeAmount : currentSale.first_payment || 0));
 
   const handleComplete = async () => {
-    if (loading) return;
+    if (viewModel.getState('loading')) return;
     try {
       await viewModel.processSale();
       handleClose();
@@ -70,7 +70,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
   };
 
   const handleHold = async () => {
-    if (loading) return;
+    if (viewModel.getState('loading')) return;
     try {
       await viewModel.saveAsHoldOrder();
       handleClose();

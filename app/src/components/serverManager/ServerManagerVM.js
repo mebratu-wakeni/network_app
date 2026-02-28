@@ -58,7 +58,6 @@ export default class ServerManagerVM extends ViewModel {
   }
 
   destroy() {
-    console.log('Destroying ServerManagerVM, clearing intervals and timers');
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
@@ -133,8 +132,6 @@ export default class ServerManagerVM extends ViewModel {
     try {
       const mode = this.getState('mode');
       const result = await window.ipcRenderer.startServer(mode)
-      console.log('start result: ', result);
-      
       if (result.success) {
         const modeLabel = 'Server';
         this.updateState('success', `${modeLabel} started successfully`);
@@ -165,12 +162,10 @@ export default class ServerManagerVM extends ViewModel {
     this.updateState('stopping', true);
     this.updateState('error', null);
     this.updateState('success', null);
-    console.log(`${this.getState('mode')} server is stopping: ${this.getState('stopping')}`);
     try {
       const mode = this.getState('mode');
       const result = await window.ipcRenderer.stopServer(mode)
-      console.log('stop result: ', result);
-      
+
       if (result.success) {
         const modeLabel = 'Server';
         this.updateState('success', `${modeLabel} stopped successfully`);

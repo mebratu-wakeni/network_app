@@ -70,7 +70,6 @@ export function UserIpcHandlers() {
       }
 
       const buffer = Buffer.from(payload.buffer);
-      console.log('Created buffer, length:', buffer.length, 'filename:', payload.filename, 'userId:', payload.userId);
 
       const formData = new FormData();
       formData.append('avatar', buffer, {

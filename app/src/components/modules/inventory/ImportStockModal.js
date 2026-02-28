@@ -83,16 +83,15 @@ function validateStockRow(row, rowIndex, existingProducts = [], existingLocation
   const expiryDate = row['expiry date'] || row['expiry_date'] || row['expirydate'] || row['expiry'] || '';
   const batchNumber = row['batch number'] || row['batch_number'] || row['batchnumber'] || row['batch'] || '';
   const sellingPrice = row['selling price'] || row['selling_price'] || row['sellingprice'] || row['price'] || '';
+  const category = row.category || row['product category'] || row['product_category'] || '';
+  const unit = row.unit || row['product unit'] || row['product_unit'] || '';
   
   // Required fields
   if (!productName || productName.trim() === '') {
     errors.push('Product name is required');
   }
   
-  // Product code is optional, but if provided, validate it exists
-  if (productCode && productCode.trim() !== '' && existingProducts.length > 0 && !existingProducts.includes(productCode.trim())) {
-    errors.push(`Product code "${productCode}" does not exist`);
-  }
+  // Product code is optional; unknown codes are allowed (backend can auto-create product).
   
   if (!quantity || quantity.trim() === '') {
     errors.push('Quantity is required');
@@ -129,6 +128,8 @@ function validateStockRow(row, rowIndex, existingProducts = [], existingLocation
   const normalizedRow = {
     productCode: (productCode || '').trim() || null,
     productName: (productName || '').trim(),
+    category: (category || '').trim() || null,
+    unit: (unit || '').trim() || null,
     location: (location || '').trim() || null,
     quantity: quantity ? parseFloat(quantity) : 0,
     unitCost: unitCost ? parseFloat(unitCost) : 0,
@@ -266,9 +267,6 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           // Set both states together to ensure they're in sync
           props.setLocalState('validationResults', validationResults);
           props.setLocalState('parsedData', rows);
-          
-          console.log('Set validationResults:', validationResults.length, 'results');
-          console.log('Set parsedData:', rows.length, 'rows');
         } catch (error) {
           console.error('Error parsing CSV:', error);
           showAlert({

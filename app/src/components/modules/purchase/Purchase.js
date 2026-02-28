@@ -60,9 +60,9 @@ export function PurchaseUI(props = {}) {
     
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden'}, [
       CardHeader({ 
-        class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0' 
+        class: 'px-4 md:px-6 text-gray-900 text-md font-semibold flex items-center h-11 flex-shrink-0' 
       }, 'Purchase Management'),
-      CardBody({ class: 'px-4 py-2 flex flex-row h-full overflow-hidden gap-4'}, [
+      CardBody({ class: 'px-3 md:px-4 py-2 flex flex-row h-full overflow-hidden gap-3'}, [
         LeftPanel(mergedProps),
         RightPanel(mergedProps)
       ]),
@@ -107,12 +107,12 @@ function RightPanel(props) {
     }
   };
 
-  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-2 min-h-0 overflow-hidden border border-gray-200 rounded-lg min-w-0` }, [
+  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-2 min-h-0 overflow-x-visible overflow-y-hidden border border-gray-200 rounded-lg min-w-0` }, [
     PurchaseTabs(props),
     Row(
-      { class: 'flex justify-between px-6 items-center' },
+      { class: 'flex flex-wrap justify-between px-3 md:px-6 py-1 items-center gap-2' },
       [
-        Row({ class: 'flex items-center gap-4' }, [
+        Row({ class: 'flex flex-wrap items-center gap-2 md:gap-3' }, [
           Button({ variant: 'outline', class: 'text-nowrap', onClick: handleImportPurchaseOrder }, 'Import Purchase Order'),
           purchaseTab === 'order-history' ? Button({ variant: 'secondary', class: 'text-nowrap', onClick: handleExportPurchaseOrder }, 'Export Purchase Order') : null
         ]),
@@ -172,7 +172,7 @@ function PurchaseTabContents(props) {
     }
   }
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden'}, [
+  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-auto'}, [
     tabContent()
   ])
 }

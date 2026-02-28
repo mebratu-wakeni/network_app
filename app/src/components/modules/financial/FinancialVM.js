@@ -193,7 +193,6 @@ export class FinancialVM extends ViewModel {
         offset: 0
       })
 
-      console.log('res', res)
       // IPC returns { success, customers, total } from electron; handle both shapes
       const list = Array.isArray(res?.customers) ? res.customers : (res?.data?.customers || [])
       this.updateState('expense-customer-list', list)

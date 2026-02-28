@@ -58,7 +58,6 @@ export default class UsersProfileVM extends ViewModel {
 
       if ( result.success ) {
         const user = result.user;
-        console.log('user: ', user)
         this.updateState('user', result.user);
         this.updateState('general-form', {display_name: user.display_name, phone: user.phone, email: user.email})
         this.updateState('user-roles', result.roles || []);
@@ -200,8 +199,6 @@ export default class UsersProfileVM extends ViewModel {
 
     const { currentPassword, newPassword, confirmPassword} = this.getState('security-form');
 
-    console.log('password form', this.getState('security-form'))
-
     if(!currentPassword && !newPassword && !confirmPassword) {
       
       this.updateState('error', {message: 'Missing required field.'});
@@ -223,7 +220,6 @@ export default class UsersProfileVM extends ViewModel {
         return;
       } 
 
-      console.log('[password] result', result)
       throw new Error(result.error || 'Password updating failed.')
     } catch (error) {
       console.error('Error: updating password', error);

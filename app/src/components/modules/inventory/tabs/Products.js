@@ -46,26 +46,14 @@ export function Products(props) {
   props.ensureLocalStateKey('searchInputValueInitialized', false);
   const searchInputValueInitialized = props.getLocalState('searchInputValueInitialized');
 
-  // if (!searchInputValueInitialized) {
-  //   props.setLocalState('searchInputValue', searchQuery || '');
-  //   props.setLocalState('searchInputValueInitialized', true);
-  // }
-
-  const handleSearchFocusIn = () => {
+  // Initialize once from VM state; do not reset on focus/blur.
+  if (!searchInputValueInitialized) {
     props.setLocalState('searchInputValue', searchQuery || '');
     props.setLocalState('searchInputValueInitialized', true);
-  }
-
-  const handleSearchFocusOut = () => {
-    props.setLocalState('searchInputValueInitialized', false);
   }
   
   const selectedRowId = props.getLocalState('selectedRowId');
   const searchInputValue = props.getLocalState('searchInputValue') || '';
-
-  let timeout;
-
-  console.log('newQuery', searchInputValue);
 
   const handleSearchChange = (e) => {
     const newQuery = e.target.value;
@@ -75,39 +63,38 @@ export function Products(props) {
     
     // Clear existing timeout
     // const existingTimeout = props.getLocalState('searchTimeout');
-    if (timeout) {
-      clearTimeout(timeout);
+    const existingTimeout = props.getLocalState('searchTimeout');
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
     }
     
     // If search is cleared, update ViewModel and reload immediately
     if (!newQuery || newQuery.trim() === '') {
       props.viewModel.updateProductSearchQuery('');
       props.viewModel.loadProducts();
-      // props.setLocalState('searchTimeout', null);
-      timeout = null;
+      props.setLocalState('searchTimeout', null);
       return;
     }
     
     // Debounce: wait 500ms after user stops typing before updating ViewModel and searching
     // Defer ViewModel updates (which trigger 2 updateState calls) to avoid complex re-renders during typing
     // This prevents input from losing focus while user is actively typing
-    timeout = setTimeout(() => {
+    const timeout = setTimeout(() => {
       props.viewModel.updateProductSearchQuery(newQuery);
       props.viewModel.loadProducts();
-      // props.setLocalState('searchTimeout', null);
-      timeout = null;
+      props.setLocalState('searchTimeout', null);
     }, 500);
     
-    // props.setLocalState('searchTimeout', timeout);
+    props.setLocalState('searchTimeout', timeout);
   };
 
-  return Row({ class: 'w-full flex-1 flex flex-col overflow-hidden'}, [
+  return Row({ class: 'w-full flex flex-col'}, [
     !searchInputValueInitialized && loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'Loading products...'),
     !searchInputValueInitialized && !loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'No products found'),
     
     // Header Section with Actions
-    Row({ class: 'flex items-center justify-between gap-6 px-4 py-2  border-b border-gray-200' }, [
-      Row({ class: 'flex items-center gap-4' }, [
+    Row({ class: 'flex flex-wrap items-center justify-between gap-3 px-3 md:px-4 py-2 border-b border-gray-200' }, [
+      Row({ class: 'flex flex-wrap items-center gap-2 md:gap-3' }, [
         Button({ 
           variant: 'primary', 
           class: 'text-nowrap flex items-center gap-2',
@@ -157,7 +144,7 @@ export function Products(props) {
     ]),
 
     // Product filter: All | Out of stock | Low stock (by bin card balance)
-    Row({ class: 'flex items-center gap-2 px-6 py-2 border-b border-gray-100 bg-gray-50 flex-shrink-0 flex-wrap' }, [
+    Row({ class: 'flex items-center gap-2 px-3 md:px-4 py-2 border-b border-gray-100 bg-gray-50 flex-shrink-0 flex-wrap' }, [
       Button({
         variant: productFilter === 'all' ? 'primary' : 'outline',
         class: 'text-xs py-0.5 px-2 min-h-0',
@@ -176,8 +163,8 @@ export function Products(props) {
     ]),
 
     // Search and Pagination Section
-    Row({ class: 'flex items-center justify-between gap-6 px-6 py-4 border-b border-gray-200 bg-gray-50' }, [
-      Row({ class: 'flex-1 max-w-md' }, [
+    Row({ class: 'sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 px-3 md:px-4 py-3 border-b border-gray-200 bg-gray-50' }, [
+      Row({ class: 'flex-1 min-w-[220px] max-w-md' }, [
         Row({ class: 'relative' }, [
           IonIcon({ 
             name: 'search-outline', 
@@ -188,20 +175,17 @@ export function Products(props) {
             class: 'pl-10 pr-4',
             value: searchInputValue,
             onInput: handleSearchChange,
-            focusIn: handleSearchFocusIn,
-            focusOut: handleSearchFocusOut,
             // name: 'product-search-input',
             // id: 'product-search-input'
           })
         ])
       ]),
-      Row({ class: 'flex items-center gap-4' }, [
+      Row({ class: 'flex items-center gap-3 ml-auto' }, [
         Row({ tagType: 'p', class: 'text-sm text-gray-400 text-nowrap' }, "Rows per page"),
         SelectRelative({ 
           name: 'product-limit', 
           onChange: (e) => {
             const newLimit = parseInt(e.target.value);
-            console.log('Limit changed:', newLimit);
             props.viewModel.setProductLimit(newLimit);
             props.viewModel.loadProducts();
           }, 
@@ -235,8 +219,8 @@ export function Products(props) {
     ]),
     
     // Products Table
-    Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
-      ProductTable(props)
+    Row({ class: 'flex flex-col' }, [
+      ProductTable(props, productList)
     ]),
     
     // Product Details Drawer
@@ -267,8 +251,7 @@ function getProductStatusBadge(balance, lowThreshold = LOW_STOCK_THRESHOLD_DEFAU
   return Row({ class: `${statusBadgeClass} bg-green-100 text-green-700` }, 'In Stock');
 }
 
-function ProductTable(props) {
-  const productList = props.viewModel.getProductList();
+function ProductTable(props, productList = []) {
   props.ensureLocalStateKey('actionId', null);
   props.ensureLocalStateKey('selectedRowId', null);
   const selectedRowId = props.getLocalState('selectedRowId')
@@ -284,37 +267,44 @@ function ProductTable(props) {
   };
   
   return Table({ 
-    class: 'flex-1 flex flex-col min-h-0', 
+    class: 'flex flex-col',
+    tableClass: 'min-w-[980px]',
+    pageScrollable: true
   }, [
-    TableHeader({ class: 'sticky top-0 z-10' }, [ // 'sticky top-12 z-10 mb-10'
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('id') }, [
+    TableHeader({ class: 'bg-white' }, [
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('id') }, [
         'Code',
         sortIcon('id') // product_code and id are related
       ]),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('name') }, [
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('name') }, [
         'Description/Name',
         sortIcon('name')
       ]),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('category') }, [
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('category') }, [
         'Category',
         sortIcon('category')
       ]),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('unit') }, [
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('unit') }, [
         'Unit',
         sortIcon('unit')
       ]),
-      TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('balance') }, [
+      TableHCell({ class: `text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('balance') }, [
         'Balance',
         sortIcon('balance')
       ]),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Status'),
-      TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase tracking-wide' }, "Action"),      
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide` }, 'Status'),
+      TableHCell({ class: `text-center text-xs font-semibold text-gray-500 uppercase tracking-wide` }, "Action"),      
     ]),
-    TableBody({ class: 'flex-1 overflow-y-auto'}, 
-      productList.map(row => TableRow({ class: `transition-colors duration-150 cursor-pointer ${selectedRowId === row.id ? 'bg-blue-50 border-l-2 border-indigo-500' : ''} hover:bg-blue-50` }, [
-        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.product_code),
-        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.description || row.name),
-        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.category),
+    TableBody({
+      class: '',
+      showEndMarker: productList.length > 0,
+      endMarkerLabel: 'End of table',
+      endMarkerColspan: 7
+    }, 
+      productList.map(row => TableRow({ key: row.id, class: `transition-colors duration-150 cursor-pointer ${selectedRowId === row.id ? 'bg-blue-50 border-l-2 border-indigo-500' : ''} hover:bg-blue-50` }, [
+        TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900' }, row.product_code),
+        TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[260px] lg:max-w-[380px] truncate', attributes: { title: row.description || row.name || '' } }, row.description || row.name),
+        TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[160px] truncate', attributes: { title: row.category || '' } }, row.category),
         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.unit),
         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-medium' }, (row.balance != null ? row.balance : 0).toLocaleString()),
         TableDCell({ class: 'px-4 py-3 text-sm' }, getProductStatusBadge(row.balance, row.low_stock_threshold)),
@@ -1042,7 +1032,6 @@ function BinCardDrawer({ product, showSlide, onClose, ...props }) {
   };
 
   const handleSortChange = (sortBy, orderBy) => {
-    console.log('handleSortChange', sortBy, orderBy);
     props.viewModel.updateBinCardSort(sortBy, orderBy);
     props.viewModel.loadBinCards(product.id);
     props.setLocalState('showSortMenu', false);

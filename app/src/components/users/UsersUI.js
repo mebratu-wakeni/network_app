@@ -310,7 +310,6 @@ function PageControl(props)  {
 
   const handleExport = async () => {
     const result = await props.viewModel.exportUsersToCsv()
-    console.log('export: ', result);
   }
 
   return Row({class: 'flex justify-between items-center pr-16 py-2'}, [

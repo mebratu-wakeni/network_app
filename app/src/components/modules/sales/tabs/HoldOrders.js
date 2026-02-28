@@ -107,7 +107,7 @@ export function HoldOrders(props) {
                   ]),
                 ]),
                 TableBody({}, [
-                  holdOrders.map((holdOrder, index) =>
+                  ...holdOrders.map((holdOrder, index) =>
                     TableRow({ key: holdOrder.id }, [
                       TableDCell({ class: 'text-center text-gray-500' }, paginationOffset + index + 1),
                       TableDCell({ class: 'font-medium' }, holdOrder.customer_name || holdOrder.supplier_name || 'Unknown'),

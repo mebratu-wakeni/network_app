@@ -69,7 +69,6 @@ class ServerManager {
 
     this.apiProcess.stdout.on('data', (data) => {
       this._appendLog(`[API] ${String(data)}`)
-      console.log(`[API] ${String(data)}`)
     })
     this.apiProcess.stderr.on('data', (data) => {
       this._appendLog(`[API_ERR] ${String(data)}`)

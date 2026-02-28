@@ -130,23 +130,15 @@ export class CustomersVM extends ViewModel {
       ...customerData
     };
 
-    console.log('[CustomersVM] updateCustomer - Payload:', payload);
-    console.log('[CustomersVM] updateCustomer - Customer ID:', customerId);
-    console.log('[CustomersVM] updateCustomer - Customer Data:', customerData);
-
     try {
       const result = await window.ipcRenderer.invoke('customers:update-customer', payload);
-      
-      console.log('[CustomersVM] updateCustomer - IPC Result:', result);
 
       if (result.success) {
-        console.log('[CustomersVM] updateCustomer - Success! Updated customer:', result.customer);
         this.updateState('success', { message: 'Customer updated successfully' });
         
         // Update the selected customer with the updated data
         const currentSelectedCustomer = this.getState('selected-customer');
         if (currentSelectedCustomer && currentSelectedCustomer.id === customerId && result.customer) {
-          console.log('[CustomersVM] updateCustomer - Updating selected customer state');
           this.updateState('selected-customer', {
             ...currentSelectedCustomer,
             ...result.customer

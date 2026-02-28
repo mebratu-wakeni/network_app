@@ -6,7 +6,6 @@ import { getApiUrl } from '../config/apiConfig.js'
  */
 class SalesManager {
   async apiRequest(endpoint, options = {}, token) {
-    console.log('[SalesManager] apiRequest:', endpoint, options)
     const url = getApiUrl(endpoint)
     const headers = { 'Content-Type': 'application/json', ...options.headers }
     if (token) headers['Authorization'] = `Bearer ${token}`

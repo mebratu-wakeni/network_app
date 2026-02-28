@@ -793,8 +793,11 @@ app.on('activate', async () => {
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
-    await bootstrapRuntimeConfig()
     createMainWindow()
+    bootstrapRuntimeConfig().catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error('bootstrapRuntimeConfig failed on activate:', error)
+    })
   }
 })
 
@@ -803,7 +806,10 @@ app.on('before-quit', async () => {
   // await serverManager.stopServices()
 })
 
-app.whenReady().then(async () => {
-  await bootstrapRuntimeConfig()
+app.whenReady().then(() => {
   createMainWindow()
+  bootstrapRuntimeConfig().catch((error) => {
+    // eslint-disable-next-line no-console
+    console.error('bootstrapRuntimeConfig failed on app start:', error)
+  })
 })

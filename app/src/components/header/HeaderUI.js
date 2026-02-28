@@ -113,7 +113,7 @@ function renderUserMenu(props, user) {
       userMenuActionId === menuActionId ? null : menuActionId
     ),
     buttonClass: 'rounded-md px-1.5 py-1 bg-transparent hover:bg-gray-100 text-gray-600 transition-colors duration-150',
-    menuClass: 'w-52 py-1',
+    menuClass: 'top-full w-52 py-1',
     trigger: Row({ class: 'flex items-center gap-1' }, [
       renderAvatar(user),
       Row({ class: `w-4 h-4 flex items-center justify-center text-sm text-gray-500 transition-transform duration-200 ease-out ${userMenuOpen ? 'rotate-180' : ''}` }, [

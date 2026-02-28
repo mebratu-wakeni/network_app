@@ -17,15 +17,6 @@ export class ProductsController {
       const params = req.body || {}
       const { limit, offset, search, sortBy, orderBy, filter } = params
       
-      console.log(`[ProductsController] List request:`, {
-        limit: limit || 10,
-        offset: offset || 0,
-        search: search || '',
-        sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc',
-        filter: filter || 'all'
-      })
-      
       const result = await this.service.findAll({
         limit: limit || 10,
         offset: offset || 0,
@@ -34,8 +25,6 @@ export class ProductsController {
         orderBy: orderBy || 'desc',
         filter: filter || 'all'
       })
-      
-      console.log(`[ProductsController] List response: ${result.products.length} products, total: ${result.total}`)
       
       res.json({
         ok: true,
@@ -57,8 +46,6 @@ export class ProductsController {
     try {
       const { products } = req.validBody
       
-      console.log(`[ProductsController] Bulk import request: ${products.length} products`)
-      
       const result = await this.service.bulkImport(products)
       
       // Log failed results for debugging
@@ -72,8 +59,6 @@ export class ProductsController {
           }
         })
       }
-      
-      console.log(`[ProductsController] Import summary: ${result.successful} successful, ${result.failed} failed`)
       
       res.json({
         ok: true,
@@ -100,14 +85,6 @@ export class ProductsController {
       const params = req.query || {}
       const { limit, offset, search, sortBy, orderBy } = params
       
-      console.log(`[ProductsController] Export request:`, {
-        limit: limit || 10000,
-        offset: offset || 0,
-        search: search || '',
-        sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
-      })
-      
       const csvContent = await this.service.exportToCSV({
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
@@ -115,8 +92,6 @@ export class ProductsController {
         sortBy: sortBy || 'id',
         orderBy: orderBy || 'desc'
       })
-      
-      console.log(`[ProductsController] Export response: ${csvContent.split('\n').length - 1} rows`)
       
       // Set headers for CSV download
       res.setHeader('Content-Type', 'text/csv')
@@ -137,11 +112,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      console.log(`[ProductsController] Create category request:`, data)
-      
       const category = await this.service.createCategory(data)
-      
-      console.log(`[ProductsController] Category created:`, category)
       
       res.json({
         ok: true,
@@ -161,11 +132,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      console.log(`[ProductsController] Create unit request:`, data)
-      
       const unit = await this.service.createUnit(data)
-      
-      console.log(`[ProductsController] Unit created:`, unit)
       
       res.json({
         ok: true,
@@ -221,8 +188,6 @@ export class ProductsController {
     try {
       const { name } = req.params
       
-      console.log(`[ProductsController] Find category by name:`, name)
-      
       const category = await this.service.findCategoryByName(name)
       
       if (!category) {
@@ -249,8 +214,6 @@ export class ProductsController {
   findUnitByName = async (req, res, next) => {
     try {
       const { name } = req.params
-      
-      console.log(`[ProductsController] Find unit by name:`, name)
       
       const unit = await this.service.findUnitByName(name)
       
@@ -279,11 +242,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      console.log(`[ProductsController] Create product request:`, JSON.stringify(data, null, 2))
-      
       const product = await this.service.createProduct(data)
-      
-      console.log(`[ProductsController] Product created successfully:`, JSON.stringify(product, null, 2))
       
       if (!product || !product.id) {
         console.error('[ProductsController] Product creation returned invalid product:', product)
@@ -323,11 +282,7 @@ export class ProductsController {
       const { id } = req.params
       const data = req.validBody
       
-      console.log(`[ProductsController] Update product ${id} request:`, JSON.stringify(data, null, 2))
-      
       const product = await this.service.updateProduct(parseInt(id), data)
-      
-      console.log(`[ProductsController] Product updated successfully:`, JSON.stringify(product, null, 2))
       
       if (!product || !product.id) {
         console.error('[ProductsController] Product update returned invalid product:', product)
@@ -365,11 +320,7 @@ export class ProductsController {
     try {
       const { id } = req.params
       
-      console.log(`[ProductsController] Delete product ${id} request`)
-      
       await this.service.deleteProduct(parseInt(id))
-      
-      console.log(`[ProductsController] Product ${id} deleted successfully`)
       
       res.json({
         ok: true,

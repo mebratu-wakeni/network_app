@@ -69,9 +69,6 @@ export class CustomersService {
    * @returns {Object} Updated customer
    */
   async update(id, customerData) {
-    console.log('[CustomersService] update - Customer ID:', id);
-    console.log('[CustomersService] update - Customer Data:', customerData);
-    
     if (!id || isNaN(parseInt(id, 10))) {
       const error = new Error('Valid customer ID is required')
       error.status = 400
@@ -80,7 +77,6 @@ export class CustomersService {
 
     // Check if customer exists
     const existing = await this.repository.findById(id)
-    console.log('[CustomersService] update - Existing customer:', existing);
     
     if (!existing) {
       const error = new Error('Customer not found')
@@ -103,9 +99,7 @@ export class CustomersService {
       customerData.email = null
     }
 
-    console.log('[CustomersService] update - Final customer data to save:', customerData);
     const updated = await this.repository.update(id, customerData)
-    console.log('[CustomersService] update - Updated customer from repository:', updated);
     return updated
   }
 

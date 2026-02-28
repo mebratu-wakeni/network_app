@@ -127,6 +127,56 @@ export class InventoriesRepository {
   }
 
   /**
+   * Resolve category id by name; create category when missing.
+   * Falls back to default category when name is not provided.
+   */
+  async resolveCategoryId(categoryName, trx = null) {
+    const db = trx || this.knex
+    const normalized = String(categoryName || '').trim()
+    if (!normalized) return this.getDefaultCategoryId(trx)
+
+    const existing = await db('categories')
+      .whereRaw('LOWER(name) = LOWER(?)', [normalized])
+      .select('id')
+      .first()
+    if (existing) return existing.id
+
+    const [created] = await db('categories')
+      .insert({
+        name: normalized,
+        created_at: db.fn.now(),
+        last_updated: db.fn.now()
+      })
+      .returning('id')
+    return created?.id || created
+  }
+
+  /**
+   * Resolve unit id by name; create unit when missing.
+   * Falls back to default unit when name is not provided.
+   */
+  async resolveUnitId(unitName, trx = null) {
+    const db = trx || this.knex
+    const normalized = String(unitName || '').trim()
+    if (!normalized) return this.getDefaultUnitId(trx)
+
+    const existing = await db('units')
+      .whereRaw('LOWER(name) = LOWER(?)', [normalized])
+      .select('id')
+      .first()
+    if (existing) return existing.id
+
+    const [created] = await db('units')
+      .insert({
+        name: normalized,
+        created_at: db.fn.now(),
+        last_updated: db.fn.now()
+      })
+      .returning('id')
+    return created?.id || created
+  }
+
+  /**
    * Get next available product code (PRD0001, PRD0002, ...) for auto-created products.
    * @param {Object} trx - Optional knex transaction
    */
@@ -303,8 +353,8 @@ export class InventoriesRepository {
 
           // If product not found, create it so stock import works without pre-importing products
           if (!product) {
-            const categoryId = await this.getDefaultCategoryId(trx)
-            const unitId = await this.getDefaultUnitId(trx)
+            const categoryId = await this.resolveCategoryId(item.category, trx)
+            const unitId = await this.resolveUnitId(item.unit, trx)
             if (categoryId == null || unitId == null) {
               throw new Error('Cannot auto-create product: no categories or units in database. Import products first or add a category and unit.')
             }
@@ -674,20 +724,6 @@ export class InventoriesRepository {
       const remaining = Math.max(0, totalBorrowed - totalReturned)
       const borrowStatus = item.status || 'active' // 'active', 'partially_returned', 'returned'
       
-      // Debug logging for remaining quantity calculation
-      if (totalBorrowed > 0) {
-        console.log('[findBorrowedFrom] Item calculation:', {
-          borrowFromId: item.id,
-          inventoryId,
-          totalBorrowed,
-          totalReturned,
-          remaining,
-          borrowStatus,
-          hasReturnData: returnDataMap.has(inventoryId),
-          returnDataMapSize: returnDataMap.size
-        })
-      }
-      
       return {
         id: item.id,
         borrowFromId: item.id, // borrow_from_inventories id
@@ -723,8 +759,6 @@ export class InventoriesRepository {
         remaining: remaining
       }
     })
-
-    console.log('[InventoriesRepository] transformedStock:', transformedStock);
 
     return {
       stock: transformedStock,
@@ -848,19 +882,6 @@ export class InventoriesRepository {
       const totalReturned = returnDataMap.get(borrowToId) || 0
       const remaining = Math.max(0, totalBorrowed - totalReturned)
       const borrowStatus = item.status || 'active' // 'active', 'partially_returned', 'returned'
-      
-      // Debug logging for remaining quantity calculation
-      if (totalBorrowed > 0) {
-        console.log('[findBorrowedTo] Item calculation:', {
-          borrowToId: item.id,
-          totalBorrowed,
-          totalReturned,
-          remaining,
-          borrowStatus,
-          hasReturnData: returnDataMap.has(borrowToId),
-          returnDataMapSize: returnDataMap.size
-        })
-      }
       
       return {
         id: item.id,
@@ -1695,30 +1716,10 @@ export class InventoriesRepository {
         const borrowedProductId = Number(borrowToRecord.product_id)
         const borrowedUnitCost = parseFloat(borrowToRecord.unit_cost)
         
-        console.log('[processBorrowToReturn] Validation - Borrowed record:', {
-          product_id: borrowToRecord.product_id,
-          product_id_type: typeof borrowToRecord.product_id,
-          normalized_product_id: borrowedProductId,
-          unit_cost: borrowToRecord.unit_cost,
-          unit_cost_type: typeof borrowToRecord.unit_cost,
-          normalized_unit_cost: borrowedUnitCost
-        });
-        
         itemsToProcess.forEach((item, idx) => {
           const itemProductId = Number(item.product_id)
           const itemUnitCost = Number(item.unit_cost)
-          
-          console.log(`[processBorrowToReturn] Validating item ${idx + 1}:`, {
-            item_product_id: item.product_id,
-            item_product_id_type: typeof item.product_id,
-            normalized_item_product_id: itemProductId,
-            item_unit_cost: item.unit_cost,
-            item_unit_cost_type: typeof item.unit_cost,
-            normalized_item_unit_cost: itemUnitCost,
-            match_product: itemProductId === borrowedProductId,
-            match_cost: Math.abs(itemUnitCost - borrowedUnitCost) <= 0.01
-          });
-          
+
           if (itemProductId !== borrowedProductId) {
             throw new Error(`Return item ${idx + 1}: Product ID (${itemProductId}) must match borrowed product (${borrowedProductId})`)
           }
@@ -1980,19 +1981,6 @@ export class InventoriesRepository {
 
     // 3. Remaining to return = original − sum(returns)
     const remaining = Math.max(0, totalBorrowed - totalReturned)
-    
-    // Debug logging to help diagnose the issue
-    console.log('[getBorrowFromReturnStatus] Status calculation:', {
-      borrowFromId,
-      borrowedInventoryId,
-      inventoryId,
-      totalBorrowed,
-      totalReturned,
-      remaining,
-      borrowRecordQuantity: borrowRecord?.quantity,
-      borrowRecordInventoryId: borrowRecord?.inventory_id,
-      borrowRecordStatus: borrowRecord?.status
-    })
     
     return { totalBorrowed, totalReturned, remaining }
   }

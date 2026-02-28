@@ -197,10 +197,11 @@ export class ProductsRepository {
     if (search && search.trim()) {
       const searchTerm = `%${search.trim()}%`
       query = query.where(function () {
-        this.whereRaw('LOWER(products.name) LIKE ?', [searchTerm.toLowerCase()])
-          .orWhereRaw('LOWER(products.product_code) LIKE ?', [searchTerm.toLowerCase()])
-          .orWhereRaw('LOWER(categories.name) LIKE ?', [searchTerm.toLowerCase()])
-          .orWhereRaw('LOWER(units.name) LIKE ?', [searchTerm.toLowerCase()])
+        this.whereRaw("LOWER(COALESCE(products.name, '')) LIKE ?", [searchTerm.toLowerCase()])
+          .orWhereRaw("LOWER(COALESCE(products.product_code, '')) LIKE ?", [searchTerm.toLowerCase()])
+          .orWhereRaw("LOWER(COALESCE(products.description, '')) LIKE ?", [searchTerm.toLowerCase()])
+          .orWhereRaw("LOWER(COALESCE(categories.name, '')) LIKE ?", [searchTerm.toLowerCase()])
+          .orWhereRaw("LOWER(COALESCE(units.name, '')) LIKE ?", [searchTerm.toLowerCase()])
       })
     }
 

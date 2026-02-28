@@ -63,7 +63,6 @@ let tableState = {
 const updateTableState = (newState) => {
   Object.assign(tableState, newState);
   // In a real Liteframe, this would trigger a re-render of components subscribed to tableState.
-  console.log("Table State Updated:", tableState);
   // You would typically call a Liteframe's render function here
   // e.g., Liteframe.render(document.getElementById('app'), ProductsTable());
 };

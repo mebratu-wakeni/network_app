@@ -6,16 +6,20 @@ const { Row } = Liteframe;
  * min-w-0 overflow-auto so the table body area scrolls. Thead is sticky inside that scroll area.
  */
 const Table = (props, children) => {
-  const { class: className = '', tableClass = '' } = props;
+  const { class: className = '', tableClass = '', pageScrollable = false } = props;
 
   const baseClasses = 'min-w-full divide-y divide-gray-200 sm:rounded-lg relative';
 
   const tableElement = Row({ tagType: 'table', class: `min-w-full divide-y divide-gray-300 ${tableClass}`.trim() }, children);
 
-  // Outer: Table takes rest of space in parent flex-col; flex-col + overflow-hidden so inner can scroll
-  const outerClass = `flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden ${baseClasses} ${className}`.trim();
-  // Inner: scrollable body area – flex-1 min-h-0 min-w-0 overflow-auto; pb-48 so bottom-row dropdowns aren't cut off
-  const scrollClass = 'flex-1 min-h-0 min-w-0 overflow-auto pb-48';
+  // Default behavior: table manages its own vertical scroll area.
+  // pageScrollable=true: parent page handles vertical scrolling, table keeps only horizontal overflow.
+  const outerClass = pageScrollable
+    ? `flex flex-col min-w-0 ${baseClasses} ${className}`.trim()
+    : `flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden ${baseClasses} ${className}`.trim();
+  const scrollClass = pageScrollable
+    ? 'min-w-0 overflow-visible'
+    : 'flex-1 min-h-0 min-w-0 overflow-auto pb-24 lg:pb-40';
   return Row({
     tagType: 'div',
     class: outerClass
@@ -48,12 +52,33 @@ const TableHeader = (props, children) => {
  */
 
 const TableBody = (props, children) => {
-  const {class: className = ''} = props;
+  const {
+    class: className = '',
+    showEndMarker = false,
+    endMarkerLabel = 'End of table',
+    endMarkerColspan = 1,
+    endMarkerHeightClass = 'h-16'
+  } = props;
+
+  const endMarkerRow = showEndMarker
+    ? Row({ tagType: 'tr', class: 'pointer-events-none' }, [
+        Row({
+          tagType: 'td',
+          class: `${endMarkerHeightClass} text-center text-xs text-gray-400 bg-gradient-to-b from-white to-gray-50`,
+          attributes: { colspan: endMarkerColspan }
+        }, Row({ class: 'inline-flex items-center gap-2' }, [
+          Row({ class: 'w-10 border-t border-dashed border-gray-300' }),
+          Row({}, endMarkerLabel),
+          Row({ class: 'w-10 border-t border-dashed border-gray-300' })
+        ]))
+      ])
+    : null;
+
   return Row({
     tagType: 'tbody',
     // Added 'odd:bg-gray-50'
     class: `divide-y divide-gray-200 bg-white odd:bg-gray-50 ${className}`,
-  }, children);
+  }, [children, endMarkerRow].filter(Boolean));
 };
 
 /**
@@ -82,9 +107,7 @@ const TableHCell = (props, children) => {
   }
   return Row({
     tagType: 'th',
-    // Sticky positioning: each th cell sticks to top of scrollable container
-    // Use a solid white background and slightly higher z so header overlays rows reliably.
-    class: `px-6 py-5 text-left text-xs font-medium text-gray-600 uppercase tracking-wider sticky top-0 z-20 bg-white ${className}`,
+    class: `px-3 md:px-4 lg:px-6 py-3 text-left text-[11px] md:text-xs font-medium text-gray-600 uppercase tracking-wider bg-white ${className}`,
     attributes: { scope: 'col' },
     events: events,
     delegator,
@@ -98,7 +121,7 @@ const TableDCell = (props, children) => {
   return Row({
     tagType: 'td',
     // Changed 'py-4' to 'py-3' for tighter body row
-    class: `whitespace-nowrap px-6 py-3 text-sm text-gray-900 ${className}`
+    class: `whitespace-nowrap px-3 md:px-4 lg:px-6 py-2 text-sm text-gray-900 ${className}`
   }, children);
 };
 

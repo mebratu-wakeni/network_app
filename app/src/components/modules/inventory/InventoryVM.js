@@ -4,6 +4,7 @@ import { permissionChecker } from '../../utils/PermissionChecker';
 export class InventoryVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
     super(sharedStateManager);
+    this._productLoadSeq = 0;
     this.initializeState();
     // Load user permissions on initialization
     this.loadUserPermissions();
@@ -198,8 +199,7 @@ export class InventoryVM extends ViewModel {
   // ==================== Products Methods ====================
 
   async loadProducts() {
-    if (this.getState('loading')) return;
-    
+    const requestSeq = ++this._productLoadSeq;
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -207,7 +207,7 @@ export class InventoryVM extends ViewModel {
     try {
       const tableConfig = this.getState('product-table-config');
       const searchQuery = this.getState('product-search-query');
-      
+      const requestedSearchQuery = String(searchQuery || '');
       const productFilter = this.getState('product-filter') || 'all';
       const result = await window.ipcRenderer.invoke('inventory:get-products', {
         limit: tableConfig.limit,
@@ -217,6 +217,16 @@ export class InventoryVM extends ViewModel {
         orderBy: tableConfig.orderBy,
         filter: productFilter
       });
+
+      // Ignore stale responses when newer search requests were issued.
+      if (requestSeq !== this._productLoadSeq) {
+        return [];
+      }
+      // Guard against out-of-order or unrelated refreshes overriding the active search result.
+      const currentSearchQuery = String(this.getState('product-search-query') || '');
+      if (requestedSearchQuery !== currentSearchQuery) {
+        return [];
+      }
 
       if (result.success) {
         this.updateState('product-list', result.products || []);
@@ -228,8 +238,14 @@ export class InventoryVM extends ViewModel {
       }
 
       throw new Error(result.error || 'Failed to load products');
+    } catch (error) {
+      if (requestSeq !== this._productLoadSeq) return [];
+      this.updateState('error', { message: error.message || 'Failed to load products' });
+      throw error;
     } finally {
-      this.updateState('loading', false);
+      if (requestSeq === this._productLoadSeq) {
+        this.updateState('loading', false);
+      }
     }
   }
 
@@ -238,7 +254,6 @@ export class InventoryVM extends ViewModel {
    */
   async loadAllProducts() {
     try {
-      console.log('[InventoryVM] loadAllProducts - Loading all products...');
       this.updateState('loading', true);
       
       const result = await window.ipcRenderer.invoke('inventory:get-products', {
@@ -249,11 +264,8 @@ export class InventoryVM extends ViewModel {
         orderBy: 'asc'
       });
 
-      console.log('[InventoryVM] loadAllProducts - Result:', result);
-
       if (result.success) {
         const products = result.products || [];
-        console.log('[InventoryVM] loadAllProducts - Loaded', products.length, 'products');
         this.updateState('product-list', products);
         this.updateState('product-total-count', result.total || 0);
         return products;
@@ -321,12 +333,8 @@ export class InventoryVM extends ViewModel {
     this.updateState('error', null);
     this.updateState('success', null);
 
-    console.log('[InventoryVM] createBorrowedFromStock - Payload:', JSON.stringify(borrowData, null, 2));
-
     try {
       const result = await window.ipcRenderer.invoke('inventory:create-borrowed-from-stock', borrowData);
-
-      console.log('[InventoryVM] createBorrowedFromStock - Result:', JSON.stringify(result, null, 2));
 
       if (result.success) {
         this.updateState('success', { message: 'Borrowed from stock created successfully' });
@@ -540,9 +548,6 @@ export class InventoryVM extends ViewModel {
         throw new Error('Unit is required');
       }
 
-      // Log the payload before sending to debug validation issues
-      console.log('[InventoryVM] Product payload before API call:', productPayload);
-
       const result = await window.ipcRenderer.invoke('inventory:create-product', productPayload);
 
       if (result.success) {
@@ -655,7 +660,14 @@ export class InventoryVM extends ViewModel {
   }
 
   async bulkImportProducts(products) {
-    if (this.getState('loading')) return;
+    if (this.getState('loading')) {
+      return {
+        success: false,
+        error: 'Another inventory operation is already in progress',
+        summary: { total: 0, successful: 0, failed: 0 },
+        results: []
+      };
+    }
     
     this.updateState('loading', true);
     this.updateState('error', null);
@@ -723,13 +735,11 @@ export class InventoryVM extends ViewModel {
 
   setProductLimit(limit) {
     const tableConfig = this.getState('product-table-config');
-    console.log('setProductLimit called:', limit, 'current config:', tableConfig);
     this.updateState('product-table-config', {
       ...tableConfig,
       limit: parseInt(limit),
       offset: 0 // Reset to first page
     });
-    console.log('Updated config:', this.getState('product-table-config'));
   }
 
   nextProductPage() {
@@ -773,8 +783,6 @@ export class InventoryVM extends ViewModel {
       const search = typeof stockList.search === 'string' ? stockList.search : '';
       const filter = typeof stockList.filter === 'string' ? stockList.filter : 'all';
 
-      console.log('[InventoryVM] loadStock - Filter:', filter, 'Full state:', stockList);
-
       const result = await window.ipcRenderer.invoke('inventory:get-stock', {
         limit: config.limit,
         offset: config.offset,
@@ -782,13 +790,6 @@ export class InventoryVM extends ViewModel {
         filter: filter,
         sortBy: config.sortBy,
         orderBy: config.orderBy
-      });
-
-      console.log('[InventoryVM] loadStock - Result:', {
-        success: result.success,
-        stockCount: result.stock?.length || 0,
-        total: result.total,
-        filter: filter
       });
 
       if (result.success) {
@@ -1444,9 +1445,7 @@ export class InventoryVM extends ViewModel {
         this.updateState('loading', false);
         // Reload stock list to reflect updated inventory
         try {
-          console.log('[InventoryVM] processBorrowToReturn calling loadStock');
           await this.loadStock();
-          console.log('[InventoryVM] processBorrowToReturn loadStock done');
         } catch (loadError) {
           console.error('Error reloading stock after return:', loadError);
         }
@@ -1470,9 +1469,7 @@ export class InventoryVM extends ViewModel {
    */
   async getBorrowFromReturnStatus(opts = {}) {
     try {
-      console.log('[InventoryVM] getBorrowFromReturnStatus called with opts:', opts);
       const result = await window.ipcRenderer.invoke('inventory:get-borrow-from-return-status', opts);
-      console.log('[InventoryVM] getBorrowFromReturnStatus raw result:', JSON.stringify(result, null, 2));
       
       if (result && (result.success || result.ok)) {
         const returnStatus = {
@@ -1480,8 +1477,6 @@ export class InventoryVM extends ViewModel {
           totalReturned: Number(result.totalReturned) || 0,
           remaining: Number(result.remaining) || 0
         };
-        console.log('[InventoryVM] Parsed returnStatus:', returnStatus);
-        
         // Update viewModel state and trigger re-render
         const form = this.getState('return-borrowed-form') || {};
         this.updateState('loading', true);
@@ -1492,10 +1487,6 @@ export class InventoryVM extends ViewModel {
         
         // Verify state was updated
         const updatedForm = this.getState('return-borrowed-form');
-        console.log('[InventoryVM] State after update:', {
-          returnStatus: updatedForm?.returnStatus,
-          remaining: updatedForm?.returnStatus?.remaining
-        });
         
         // Complete re-render trigger
         setTimeout(() => {
@@ -1531,14 +1522,11 @@ export class InventoryVM extends ViewModel {
    */
   async loadInventoriesByProduct(productId) {
     try {
-      console.log('[InventoryVM] loadInventoriesByProduct called with productId:', productId);
       // Trigger re-render by updating loading state
       this.updateState('loading', true);
       
       const result = await window.ipcRenderer.invoke('inventory:get-inventories-by-product', productId);
-      console.log('[InventoryVM] loadInventoriesByProduct result:', result);
       const items = (result.success || result.ok) ? (result.items || []) : [];
-      console.log('[InventoryVM] loadInventoriesByProduct items:', items.length, items);
       
       // Update both the old state (for backward compatibility) and new form state
       this.updateState('inventory-by-product-list', items);
@@ -1587,7 +1575,6 @@ export class InventoryVM extends ViewModel {
       // Frontend sends: {inventory_id, quantity}
       // Backend accepts: {inventory_id, quantity} OR {returningInventoryId, quantityReturned}
       const result = await window.ipcRenderer.invoke('inventory:process-borrow-from-return', returnData);
-      console.log('[InventoryVM] processBorrowFromReturn IPC result:', typeof result, Array.isArray(result), result && typeof result === 'object' ? Object.keys(result) : 'n/a');
       const ok = result && (result.success === true || result.ok === true);
 
       if (ok) {
@@ -1603,9 +1590,7 @@ export class InventoryVM extends ViewModel {
         });
         this.updateState('loading', false);
         try {
-          console.log('[InventoryVM] processBorrowFromReturn calling loadStock');
           await this.loadStock();
-          console.log('[InventoryVM] processBorrowFromReturn loadStock done');
         } catch (loadError) {
           console.error('Error reloading stock after return:', loadError);
         }
@@ -1719,15 +1704,8 @@ export class InventoryVM extends ViewModel {
     this.updateState('error', null);
     this.updateState('success', null);
 
-    console.log('[InventoryVM] updateStock - Request payload:', {
-      stockId,
-      stockData: JSON.stringify(stockData, null, 2)
-    });
-
     try {
       const result = await window.ipcRenderer.invoke('inventory:update-stock', { stockId, stockData });
-
-      console.log('[InventoryVM] updateStock - Response:', JSON.stringify(result, null, 2));
 
       if (result.success) {
         this.updateState('success', { 
@@ -1772,7 +1750,6 @@ export class InventoryVM extends ViewModel {
     }
   }
   setProductSort(column) {
-    console.log('setProductSort called:', column);
     const tableConfig = this.getState('product-table-config');
     this.updateState('product-table-config', {
       ...tableConfig,
