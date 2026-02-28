@@ -13,11 +13,32 @@ function findProjectRoot(startPath) {
     if (fs.existsSync(apiDir)) return current
     current = path.dirname(current)
   }
-  throw new Error('Could not find project root containing /api directory.')
+  return null
 }
 
-const ROOT_DIR = findProjectRoot(__dirname)
-const API_DIR = path.join(ROOT_DIR, 'api')
+function resolveApiDir() {
+  if (process.env.API_DIR && fs.existsSync(process.env.API_DIR)) {
+    return process.env.API_DIR
+  }
+
+  const resourceCandidates = [
+    path.join(process.resourcesPath || '', 'api'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'api')
+  ]
+  for (const candidate of resourceCandidates) {
+    if (candidate && fs.existsSync(candidate)) return candidate
+  }
+
+  const rootDir = findProjectRoot(__dirname)
+  if (rootDir) {
+    const projectApiDir = path.join(rootDir, 'api')
+    if (fs.existsSync(projectApiDir)) return projectApiDir
+  }
+
+  return null
+}
+
+const API_DIR = resolveApiDir()
 
 class ServerManager {
   constructor() {
@@ -35,8 +56,11 @@ class ServerManager {
       return { success: true, message: 'Server already running' }
     }
 
-    if (!fs.existsSync(API_DIR)) {
-      return { success: false, error: `API directory not found: ${API_DIR}` }
+    if (!API_DIR || !fs.existsSync(API_DIR)) {
+      return {
+        success: false,
+        error: `API directory not found. Looked for packaged resources and project-local /api directory.`
+      }
     }
 
     const port = Number(options.port || process.env.PORT || 4000)
@@ -49,14 +73,17 @@ class ServerManager {
     }
     if (dbFile) fs.mkdirSync(path.dirname(dbFile), { recursive: true })
     const shouldSeed = !!dbFile && !fs.existsSync(dbFile)
+    const shouldRunMigrate = shouldSeed || options.forceMigrate === true || process.env.RUN_MIGRATIONS_ON_STARTUP === '1'
 
-    try {
-      execSync('npm run migrate', { cwd: API_DIR, env, stdio: 'inherit' })
-      if (shouldSeed) {
-        execSync('npm run seed', { cwd: API_DIR, env, stdio: 'inherit' })
+    if (shouldRunMigrate) {
+      try {
+        execSync('npm run migrate', { cwd: API_DIR, env, stdio: 'inherit' })
+        if (shouldSeed) {
+          execSync('npm run seed', { cwd: API_DIR, env, stdio: 'inherit' })
+        }
+      } catch (error) {
+        return { success: false, error: `Failed to run migrations: ${error.message}` }
       }
-    } catch (error) {
-      return { success: false, error: `Failed to run migrations: ${error.message}` }
     }
 
     const command = process.env.NODE_ENV === 'production' ? ['run', 'start'] : ['run', 'dev']

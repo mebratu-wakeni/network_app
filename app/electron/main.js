@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, ipcMain } from 'electron'
+import { app, BrowserWindow, nativeImage, ipcMain, protocol } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -44,6 +44,23 @@ export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
+const APP_PROTOCOL = 'app'
+const APP_PROTOCOL_HOST = 'local'
+
+if (!VITE_DEV_SERVER_URL) {
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: APP_PROTOCOL,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true
+      }
+    }
+  ])
+}
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
@@ -52,6 +69,7 @@ const serverManager = new ServerManager()
 const usersManager = new UsersManager()
 const licenseManager = new LicenseManager()
 let runtimeConfig = null
+let latestBootMessage = null
 
 const APP_NAME = 'PharmaSuitLAN'
 const DB_FILE_NAME = 'pharmasuit_lan.db'
@@ -417,15 +435,84 @@ if (process.platform === 'darwin' && app.dock) {
 }
 
 function loadRenderer(targetWindow) {
-  // Test active push message to Renderer-process.
+  // Push startup progress state to renderer once it is ready.
   targetWindow.webContents.on('did-finish-load', () => {
-    targetWindow?.webContents.send('main-process-message', (new Date).toLocaleString())
+    targetWindow?.webContents.send('main-process-message', latestBootMessage || {
+      type: 'boot-progress',
+      step: 'renderer-ready',
+      label: 'Renderer ready',
+      percent: 20,
+      ts: Date.now()
+    })
   })
 
   if (VITE_DEV_SERVER_URL) {
     targetWindow.loadURL(VITE_DEV_SERVER_URL)
   } else {
-    targetWindow.loadFile(path.join(RENDERER_DIST, 'index.html'))
+    targetWindow.loadURL(`${APP_PROTOCOL}://${APP_PROTOCOL_HOST}/index.html`)
+  }
+}
+
+const MIME_TYPES = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.mjs': 'application/javascript',
+  '.css': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.json': 'application/json',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+}
+
+function registerRendererProtocol() {
+  if (VITE_DEV_SERVER_URL) return
+
+  // protocol.handle is the Electron 25+ replacement for registerFileProtocol.
+  // It uses the Fetch API interface, which means fetch() calls from the renderer
+  // (e.g. Ionicons loading SVGs) are properly handled.
+  protocol.handle(APP_PROTOCOL, (request) => {
+    try {
+      const { pathname } = new URL(request.url)
+      const relative = !pathname || pathname === '/' ? 'index.html' : pathname.slice(1)
+      const filePath = path.join(RENDERER_DIST, decodeURIComponent(relative))
+      const ext = path.extname(filePath).toLowerCase()
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+
+      try {
+        const data = fs.readFileSync(filePath)
+        return new Response(data, { headers: { 'Content-Type': contentType } })
+      } catch (_) {
+        const html = fs.readFileSync(path.join(RENDERER_DIST, 'index.html'))
+        return new Response(html, { headers: { 'Content-Type': 'text/html' } })
+      }
+    } catch (_) {
+      return new Response('Not found', { status: 404 })
+    }
+  })
+}
+
+function publishBootProgress(step, label, percent) {
+  const payload = {
+    type: 'boot-progress',
+    step: String(step || ''),
+    label: String(label || ''),
+    percent: Math.max(0, Math.min(100, Number(percent) || 0)),
+    ts: Date.now()
+  }
+  latestBootMessage = payload
+  if (win && !win.isDestroyed()) {
+    try {
+      win.webContents.send('main-process-message', payload)
+    } catch (_) {
+      // Renderer not ready yet; latestBootMessage will be sent on did-finish-load.
+    }
   }
 }
 
@@ -478,20 +565,26 @@ function createMainWindow() {
 }
 
 async function bootstrapRuntimeConfig() {
+  publishBootProgress('resolve-config', 'Resolving runtime configuration...', 20)
   let effectiveCfg = resolveConfigByDbPresence(runtimeConfig || loadRuntimeConfig())
   applyRuntimeConfig(effectiveCfg)
 
   if (effectiveCfg?.setupCompleted && effectiveCfg?.mode === 'server') {
+    publishBootProgress('start-api', 'Starting local API server...', 45)
     const dbFile = effectiveCfg?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
     const port = Number(effectiveCfg?.server?.port || 4000)
     await serverManager.startServer({ port, dbFile })
+    publishBootProgress('wait-api-health', 'Waiting for API health check...', 60)
     const apiReady = await waitForApiReady(`http://localhost:${port}`)
     if (apiReady) {
+      publishBootProgress('validate-license', 'Validating license state...', 80)
       effectiveCfg = await resolveLicenseState(effectiveCfg)
       applyRuntimeConfig(effectiveCfg)
       saveRuntimeConfig(effectiveCfg)
     }
   }
+
+  publishBootProgress('init-complete', 'Initialization complete', 100)
 
   return effectiveCfg
 }
@@ -566,7 +659,13 @@ ipcMain.handle('setup:get-config', async () => {
   const defaultDir = getDefaultDbDirectory()
   try { fs.mkdirSync(defaultDir, { recursive: true }) } catch (_) {}
   const normalizedConfig = resolveConfigByDbPresence(loaded)
-  const effectiveConfig = await resolveLicenseState(normalizedConfig)
+  // Avoid blocking initial renderer mount on network-dependent license checks.
+  // License state can still be resolved later by explicit setup/startup flows.
+  const effectiveConfig = {
+    ...normalizedConfig,
+    licenseRequired: false,
+    licenseStatus: null
+  }
   const fingerprint = getDeviceFingerprint()
   // Persist normalized setup paths so restart behavior is deterministic.
   if (
@@ -794,10 +893,6 @@ app.on('activate', async () => {
   // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
     createMainWindow()
-    bootstrapRuntimeConfig().catch((error) => {
-      // eslint-disable-next-line no-console
-      console.error('bootstrapRuntimeConfig failed on activate:', error)
-    })
   }
 })
 
@@ -807,9 +902,6 @@ app.on('before-quit', async () => {
 })
 
 app.whenReady().then(() => {
+  registerRendererProtocol()
   createMainWindow()
-  bootstrapRuntimeConfig().catch((error) => {
-    // eslint-disable-next-line no-console
-    console.error('bootstrapRuntimeConfig failed on app start:', error)
-  })
 })

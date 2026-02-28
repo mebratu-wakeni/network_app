@@ -11,6 +11,19 @@
     "dist",
     "dist-electron"
   ],
+  "extraResources": [
+    {
+      "from": "../api",
+      "to": "api",
+      "filter": [
+        "package.json",
+        "package-lock.json",
+        "src/**/*",
+        "db/**/*",
+        "node_modules/**/*"
+      ]
+    }
+  ],
   "mac": {
     "target": [
       "dmg"

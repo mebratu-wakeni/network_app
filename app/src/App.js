@@ -55,7 +55,10 @@ function StartupModeLayout(props) {
   return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
       Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
-        Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Choose Runtime Mode'),
+        Row({ class: 'flex items-center gap-2 mb-2 text-indigo-700' }, [
+          Row({ tagType: 'ion-icon', attributes: { name: 'rocket-outline' }, class: 'text-2xl' }),
+          Row({ tagType: 'h1', class: 'text-2xl font-bold' }, 'Choose Runtime Mode')
+        ]),
         Row({ class: 'text-sm text-gray-600' }, 'Select how to run this session. You can choose again after logout.')
       ]),
       Row({ class: 'px-8 py-6 flex flex-col gap-3' }, [
