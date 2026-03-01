@@ -74,6 +74,12 @@ let latestBootMessage = null
 const APP_NAME = 'PharmaSuitLAN'
 const DB_FILE_NAME = 'pharmasuit_lan.db'
 
+// Ensure userData path is consistent between dev (name='app') and packaged
+// (productName='YourAppName') builds by locking the app name before any
+// app.getPath() call.  Without this, every packaged run is treated as a
+// first-time install because the config is in a different directory.
+app.setName(APP_NAME)
+
 function getDefaultDbDirectory() {
   if (VITE_DEV_SERVER_URL) {
     return path.dirname(getLegacyDbPath())
@@ -154,6 +160,20 @@ function loadRuntimeConfig() {
   try {
     const cfgPath = getRuntimeConfigPath()
     if (!fs.existsSync(cfgPath)) {
+      // One-time migration: before app.setName() was added, dev builds saved
+      // config under the package.json "name" ('app') directory.  Copy it to the
+      // canonical location so existing setups survive the upgrade.
+      const legacyCfgPath = path.join(app.getPath('appData'), 'app', 'runtime-config.json')
+      if (fs.existsSync(legacyCfgPath)) {
+        try {
+          fs.mkdirSync(path.dirname(cfgPath), { recursive: true })
+          fs.copyFileSync(legacyCfgPath, cfgPath)
+          const migrated = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
+          return normalizeRuntimeConfig(migrated && typeof migrated === 'object' ? migrated : { setupCompleted: false })
+        } catch (_) {
+          // migration failed — fall through to a fresh config
+        }
+      }
       return normalizeRuntimeConfig({ setupCompleted: false })
     }
     const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
@@ -267,7 +287,7 @@ function normalizeLicenseActivationFailure(errorMessage) {
   return { code: 'SERVER_ERROR', error: msg || 'License activation failed' }
 }
 
-async function waitForApiReady(apiRoot, timeoutMs = 15000, intervalMs = 300) {
+async function waitForApiReady(apiRoot, timeoutMs = 30000, intervalMs = 400) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const health = await serverManager.checkApiHealth(apiRoot)
@@ -296,39 +316,16 @@ async function validateClientServerUrl(rawUrl) {
 function resolveConfigByDbPresence(initialConfig) {
   const loaded = initialConfig || loadRuntimeConfig()
   const configuredPort = Number(loaded?.server?.port || 4000)
-  const dbCandidates = [
-    loaded?.server?.dbFile,
-    process.env.DB_FILE,
-    path.join(getDefaultDbDirectory(), DB_FILE_NAME),
-    getLegacyDbPath()
-  ].filter(Boolean)
-  const existingDbFile = dbCandidates.find((candidate) => {
-    try {
-      return fs.existsSync(candidate)
-    } catch (_) {
-      return false
-    }
-  }) || null
+  const configuredDbFile = loaded?.server?.dbFile
 
-  if (loaded?.setupCompleted && loaded?.mode === 'server') {
-    if (!existingDbFile) {
-      return {
-        ...loaded,
-        setupCompleted: false,
-        profiles: {
-          ...(loaded?.profiles || {}),
-          server: {
-            ...((loaded?.profiles && loaded.profiles.server) || {}),
-            setupCompleted: false
-          }
-        }
-      }
-    }
+  // When setup is done and we have a saved path, use it. Don't substitute with
+  // env/legacy/default — that would connect to a different DB or create new ones.
+  if (loaded?.setupCompleted && loaded?.mode === 'server' && configuredDbFile) {
     return {
       ...loaded,
       server: {
-        dbDirectory: path.dirname(existingDbFile),
-        dbFile: existingDbFile,
+        dbDirectory: path.dirname(configuredDbFile),
+        dbFile: configuredDbFile,
         port: configuredPort
       },
       apiBaseUrl: `http://localhost:${configuredPort}/api`,
@@ -338,8 +335,8 @@ function resolveConfigByDbPresence(initialConfig) {
           ...((loaded?.profiles && loaded.profiles.server) || {}),
           setupCompleted: true,
           server: {
-            dbDirectory: path.dirname(existingDbFile),
-            dbFile: existingDbFile,
+            dbDirectory: path.dirname(configuredDbFile),
+            dbFile: configuredDbFile,
             port: configuredPort
           }
         }
@@ -347,6 +344,7 @@ function resolveConfigByDbPresence(initialConfig) {
     }
   }
 
+  // No saved path or setup not complete: keep as-is (activateModeConfig handles discovery)
   return loaded
 }
 
@@ -380,14 +378,25 @@ function activateModeConfig(initialConfig, selectedMode) {
   const legacyDbFile = getLegacyDbPath()
   const defaultDbFile = path.join(getDefaultDbDirectory(), DB_FILE_NAME)
   const configuredDbFile = configuredServer?.dbFile || null
-  const existingDbFile = [configuredDbFile, legacyDbFile, defaultDbFile].find((candidate) => {
-    if (!candidate) return false
-    try {
-      return fs.existsSync(candidate)
-    } catch (_) {
-      return false
-    }
-  }) || configuredDbFile
+  const hasSavedConfig = !!(configuredDbFile && (serverProfile?.setupCompleted === true || loaded?.setupCompleted === true))
+  // In packaged app, never use legacy path (Resources/api/data) — it's inside the
+  // bundle and wrong for persisted data. Use default (userData) instead.
+  const dbCandidates = app.isPackaged
+    ? [configuredDbFile, defaultDbFile]
+    : [configuredDbFile, legacyDbFile, defaultDbFile]
+  // When setup is done and configured path exists, use it. Otherwise discover:
+  // prefer an existing DB at default path over creating one at a stale configured path.
+  const configuredExists = configuredDbFile && (() => { try { return fs.existsSync(configuredDbFile) } catch (_) { return false } })()
+  const existingDbFile = (hasSavedConfig && configuredExists)
+    ? configuredDbFile
+    : (dbCandidates.find((candidate) => {
+        if (!candidate) return false
+        try {
+          return fs.existsSync(candidate)
+        } catch (_) {
+          return false
+        }
+      }) || defaultDbFile)
   const serverPort = Number(configuredServer?.port || 4000)
   const serverConfig = existingDbFile
     ? {
@@ -691,28 +700,60 @@ ipcMain.handle('setup:get-config', async () => {
 
 ipcMain.handle('startup:select-mode', async (_event, payload) => {
   const selectedMode = payload?.mode === 'client' ? 'client' : 'server'
+  console.log('[startup] select-mode', selectedMode)
+
   const loaded = runtimeConfig || loadRuntimeConfig()
   let effectiveConfig = activateModeConfig(loaded, selectedMode)
+  console.log('[startup] setupCompleted=', effectiveConfig?.setupCompleted, 'dbFile=', effectiveConfig?.server?.dbFile)
 
   if (selectedMode === 'server') {
     if (effectiveConfig?.setupCompleted && effectiveConfig?.server?.dbFile) {
       const dbFile = effectiveConfig.server.dbFile
       const port = Number(effectiveConfig?.server?.port || 4000)
+      console.log('[startup] starting server port=', port, 'dbFile=', dbFile)
+
+      publishBootProgress('start-api', 'Starting local API server...', 30)
       const serverStart = await serverManager.startServer({ port, dbFile })
-      if (serverStart?.success) {
-        const apiReady = await waitForApiReady(`http://localhost:${port}`)
-        if (apiReady) {
-          effectiveConfig = await resolveLicenseState(effectiveConfig)
+      console.log('[startup] serverStart=', serverStart?.success, serverStart?.error || '')
+      if (!serverStart?.success) {
+        return {
+          success: false,
+          code: 'SERVER_START_FAILED',
+          error: serverStart?.error || 'Failed to start the local API server.'
         }
       }
+
+      console.log('[startup] waiting for API ready...')
+      publishBootProgress('wait-api-health', 'Waiting for API to be ready...', 60)
+      const apiReady = await waitForApiReady(`http://localhost:${port}`)
+      console.log('[startup] apiReady=', apiReady)
+      if (!apiReady) {
+        return {
+          success: false,
+          code: 'API_NOT_READY',
+          error: 'Server process started but the API did not respond in time. Check server logs for errors.'
+        }
+      }
+
+      // Apply config BEFORE resolveLicenseState so license manager fetches from the
+      // local API we just started, not a stale client-mode URL from a previous run.
+      applyRuntimeConfig(effectiveConfig)
+
+      console.log('[startup] validating license...')
+      publishBootProgress('validate-license', 'Validating license...', 85)
+      effectiveConfig = await resolveLicenseState(effectiveConfig)
+      console.log('[startup] license done, licenseRequired=', effectiveConfig?.licenseRequired)
     }
+    // If setupCompleted is false the renderer will show SetupWizard — that is intentional.
   } else {
+    publishBootProgress('client-connect', 'Connecting in client mode...', 50)
     await serverManager.stopServer()
     effectiveConfig = { ...effectiveConfig, licenseRequired: false, licenseStatus: null }
   }
 
   saveRuntimeConfig(effectiveConfig)
   applyRuntimeConfig(effectiveConfig)
+  publishBootProgress('init-complete', 'Ready', 100)
 
   return { success: true, config: effectiveConfig }
 })
@@ -861,6 +902,7 @@ ipcMain.handle('auth:login', async (event, credentials) => {
   return {
     success: result.success,
     user: result.user,
+    token: result.token,
     error: result?.error
   };
 })

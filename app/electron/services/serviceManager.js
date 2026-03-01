@@ -2,8 +2,36 @@ import { spawn, execSync } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
+import { app } from 'electron'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+/**
+ * Build PATH for spawned processes. When the app is launched from Finder/Dock,
+ * PATH is minimal and often lacks node/npm. Include common install locations.
+ */
+function buildSpawnEnv(baseEnv) {
+  const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin']
+  const existingPath = baseEnv.PATH || baseEnv.Path || process.env.PATH || '/usr/bin:/bin'
+  const pathEntries = [...extraPaths, existingPath]
+  return { ...baseEnv, PATH: pathEntries.join(':') }
+}
+
+/**
+ * Find node binary. In packaged apps launched from Finder, node may not be in PATH.
+ */
+function findNodeBinary(env) {
+  try {
+    const result = execSync('which node', { encoding: 'utf8', env: buildSpawnEnv(env || process.env) })
+    const bin = (result || '').trim()
+    if (bin && fs.existsSync(bin)) return bin
+  } catch (_) {}
+  const candidates = ['/usr/local/bin/node', '/opt/homebrew/bin/node']
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+  return 'node' // fallback — may fail
+}
 
 function findProjectRoot(startPath) {
   let current = path.resolve(startPath)
@@ -52,6 +80,7 @@ class ServerManager {
   }
 
   async startServer(options = {}) {
+    console.log('[serviceManager] startServer API_DIR=', API_DIR, 'port=', options.port, 'dbFile=', options.dbFile)
     if (this.apiProcess && !this.apiProcess.killed) {
       return { success: true, message: 'Server already running' }
     }
@@ -65,34 +94,47 @@ class ServerManager {
 
     const port = Number(options.port || process.env.PORT || 4000)
     const dbFile = options.dbFile || process.env.DB_FILE
-    const env = {
+    const baseEnv = {
       ...process.env,
       PORT: String(port),
       DB_FILE: dbFile || '',
       DB_CLIENT: 'sqlite3',
     }
+    const env = buildSpawnEnv(baseEnv)
     if (dbFile) fs.mkdirSync(path.dirname(dbFile), { recursive: true })
     const shouldSeed = !!dbFile && !fs.existsSync(dbFile)
-    const shouldRunMigrate = shouldSeed || options.forceMigrate === true || process.env.RUN_MIGRATIONS_ON_STARTUP === '1'
-
-    if (shouldRunMigrate) {
-      try {
+    // Always run migrate:latest so any new migrations are applied even when
+    // the DB file already exists (e.g. after updating the packaged app).
+    // Seed only runs once, when the database file is brand-new.
+    const nodeBin = findNodeBinary(env)
+    const knexCli = path.join(API_DIR, 'node_modules', 'knex', 'bin', 'cli.js')
+    try {
+      console.log('[serviceManager] running migrations...')
+      if (fs.existsSync(knexCli)) {
+        execSync(`"${nodeBin}" "${knexCli}" migrate:latest --knexfile db/knexfile.js`, { cwd: API_DIR, env, stdio: 'inherit' })
+      } else {
         execSync('npm run migrate', { cwd: API_DIR, env, stdio: 'inherit' })
-        if (shouldSeed) {
+      }
+      console.log('[serviceManager] migrations done, spawning API...')
+      if (shouldSeed) {
+        if (fs.existsSync(knexCli)) {
+          execSync(`"${nodeBin}" "${knexCli}" seed:run --knexfile db/knexfile.js`, { cwd: API_DIR, env, stdio: 'inherit' })
+        } else {
           execSync('npm run seed', { cwd: API_DIR, env, stdio: 'inherit' })
         }
-      } catch (error) {
-        return { success: false, error: `Failed to run migrations: ${error.message}` }
       }
+    } catch (error) {
+      return { success: false, error: `Failed to run migrations: ${error.message}` }
     }
 
-    const command = process.env.NODE_ENV === 'production' ? ['run', 'start'] : ['run', 'dev']
-    this.apiProcess = spawn('npm', command, {
-      shell: true,
-      cwd: API_DIR,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const apiEntry = path.join(API_DIR, 'src', 'index.js')
+    const useNodeDirect = fs.existsSync(apiEntry) && (app.isPackaged || process.env.NODE_ENV === 'production')
+    const spawnOptions = { cwd: API_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] }
+    if (useNodeDirect) {
+      this.apiProcess = spawn(nodeBin, [apiEntry], spawnOptions)
+    } else {
+      this.apiProcess = spawn('npm', ['run', process.env.NODE_ENV === 'production' ? 'start' : 'dev'], { ...spawnOptions, shell: true })
+    }
 
     this.apiProcess.stdout.on('data', (data) => {
       this._appendLog(`[API] ${String(data)}`)
@@ -137,12 +179,17 @@ class ServerManager {
     }
   }
 
-  async checkApiHealth(apiRoot = 'http://localhost:4000') {
+  async checkApiHealth(apiRoot = 'http://localhost:4000', timeoutMs = 5000) {
+    const url = `${String(apiRoot || '').replace(/\/+$/, '')}/health`
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const res = await fetch(`${apiRoot.replace(/\/+$/, '')}/health`)
+      const res = await fetch(url, { signal: controller.signal })
+      clearTimeout(timeoutId)
       const data = await res.json()
       return { success: true, healthy: data.ok === true }
     } catch (error) {
+      clearTimeout(timeoutId)
       return { success: false, healthy: false, error: error.message }
     }
   }

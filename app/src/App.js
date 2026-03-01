@@ -7,6 +7,15 @@ import NavigationVM, { navigationVM } from "./components/navigation/NavigationVM
 import { Input } from './components/utils/Input.js';
 import { Button } from './components/utils/Button.js';
 
+/** Shared indigo spinner for boot screens (gray/white backgrounds) */
+function BootSpinner(props = {}) {
+  const cls = props.class || 'h-6 w-6 text-indigo-600'
+  return Row({ tagType: 'svg', attributes: { xmlns: 'http://www.w3.org/2000/svg', fill: 'none', viewBox: '0 0 24 24', 'aria-hidden': 'true' }, class: `animate-spin ${cls}` }, [
+    Row({ tagType: 'circle', attributes: { cx: '12', cy: '12', r: '10', stroke: 'currentColor', 'stroke-width': '4', class: 'opacity-25' } }),
+    Row({ tagType: 'path', attributes: { fill: 'currentColor', d: 'M4 12a8 8 0 018-8v8z', class: 'opacity-75' } })
+  ])
+}
+
 export function App() {
   const main = Row({ tagType: 'div', class: 'relative h-full min-h-0 flex flex-col' });
 
@@ -20,7 +29,11 @@ export function App() {
     const licenseRequired = startupMode === 'server' && setupConfig?.licenseRequired === true
     const clientNeedsConnection = startupMode === 'client' && setupConfig?.clientConnected !== true
     if (setupLoading) {
-      return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 text-gray-600' }, 'Loading setup...')
+      return Row({ class: 'h-[100dvh] w-full flex flex-col items-center justify-center gap-4 bg-gray-50', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
+        Row({ tagType: 'div', class: 'text-xl font-bold text-indigo-700' }, 'PharmaSuit'),
+        BootSpinner({ class: 'h-8 w-8 text-indigo-600' }),
+        Row({ tagType: 'div', class: 'text-sm text-gray-500' }, 'Preparing PharmaSuit…')
+      ])
     }
     if (!startupMode) return StartupModeLayout(props)
     if (!setupDone) return SetupLayout(props, { forcedMode: startupMode })
@@ -33,12 +46,19 @@ export function App() {
     return MainLayout(props, main, router);
   };
 
-  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'auth'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'startup-error', 'startup-error-details-open', 'startup-progress', 'startup-progress-percent', 'startup-selected-mode', 'startup-loading-expanded', 'auth'], viewModel: navigationVM }, render);
   
 }
 
 function StartupModeLayout(props) {
   const loading = props.viewModel.getState('setup-loading')
+  const startupError = props.viewModel.getState('startup-error')
+  const startupProgress = props.viewModel.getState('startup-progress')
+  const startupPercent = props.viewModel.getState('startup-progress-percent') ?? 0
+  const selectedMode = props.viewModel.getState('startup-selected-mode')
+  const loadingExpanded = props.viewModel.getState('startup-loading-expanded')
+  const lastMode = props.viewModel.getLastUsedMode()
+
   const chooseMode = async (mode) => {
     if (loading) return
     await props.viewModel.chooseStartupMode(mode)
@@ -47,40 +67,137 @@ function StartupModeLayout(props) {
   const onCancel = async () => {
     try {
       await window.ipcRenderer.invoke('app:quit')
-    } catch (_) {
-      // no-op fallback if quit IPC is unavailable
-    }
+    } catch (_) {}
   }
 
+  // ── Loading state: server/client starting (IPC in-flight) ──────────────────
+  if (loading) {
+    const label = startupProgress || 'Starting up...'
+    const isClient = selectedMode === 'client'
+    const showCompact = isClient && !loadingExpanded
+
+    // Compact loading (client, first ~400ms): minimal overlay so it feels fast
+    if (showCompact) {
+      return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
+        Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
+          Row({ class: 'px-8 py-6 flex items-center gap-3' }, [
+            BootSpinner({ class: 'h-5 w-5 text-indigo-600 shrink-0' }),
+            Row({ class: 'text-sm text-gray-600' }, 'Connecting…')
+          ])
+        ])
+      ])
+    }
+
+    // Full loading: progress bar, expectations, accessible
+    return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
+      Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
+        Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
+          Row({ class: 'flex items-center gap-2 mb-2 text-indigo-700' }, [
+            Row({ tagType: 'ion-icon', attributes: { name: 'rocket-outline' }, class: 'text-2xl' }),
+            Row({ tagType: 'h1', class: 'text-2xl font-bold' }, isClient ? 'Connecting…' : 'Starting…')
+          ]),
+          Row({ class: 'text-sm text-gray-500 mb-2', attributes: { 'aria-live': 'polite' } }, label),
+          isClient ? null : Row({ class: 'text-xs text-gray-400' }, 'This may take a few moments on first run.'),
+          Row({ class: 'mt-2 w-full h-2 bg-gray-100 rounded overflow-hidden' }, [
+            Row({ class: 'h-2 bg-indigo-600 rounded', attributes: { style: `width:${startupPercent}%`, role: 'progressbar', 'aria-valuenow': startupPercent, 'aria-valuemin': 0, 'aria-valuemax': 100 } })
+          ])
+        ]),
+        Row({ class: 'px-8 py-8 flex flex-col items-center gap-4' }, [
+          Row({ tagType: 'div', class: 'flex items-center gap-3' }, [
+            BootSpinner({ class: 'h-6 w-6 text-indigo-600' }),
+            Row({ class: 'text-sm text-gray-600' }, label)
+          ])
+        ])
+      ])
+    ])
+  }
+
+  // ── Error state: startup:select-mode returned success:false ────────────────
+  if (startupError) {
+    const detailsOpen = props.viewModel.getState('startup-error-details-open') === true
+    const toggleDetails = () => props.viewModel.updateState('startup-error-details-open', !detailsOpen)
+    const errorMode = startupError.mode === 'client' ? 'Client' : 'Server'
+    const codeLabels = {
+      SERVER_START_FAILED: 'The server could not start. This is often caused by port conflicts or missing dependencies.',
+      API_NOT_READY: 'The server started but did not respond in time. It may still be initializing, or something is blocking it.',
+      LICENSE_REQUIRED: 'License validation is required before you can continue.',
+      EXCEPTION: 'Something went wrong. You can retry or choose a different mode.',
+    }
+    const primaryMessage = codeLabels[startupError.code] || 'Something went wrong. You can retry or choose a different mode.'
+    const techDetail = startupError.message || ''
+    return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2', attributes: { role: 'alert' } }, [
+      Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
+        Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
+          Row({ class: 'flex items-center gap-2 mb-2 text-red-600' }, [
+            Row({ tagType: 'ion-icon', attributes: { name: 'alert-circle-outline' }, class: 'text-2xl' }),
+            Row({ tagType: 'h1', class: 'text-2xl font-bold' }, `${errorMode} Mode Failed`)
+          ]),
+          Row({ class: 'text-sm text-gray-600' }, 'Could not start in the selected mode.')
+        ]),
+        Row({ class: 'px-8 py-6 flex flex-col gap-3' }, [
+          Row({ class: 'text-sm text-gray-800 font-medium' }, primaryMessage),
+          techDetail ? Row({ class: 'flex flex-col gap-1' }, [
+            Row({
+              tagType: 'button',
+              class: 'text-xs text-indigo-600 hover:text-indigo-700 text-left',
+              events: { click: toggleDetails }
+            }, detailsOpen ? 'Hide technical details' : 'Show technical details'),
+            detailsOpen ? Row({ class: 'text-xs text-gray-400 font-mono bg-gray-50 rounded p-2 break-all' }, techDetail) : null
+          ]) : null,
+          Row({ class: 'text-xs text-gray-500' }, 'You can retry or switch to a different mode.')
+        ]),
+        Row({ class: 'px-8 py-4 border-t border-gray-100 flex items-center justify-between gap-2' }, [
+          Button({ variant: 'outline', onClick: onCancel }, 'Exit'),
+          Row({ class: 'flex gap-2' }, [
+            Button({
+              variant: 'outline',
+              onClick: () => props.viewModel.updateState('startup-error', null)
+            }, 'Change Mode'),
+            Button({
+              variant: 'primary',
+              onClick: () => props.viewModel.retryStartupMode()
+            }, 'Retry')
+          ])
+        ])
+      ])
+    ])
+  }
+
+  // ── Normal mode-selection dialog ───────────────────────────────────────────
   return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
       Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
-        Row({ class: 'flex items-center gap-2 mb-2 text-indigo-700' }, [
+        Row({ class: 'flex items-center gap-2 mb-1 text-indigo-700' }, [
           Row({ tagType: 'ion-icon', attributes: { name: 'rocket-outline' }, class: 'text-2xl' }),
-          Row({ tagType: 'h1', class: 'text-2xl font-bold' }, 'Choose Runtime Mode')
+          Row({ tagType: 'h1', class: 'text-2xl font-bold' }, 'PharmaSuit')
         ]),
+        Row({ class: 'text-sm font-medium text-gray-700 mb-1' }, 'Choose Runtime Mode'),
         Row({ class: 'text-sm text-gray-600' }, 'Select how to run this session. You can choose again after logout.')
       ]),
-      Row({ class: 'px-8 py-6 flex flex-col gap-3' }, [
-        Row({ class: 'text-sm text-gray-700' }, 'Server mode hosts local API/database and checks license before login.'),
-        Row({ class: 'text-sm text-gray-700' }, 'Client mode connects to a remote server URL and logs in after connection succeeds.')
+      Row({ class: 'px-8 py-6 flex flex-col gap-4' }, [
+        Row({ class: `rounded-xl border-2 p-4 cursor-pointer transition-colors ${lastMode === 'server' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'}`, events: { click: () => chooseMode('server') } }, [
+          Row({ class: 'flex items-center gap-3 mb-1' }, [
+            Row({ tagType: 'ion-icon', attributes: { name: 'server-outline' }, class: `text-xl ${lastMode === 'server' ? 'text-indigo-600' : 'text-gray-500'}` }),
+            Row({ tagType: 'span', class: `font-semibold ${lastMode === 'server' ? 'text-indigo-700' : 'text-gray-800'}` }, [
+              'Server',
+              lastMode === 'server' ? Row({ tagType: 'span', class: 'ml-2 text-xs font-normal text-indigo-500' }, '(last used)') : null
+            ])
+          ]),
+          Row({ class: 'text-sm text-gray-500 ml-8' }, 'Run this computer as the main server. Hosts the local API and database. License is validated before login.')
+        ]),
+        Row({ class: `rounded-xl border-2 p-4 cursor-pointer transition-colors ${lastMode === 'client' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'}`, events: { click: () => chooseMode('client') } }, [
+          Row({ class: 'flex items-center gap-3 mb-1' }, [
+            Row({ tagType: 'ion-icon', attributes: { name: 'cloud-upload-outline' }, class: `text-xl ${lastMode === 'client' ? 'text-indigo-600' : 'text-gray-500'}` }),
+            Row({ tagType: 'span', class: `font-semibold ${lastMode === 'client' ? 'text-indigo-700' : 'text-gray-800'}` }, [
+              'Client',
+              lastMode === 'client' ? Row({ tagType: 'span', class: 'ml-2 text-xs font-normal text-indigo-500' }, '(last used)') : null
+            ])
+          ]),
+          Row({ class: 'text-sm text-gray-500 ml-8' }, 'Connect to an existing server. You will provide the server URL.')
+        ])
       ]),
       Row({ class: 'px-8 py-4 border-t border-gray-100 flex items-center justify-end gap-2' }, [
-        Button({
-          variant: 'outline',
-          onClick: onCancel,
-          disabled: loading
-        }, 'Exit'),
-        Button({
-          variant: 'outline',
-          onClick: () => chooseMode('client'),
-          disabled: loading
-        }, 'Client'),
-        Button({
-          variant: 'primary',
-          onClick: () => chooseMode('server'),
-          disabled: loading
-        }, 'Server')
+        Button({ variant: 'outline', onClick: onCancel }, 'Exit')
       ])
     ])
   ])

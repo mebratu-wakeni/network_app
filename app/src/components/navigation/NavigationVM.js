@@ -38,6 +38,14 @@ class NavigationVM extends ViewModel {
     this.setState('setup-config', null);
     this.setState('setup-defaults', null);
     this.setState('setup-error', null);
+    // startup-error: set when startup:select-mode IPC returns success:false
+    this.setState('startup-error', null);
+    // startup-progress: label from main-process publishBootProgress during server start
+    this.setState('startup-progress', null);
+    this.setState('startup-progress-percent', 0);
+    this.setState('startup-selected-mode', null);
+    this.setState('startup-loading-expanded', false);
+    this.setState('startup-error-details-open', false);
 
     // Auth state
     this.setState('auth', {
@@ -46,12 +54,23 @@ class NavigationVM extends ViewModel {
       loading: false,
       error: null,
       token: null,
-      // prefill for dev convenience; remove in prod
       loginForm: {
-        username: 'admin',
-        password: 'adminuser'
+        username: '',
+        password: ''
       }
     })
+
+    // Listen for boot-progress events pushed by the main process during
+    // startup:select-mode so the UI can show real-time server start progress.
+    if (window?.ipcRenderer?.on) {
+      window.ipcRenderer.on('main-process-message', (_event, message) => {
+        if (!message || message.type !== 'boot-progress') return
+        const label = typeof message.label === 'string' ? message.label : ''
+        if (label) this.updateState('startup-progress', label)
+        const percent = Number(message.percent)
+        if (!Number.isNaN(percent)) this.updateState('startup-progress-percent', percent)
+      })
+    }
   }
 
   // Update the login form fields
@@ -148,6 +167,13 @@ class NavigationVM extends ViewModel {
     }
   }
 
+  // Returns the last saved mode from setup-config (used to pre-select in the dialog).
+  getLastUsedMode() {
+    const config = this.getState('setup-config')
+    const m = config?.mode
+    return m === 'client' || m === 'server' ? m : null
+  }
+
   async saveSetupConfig(payload) {
     this.updateState('setup-loading', true)
     this.updateState('setup-error', null)
@@ -185,11 +211,31 @@ class NavigationVM extends ViewModel {
     const selectedMode = mode === 'client' ? 'client' : 'server'
     this.updateState('setup-loading', true)
     this.updateState('setup-error', null)
-    this.updateState('startup-mode', selectedMode)
+    this.updateState('startup-error', null)
+    this.updateState('startup-error-details-open', false)
+    this.updateState('startup-progress', null)
+    this.updateState('startup-progress-percent', 0)
+    this.updateState('startup-selected-mode', selectedMode)
+    // Server startup can take several seconds — show full loading immediately.
+    // Client is usually fast — show compact loading for 400ms, then expand.
+    if (selectedMode === 'server') {
+      this.updateState('startup-loading-expanded', true)
+    } else {
+      this.updateState('startup-loading-expanded', false)
+      setTimeout(() => {
+        if (this.getState('setup-loading')) this.updateState('startup-loading-expanded', true)
+      }, 400)
+    }
+    // Do NOT set startup-mode here — only advance it on success so that
+    // StartupModeLayout stays visible and can display loading/error states.
     try {
       const res = await window.ipcRenderer.invoke('startup:select-mode', { mode: selectedMode })
       if (!res?.success) {
-        this.updateState('setup-error', res?.error || 'Failed to activate selected mode')
+        this.updateState('startup-error', {
+          message: res?.error || 'Failed to activate selected mode',
+          code: res?.code || 'UNKNOWN',
+          mode: selectedMode
+        })
         return
       }
 
@@ -200,11 +246,29 @@ class NavigationVM extends ViewModel {
       try {
         if (config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', config.apiBaseUrl)
       } catch (_) {}
+
+      // Advance to the next screen only after everything is confirmed OK.
+      this.updateState('startup-mode', selectedMode)
     } catch (e) {
-      this.updateState('setup-error', e.message || 'Failed to activate selected mode')
+      this.updateState('startup-error', {
+        message: e.message || 'Failed to activate selected mode',
+        code: 'EXCEPTION',
+        mode: selectedMode
+      })
     } finally {
       this.updateState('setup-loading', false)
+      this.updateState('startup-progress', null)
+      this.updateState('startup-progress-percent', 0)
+      this.updateState('startup-loading-expanded', false)
     }
+  }
+
+  async retryStartupMode() {
+    const err = this.getState('startup-error')
+    const mode = err?.mode
+    if (!mode) return
+    this.updateState('startup-error', null)
+    await this.chooseStartupMode(mode)
   }
 
   normalizeSetupConfig(rawConfig) {
