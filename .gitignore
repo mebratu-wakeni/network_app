@@ -10,6 +10,8 @@ postgres-data
 node_modules/
 dist/
 build/
+# App icon for electron-builder (exception)
+!app/build/
 
 # Logs
 logs

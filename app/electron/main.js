@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, ipcMain, protocol } from 'electron'
+import { app, BrowserWindow, nativeImage, ipcMain, protocol, dialog } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -74,32 +74,127 @@ let latestBootMessage = null
 const APP_NAME = 'PharmaSuitLAN'
 const DB_FILE_NAME = 'pharmasuit_lan.db'
 
-// Ensure userData path is consistent between dev (name='app') and packaged
-// (productName='YourAppName') builds by locking the app name before any
-// app.getPath() call.  Without this, every packaged run is treated as a
-// first-time install because the config is in a different directory.
+// Ensure userData path is consistent between dev and packaged builds.
 app.setName(APP_NAME)
 
+/**
+ * Canonical app data root. Uses appData + APP_NAME so dev and packaged
+ * always use the same path (app.getName() can differ in dev, causing different userData).
+ */
+function getAppDataRoot() {
+  return path.join(app.getPath('appData'), APP_NAME)
+}
+
+// ── Bootstrap: pointer to data directory (survives app upgrades) ────────────
+// Lives in app data root (outside app bundle). Created once at first init.
+// Config and DB live in dataDirectory (user-chosen, outside app).
+
+function getBootstrapPath() {
+  return path.join(getAppDataRoot(), 'bootstrap.json')
+}
+
+function loadBootstrap() {
+  try {
+    const p = getBootstrapPath()
+    if (!fs.existsSync(p)) return null
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf8'))
+    const dir = parsed?.dataDirectory
+    if (typeof dir === 'string' && dir.trim()) {
+      const resolved = path.resolve(dir)
+      const parentExists = fs.existsSync(path.dirname(resolved))
+      const isUserData = resolved === path.resolve(getAppDataRoot())
+      if (parentExists || isUserData) return { dataDirectory: resolved }
+    }
+    return null
+  } catch (_) {
+    return null
+  }
+}
+
+/** Write bootstrap only when user explicitly sets data directory. Never overwrite on upgrade. */
+function saveBootstrap(dataDirectory) {
+  if (!dataDirectory || typeof dataDirectory !== 'string') return
+  const resolved = path.resolve(dataDirectory)
+  const p = getBootstrapPath()
+  fs.mkdirSync(path.dirname(p), { recursive: true })
+  fs.writeFileSync(p, JSON.stringify({
+    dataDirectory: resolved,
+    version: 1,
+    createdAt: new Date().toISOString()
+  }, null, 2), 'utf8')
+}
+
+/**
+ * Resolve data directory: user-chosen location for config and DB (outside app).
+ * Returns null if no bootstrap (first run, needs setup).
+ */
+function getDataDirectory() {
+  const boot = loadBootstrap()
+  if (boot?.dataDirectory) return boot.dataDirectory
+  const appDataRoot = getAppDataRoot()
+  const legacyDataDir = path.join(appDataRoot, 'data')
+  // Migration 1: config in app data root (old packaged layout)
+  const legacyConfigInUserData = path.join(appDataRoot, 'runtime-config.json')
+  if (fs.existsSync(legacyConfigInUserData)) {
+    saveBootstrap(legacyDataDir)
+    try {
+      fs.mkdirSync(legacyDataDir, { recursive: true })
+      const newConfigPath = path.join(legacyDataDir, 'runtime-config.json')
+      if (!fs.existsSync(newConfigPath)) fs.copyFileSync(legacyConfigInUserData, newConfigPath)
+    } catch (_) {}
+    return legacyDataDir
+  }
+  // Migration 2: config in api/data (old dev layout) — move to userData so packaged finds it
+  const legacyDevDir = path.dirname(getLegacyDbPath())
+  const legacyDevConfigPath = path.join(legacyDevDir, 'runtime-config.json')
+  if (fs.existsSync(legacyDevConfigPath)) {
+    try {
+      fs.mkdirSync(legacyDataDir, { recursive: true })
+      const newDbPath = path.join(legacyDataDir, DB_FILE_NAME)
+      const legacyDevDb = path.join(legacyDevDir, DB_FILE_NAME)
+      if (fs.existsSync(legacyDevDb) && !fs.existsSync(newDbPath)) {
+        fs.copyFileSync(legacyDevDb, newDbPath)
+      }
+      const newConfigPath = path.join(legacyDataDir, 'runtime-config.json')
+      if (!fs.existsSync(newConfigPath)) {
+        const cfg = JSON.parse(fs.readFileSync(legacyDevConfigPath, 'utf8'))
+        if (cfg?.server) {
+          cfg.server = { ...cfg.server, dbDirectory: legacyDataDir, dbFile: newDbPath }
+        }
+        if (cfg?.profiles?.server?.server) {
+          cfg.profiles.server.server = { ...cfg.profiles.server.server, dbDirectory: legacyDataDir, dbFile: newDbPath }
+        }
+        fs.writeFileSync(newConfigPath, JSON.stringify(cfg, null, 2), 'utf8')
+      }
+      saveBootstrap(legacyDataDir)
+    } catch (_) {}
+    return legacyDataDir
+  }
+  return null
+}
+
+/**
+ * Fallback data directory: same for dev and packaged so setup in dev
+ * carries over seamlessly to packaged.
+ */
+function getFallbackDataDirectory() {
+  return getAppDataRoot()
+}
+
 function getDefaultDbDirectory() {
-  if (VITE_DEV_SERVER_URL) {
-    return path.dirname(getLegacyDbPath())
-  }
-  if (process.platform === 'win32') {
-    const programData = process.env.ProgramData || 'C:\\ProgramData'
-    return path.join(programData, APP_NAME, 'data')
-  }
-  if (process.platform === 'darwin') {
-    return path.join(app.getPath('appData'), APP_NAME, 'data')
-  }
-  return path.join(app.getPath('appData'), APP_NAME, 'data')
+  const dataDir = getDataDirectory()
+  if (dataDir) return dataDir // bootstrap dataDirectory is the db folder (user-chosen)
+  return path.join(getFallbackDataDirectory(), 'data')
 }
 
 function getRuntimeConfigPath() {
-  return path.join(app.getPath('userData'), 'runtime-config.json')
+  const dataDir = getDataDirectory()
+  if (dataDir) return path.join(dataDir, 'runtime-config.json')
+  return path.join(getFallbackDataDirectory(), 'runtime-config.json')
 }
 
 function getMachineFingerprintPath() {
-  return path.join(app.getPath('userData'), 'machine-fingerprint.json')
+  return path.join(getAppDataRoot(), 'machine-fingerprint.json')
 }
 
 function getLegacyDbPath() {
@@ -160,18 +255,37 @@ function loadRuntimeConfig() {
   try {
     const cfgPath = getRuntimeConfigPath()
     if (!fs.existsSync(cfgPath)) {
-      // One-time migration: before app.setName() was added, dev builds saved
-      // config under the package.json "name" ('app') directory.  Copy it to the
-      // canonical location so existing setups survive the upgrade.
-      const legacyCfgPath = path.join(app.getPath('appData'), 'app', 'runtime-config.json')
-      if (fs.existsSync(legacyCfgPath)) {
+      // One-time migration: dev/packaged may have saved config under different app names.
+      // Copy to canonical getAppDataRoot() so all modes use the same DB and config.
+      const appData = app.getPath('appData')
+      const legacyPaths = [
+        path.join(appData, 'app', 'runtime-config.json'),
+        path.join(appData, 'Electron', 'runtime-config.json')
+      ]
+      const canonicalDataDir = path.join(getAppDataRoot(), 'data')
+      const canonicalDbFile = path.join(canonicalDataDir, DB_FILE_NAME)
+      for (const legacyCfgPath of legacyPaths) {
+        if (!fs.existsSync(legacyCfgPath)) continue
         try {
           fs.mkdirSync(path.dirname(cfgPath), { recursive: true })
-          fs.copyFileSync(legacyCfgPath, cfgPath)
-          const migrated = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
-          return normalizeRuntimeConfig(migrated && typeof migrated === 'object' ? migrated : { setupCompleted: false })
+          fs.mkdirSync(canonicalDataDir, { recursive: true })
+          const migrated = JSON.parse(fs.readFileSync(legacyCfgPath, 'utf8'))
+          const oldDbFile = migrated?.server?.dbFile || path.join(path.dirname(legacyCfgPath), 'data', DB_FILE_NAME)
+          if (typeof oldDbFile === 'string' && fs.existsSync(oldDbFile) && !fs.existsSync(canonicalDbFile)) {
+            fs.copyFileSync(oldDbFile, canonicalDbFile)
+          }
+          const updated = migrated && typeof migrated === 'object' ? { ...migrated } : {}
+          if (updated.server) {
+            updated.server = { ...updated.server, dbDirectory: canonicalDataDir, dbFile: canonicalDbFile }
+          }
+          if (updated.profiles?.server?.server) {
+            updated.profiles.server.server = { ...updated.profiles.server.server, dbDirectory: canonicalDataDir, dbFile: canonicalDbFile }
+          }
+          fs.writeFileSync(cfgPath, JSON.stringify(updated, null, 2), 'utf8')
+          saveBootstrap(canonicalDataDir)
+          return normalizeRuntimeConfig(updated)
         } catch (_) {
-          // migration failed — fall through to a fresh config
+          // migration failed — try next legacy path
         }
       }
       return normalizeRuntimeConfig({ setupCompleted: false })
@@ -375,15 +489,11 @@ function activateModeConfig(initialConfig, selectedMode) {
   }
 
   const configuredServer = serverProfile?.server || loaded?.server || null
-  const legacyDbFile = getLegacyDbPath()
   const defaultDbFile = path.join(getDefaultDbDirectory(), DB_FILE_NAME)
   const configuredDbFile = configuredServer?.dbFile || null
   const hasSavedConfig = !!(configuredDbFile && (serverProfile?.setupCompleted === true || loaded?.setupCompleted === true))
-  // In packaged app, never use legacy path (Resources/api/data) — it's inside the
-  // bundle and wrong for persisted data. Use default (userData) instead.
-  const dbCandidates = app.isPackaged
-    ? [configuredDbFile, defaultDbFile]
-    : [configuredDbFile, legacyDbFile, defaultDbFile]
+  // Dev and packaged use same candidates: configured path or default (userData). No legacy api/data.
+  const dbCandidates = [configuredDbFile, defaultDbFile]
   // When setup is done and configured path exists, use it. Otherwise discover:
   // prefer an existing DB at default path over creating one at a stale configured path.
   const configuredExists = configuredDbFile && (() => { try { return fs.existsSync(configuredDbFile) } catch (_) { return false } })()
@@ -663,17 +773,27 @@ ipcMain.handle('server:check-dev-status', async () => {
   return await serverManager.checkDevServerStatus()
 })
 
+ipcMain.handle('setup:choose-data-directory', async () => {
+  const result = await dialog.showOpenDialog(win || null, {
+    properties: ['openDirectory'],
+    title: 'Choose data directory',
+    message: 'Select a folder for config and database storage. This folder should persist across app updates.'
+  })
+  if (result.canceled || !result.filePaths?.length) return { success: false, path: null }
+  return { success: true, path: result.filePaths[0] }
+})
+
 ipcMain.handle('setup:get-config', async () => {
   const loaded = runtimeConfig || loadRuntimeConfig()
   const defaultDir = getDefaultDbDirectory()
   try { fs.mkdirSync(defaultDir, { recursive: true }) } catch (_) {}
   const normalizedConfig = resolveConfigByDbPresence(loaded)
-  // Avoid blocking initial renderer mount on network-dependent license checks.
-  // License state can still be resolved later by explicit setup/startup flows.
+  // Pass through persisted license status when available (e.g. after setup).
+  // Avoid blocking on network calls — license state is resolved in setup/startup flows.
   const effectiveConfig = {
     ...normalizedConfig,
-    licenseRequired: false,
-    licenseStatus: null
+    licenseRequired: normalizedConfig?.licenseRequired === true,
+    licenseStatus: normalizedConfig?.licenseStatus ?? null
   }
   const fingerprint = getDeviceFingerprint()
   // Persist normalized setup paths so restart behavior is deterministic.
@@ -770,6 +890,8 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
   if (mode === 'server') {
     const dbDirectory = path.resolve(payload?.dbDirectory || getDefaultDbDirectory())
     fs.mkdirSync(dbDirectory, { recursive: true })
+    // Persist data directory in bootstrap (survives app upgrades, never overwritten)
+    saveBootstrap(dbDirectory)
     const dbFile = path.join(dbDirectory, DB_FILE_NAME)
     const port = Number(payload?.port || 4000)
     const deviceFingerprint = getDeviceFingerprint()
@@ -830,6 +952,11 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
         }
       }
     }
+
+    // Re-fetch license status to confirm it's in the DB and include in config
+    const verifiedStatus = await licenseManager.getStatus(deviceFingerprint)
+    config.licenseRequired = !verifiedStatus?.valid
+    config.licenseStatus = verifiedStatus || null
 
     saveRuntimeConfig(config)
     applyRuntimeConfig(config)
@@ -945,5 +1072,6 @@ app.on('before-quit', async () => {
 
 app.whenReady().then(() => {
   registerRendererProtocol()
+  // Do not auto-start server. User must choose mode first, then we validate DB/license.
   createMainWindow()
 })

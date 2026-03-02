@@ -4,9 +4,11 @@ import { LicenseRepository } from './license.repository.js'
 import { LicenseService } from './license.service.js'
 import { LicenseController } from './license.controller.js'
 import { activateLicenseSchema, validate } from './license.schema.js'
+import { SettingsRepository } from '../settings/settings.repository.js'
 
-const repository = new LicenseRepository(knex)
-const service = new LicenseService(repository)
+const licenseRepository = new LicenseRepository(knex)
+const settingsRepository = new SettingsRepository(knex)
+const service = new LicenseService(licenseRepository, settingsRepository)
 const controller = new LicenseController(service)
 
 const router = Router()

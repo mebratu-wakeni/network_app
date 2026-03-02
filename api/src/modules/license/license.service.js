@@ -1,6 +1,7 @@
 export class LicenseService {
-  constructor(repository) {
+  constructor(repository, settingsRepository) {
     this.repository = repository
+    this.settingsRepository = settingsRepository
   }
 
   getScriptUrl() {
@@ -105,11 +106,32 @@ export class LicenseService {
       installationKey: payload.installation_key || ''
     }
 
-    const response = await fetch(scriptUrl, {
+    // Apps Script does not support OPTIONS; Content-Type: application/json triggers
+    // a CORS preflight which fails. Use text/plain to skip preflight.
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 25000)
+    const fetchOptions = {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+        'User-Agent': 'PharmaSuitLAN/1.0 (License Activation)'
+      },
       body: JSON.stringify(requestBody)
-    })
+    }
+    let response
+    try {
+      response = await fetch(scriptUrl, fetchOptions)
+    } catch (err) {
+      clearTimeout(timeoutId)
+      const msg = err?.message || String(err)
+      if (msg.includes('abort') || err?.name === 'AbortError') {
+        throw new Error('License server request timed out. Check internet connection and retry.')
+      }
+      throw new Error(`License server unreachable: ${msg}. Check internet and Google Script URL.`)
+    }
+    clearTimeout(timeoutId)
 
     let json
     try {
@@ -149,6 +171,18 @@ export class LicenseService {
         })
       }, trx)
     })
+
+    // Save company name and contact phone to system settings for use in receipts, etc.
+    if (this.settingsRepository) {
+      const companyName = parsed.companyName || payload.company_name || ''
+      const companyPhone = parsed.companyPhone || payload.company_phone || ''
+      if (companyName || companyPhone) {
+        await this.settingsRepository.setMany({
+          company_name: companyName,
+          company_phone: companyPhone
+        })
+      }
+    }
 
     return {
       ok: true,

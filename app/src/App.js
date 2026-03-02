@@ -396,14 +396,25 @@ function SetupLayout(props, options = {}) {
       ])
     }
     if (currentStep === 'Server') {
+      const onBrowse = async () => {
+        try {
+          const res = await window.ipcRenderer.invoke('setup:choose-data-directory')
+          if (res?.success && res?.path) props.setLocalState('setup-db-dir', res.path)
+        } catch (_) {}
+      }
       return Row({ class: 'flex flex-col gap-3' }, [
         Row({}, [
-          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Database directory'),
-          Input({
-            value: dbDir,
-            onChange: (e) => props.setLocalState('setup-db-dir', e.target.value),
-            placeholder: 'Path to directory where pharmasuit_lan.db will be stored'
-          })
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Data directory'),
+          Row({ class: 'text-xs text-gray-500 mb-1' }, 'Config and database storage location (outside the app). Choose a folder that persists across app updates.'),
+          Row({ class: 'flex gap-2' }, [
+            Input({
+              value: dbDir,
+              onChange: (e) => props.setLocalState('setup-db-dir', e.target.value),
+              placeholder: 'e.g. /Users/you/Documents/PharmaSuitData',
+              class: 'flex-1 min-w-0'
+            }),
+            Button({ variant: 'outline', onClick: onBrowse }, 'Browse')
+          ])
         ]),
         Row({}, [
           Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Server port'),

@@ -18,8 +18,11 @@ export const registerUserSchema = z.object({
  */
 export const updateUserSchema = z.object({
   display_name: z.string().min(1, 'Display name cannot be empty').trim().optional(),
-  // email: z.string().email('Invalid email').optional(),
-  is_active: z.boolean().optional()
+  email: z.preprocess(
+    (v) => (v === '' || v == null) ? undefined : v,
+    z.string().email('Invalid email').optional()
+  ),
+  is_active: z.coerce.boolean().optional()
 }).refine(
   (data) => Object.keys(data).length > 0,
   { message: 'At least one field must be provided for update' }

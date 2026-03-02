@@ -17,6 +17,8 @@ export function createApp() {
   
   // Add localhost origins
   allowedOrigins.push('http://localhost:5173', 'http://127.0.0.1:5173')
+  // Electron packaged app uses app:// protocol (custom scheme)
+  allowedOrigins.push('app://local')
   
   // Add LAN IP origins (common Electron/desktop app ports)
   if (serverIP && serverIP !== '127.0.0.1') {
