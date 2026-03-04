@@ -22,6 +22,7 @@ import { ReportsIpcHandlers } from './reports/ipcHandlers.js'
 import LicenseManager from './license/license.js'
 import { LicenseIpcHandlers } from './license/ipcHandlers.js'
 import { setToken } from './config/authManager.js'
+import ngrok from '@ngrok/ngrok'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -366,13 +367,81 @@ function getApiRootForHealth() {
   return apiBase.replace(/\/api\/?$/i, '')
 }
 
+const IPv4_REGEX = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/
+function isValidIPv4(addr) {
+  if (!addr || typeof addr !== 'string') return false
+  if (!IPv4_REGEX.test(addr)) return false
+  return addr.split('.').every((octet) => parseInt(octet, 10) <= 255)
+}
+
 function getLanIPv4Addresses() {
   const interfaces = os.networkInterfaces()
   const ips = Object.values(interfaces)
     .flat()
-    .filter((i) => i && i.family === 'IPv4' && !i.internal && i.address)
+    .filter((i) => i && (i.family === 'IPv4' || i.family === 4) && !i.internal && i.address)
     .map((i) => i.address)
+    .filter(isValidIPv4)
   return [...new Set(ips)]
+}
+
+/** Internet tunnel (ngrok) for remote client access */
+let tunnelListener = null
+
+function getNgrokAuthToken() {
+  if (process.env.NGROK_AUTHTOKEN) return process.env.NGROK_AUTHTOKEN
+  if (process.env.NGROK_AUTH_TOKEN) return process.env.NGROK_AUTH_TOKEN
+  const apiEnvPath = path.join(process.resourcesPath || '', 'api', '.env')
+  const devEnvPath = path.join(path.dirname(path.dirname(__dirname)), 'api', '.env')
+  for (const envPath of [apiEnvPath, devEnvPath]) {
+    try {
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf8')
+        const m = content.match(/NGROK_AUTH(?:TOKEN|_TOKEN)\s*=\s*(.+)/)
+        if (m) return m[1].trim().replace(/^["']|["']$/g, '')
+      }
+    } catch (_) {}
+  }
+  return null
+}
+
+async function startTunnel(port) {
+  if (tunnelListener) return { success: true, publicUrl: tunnelListener.url(), alreadyRunning: true }
+  const token = getNgrokAuthToken()
+  if (!token) {
+    return {
+      success: false,
+      error: 'NGROK_AUTHTOKEN not set. Add NGROK_AUTHTOKEN=... to api/.env or your environment. Get a free token at https://ngrok.com'
+    }
+  }
+  try {
+    tunnelListener = await ngrok.forward({
+      addr: port,
+      authtoken: token
+    })
+    const url = tunnelListener.url()
+    console.log('[tunnel] Internet URL:', url)
+    return { success: true, publicUrl: url }
+  } catch (err) {
+    tunnelListener = null
+    const msg = err?.message || String(err)
+    return { success: false, error: msg }
+  }
+}
+
+async function stopTunnel() {
+  if (!tunnelListener) return { success: true }
+  try {
+    await tunnelListener.close()
+  } catch (_) {}
+  tunnelListener = null
+  return { success: true }
+}
+
+function getTunnelStatus() {
+  return {
+    active: !!tunnelListener,
+    publicUrl: tunnelListener?.url?.() ?? null
+  }
 }
 
 function normalizeLicenseActivationFailure(errorMessage) {
@@ -753,14 +822,31 @@ ipcMain.handle('server:connection-info', async () => {
   const port = Number(cfg?.server?.port || process.env.PORT || 4000)
   const localhostUrl = `http://localhost:${port}`
   const lanUrls = getLanIPv4Addresses().map((ip) => `http://${ip}:${port}`)
+  const tunnelStatus = getTunnelStatus()
   return {
     success: true,
     mode,
     port,
     localhostUrl,
     apiRoot: `${localhostUrl}/api`,
-    lanUrls
+    lanUrls,
+    publicUrl: tunnelStatus.publicUrl,
+    tunnelActive: tunnelStatus.active
   }
+})
+
+ipcMain.handle('server:tunnel-start', async () => {
+  const cfg = runtimeConfig || loadRuntimeConfig()
+  const port = Number(cfg?.server?.port || process.env.PORT || 4000)
+  return await startTunnel(port)
+})
+
+ipcMain.handle('server:tunnel-stop', async () => {
+  return await stopTunnel()
+})
+
+ipcMain.handle('server:tunnel-status', () => {
+  return getTunnelStatus()
 })
 
 
@@ -1066,6 +1152,7 @@ app.on('activate', async () => {
 })
 
 app.on('before-quit', async () => {
+  await stopTunnel()
   // Optionally stop services when app quits
   // await serverManager.stopServices()
 })

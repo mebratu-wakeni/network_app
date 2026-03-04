@@ -14,6 +14,8 @@ export default function ServerManagerUI() {
     props.ensureStateKey('lastUpdated');
     props.ensureStateKey('mode');
     props.ensureStateKey('dev-server-status');
+    props.ensureStateKey('tunnel-starting');
+    props.ensureStateKey('tunnel-stopping');
     const dockerStatus = props.viewModel.getState('docker-status');
     const serverStatus = props.viewModel.getState('server-status');
     const apiHealth = props.viewModel.getState('api-health');
@@ -28,8 +30,12 @@ export default function ServerManagerUI() {
     const licenseStatus = props.viewModel.getState('license-status');
     const licenseExpiryInfo = props.viewModel.getState('license-expiry-info');
     const devServerStatus = props.viewModel.getState('dev-server-status');
+    const tunnelStarting = props.viewModel.getState('tunnel-starting');
+    const tunnelStopping = props.viewModel.getState('tunnel-stopping');
     
-    const anyOperationInProgress = starting || stopping || refreshing;
+    const anyOperationInProgress = starting || stopping || refreshing || tunnelStarting || tunnelStopping;
+    const publicUrl = connectionInfo?.publicUrl || null;
+    const tunnelActive = !!connectionInfo?.tunnelActive;
 
     const Spinner = () => Row({ 
       class: "inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"
@@ -107,7 +113,27 @@ export default function ServerManagerUI() {
           ]),
           connectionInfo?.lanUrls?.length > 1
             ? Row({ class: 'text-xs text-gray-500' }, `Also available on ${connectionInfo.lanUrls.length - 1} additional network interface(s).`)
-            : null
+            : null,
+          Row({ class: 'pt-3 mt-3 border-t border-gray-100' }, [
+            Row({ tagType: 'h3', class: 'text-sm font-semibold text-indigo-700 mb-2' }, 'Internet access (for remote clients)'),
+            tunnelActive && publicUrl
+              ? Row({ class: 'space-y-2' }, [
+                  Row({ class: 'flex items-center gap-2' }, [
+                    Row({}, `Public URL: ${publicUrl}`),
+                    Row({
+                      tagType: 'button',
+                      class: 'px-2 py-1 text-xs border rounded hover:bg-gray-50',
+                      events: { click: async () => copyText(publicUrl) }
+                    }, 'Copy')
+                  ]),
+                  Row({ class: 'text-xs text-gray-500' }, 'Share this URL with computers on the internet. They can connect as clients.')
+                ])
+              : Row({ class: 'text-sm text-gray-600' }, [
+                  'Enable to create a public URL for internet access. Requires ',
+                  Row({ tagType: 'a', attributes: { href: 'https://ngrok.com', target: '_blank', rel: 'noopener', class: 'text-indigo-600 underline' } }, 'ngrok'),
+                  ' auth token in api/.env (NGROK_AUTHTOKEN=...).'
+                ])
+          ])
         ]),
         mode === 'client' && Row({ class: 'text-sm' }, [
           Row({}, `Connected server: ${connectionInfo?.apiRoot || 'Not configured'}`),
@@ -180,6 +206,18 @@ export default function ServerManagerUI() {
             }
           }
         }, refreshing ? [Spinner(), 'Refreshing...'] : 'Refresh Status'),
+        mode === 'server' && !tunnelActive && Row({
+          tagType: 'button',
+          class: "px-4 py-2 bg-indigo-500 text-white rounded disabled:opacity-50 hover:bg-indigo-600 transition-colors flex items-center",
+          attributes: { disabled: anyOperationInProgress || !isRunning },
+          events: { click: () => props.viewModel.handleTunnelStart() }
+        }, tunnelStarting ? [Spinner(), 'Starting...'] : 'Enable Internet'),
+        mode === 'server' && tunnelActive && Row({
+          tagType: 'button',
+          class: "px-4 py-2 bg-amber-500 text-white rounded disabled:opacity-50 hover:bg-amber-600 transition-colors flex items-center",
+          attributes: { disabled: anyOperationInProgress },
+          events: { click: () => props.viewModel.handleTunnelStop() }
+        }, tunnelStopping ? [Spinner(), 'Stopping...'] : 'Disable Internet'),
       ]),
 
       lastUpdated && Row({ 

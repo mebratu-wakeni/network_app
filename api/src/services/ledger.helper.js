@@ -105,8 +105,9 @@ export class LedgerHelper {
   }
 
   /**
-   * Get current balance for multiple accounts (latest ledger row per account by id).
-   * Balance can be positive or negative depending on account nature (e.g. AP may be negative when we owe).
+   * Get current balance for multiple accounts.
+   * Uses SUM(debit - credit) per account to avoid inconsistency from stored balance column
+   * (e.g. race conditions, backdated tx, or corruption can make last row's balance wrong).
    * @param {string[]} accountCodes - Account codes (e.g. ['5100', '1300', '6100', '3100', '1200'])
    * @param {Object} trx - Knex transaction (optional)
    * @returns {Promise<Object>} { accountCode: balance (number), ... }
@@ -115,13 +116,16 @@ export class LedgerHelper {
     const db = trx || this.knex
     if (!accountCodes || accountCodes.length === 0) return {}
 
+    const rows = await db('account_ledger')
+      .whereIn('account_code', accountCodes)
+      .select('account_code')
+      .select(db.raw('COALESCE(SUM(debit - credit), 0) as balance'))
+      .groupBy('account_code')
+
     const result = {}
     for (const code of accountCodes) {
-      const lastEntry = await db('account_ledger')
-        .where('account_code', code)
-        .orderBy('id', 'desc')
-        .first()
-      result[code] = lastEntry ? parseFloat(lastEntry.balance || 0) : 0
+      const row = rows.find((r) => r.account_code === code)
+      result[code] = row ? parseFloat(row.balance || 0) : 0
     }
     return result
   }
@@ -197,16 +201,14 @@ export class LedgerHelper {
         throw new Error(`Account code ${entry.account_code} not found`)
       }
 
-      // Get current balance for this account (last row on or before this transaction's date)
-      // Uses date then id so backdated transactions get the correct prior balance, not today's
-      const lastEntry = await db('account_ledger')
+      // Use computed SUM(debit-credit) of existing rows for prior balance.
+      // The old logic used stored balance from last row by date, which breaks for backdated
+      // transactions (e.g. PO dated 03-01 inserted after a 03-04 deposit → no rows with date<=03-01 → wrong prior=0).
+      const priorRows = await db('account_ledger')
         .where('account_code', entry.account_code)
-        .where('transaction_date', '<=', transaction_date)
-        .orderBy('transaction_date', 'desc')
-        .orderBy('id', 'desc')
+        .select(db.raw('COALESCE(SUM(debit - credit), 0) as balance'))
         .first()
-
-      const currentBalance = lastEntry ? parseFloat(lastEntry.balance || 0) : 0
+      const currentBalance = parseFloat(priorRows?.balance || 0)
       const debitAmount = parseFloat(entry.debit || 0)
       const creditAmount = parseFloat(entry.credit || 0)
       const newBalance = currentBalance + debitAmount - creditAmount

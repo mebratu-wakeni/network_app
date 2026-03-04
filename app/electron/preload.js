@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   getConnectionInfo: () => ipcRenderer.invoke('server:connection-info'),
   getServerLogs: (service, lines) => ipcRenderer.invoke('server:logs', service, lines),
   checkDevServerStatus: () => ipcRenderer.invoke('server:check-dev-status'),
+  startTunnel: () => ipcRenderer.invoke('server:tunnel-start'),
+  stopTunnel: () => ipcRenderer.invoke('server:tunnel-stop'),
+  getTunnelStatus: () => ipcRenderer.invoke('server:tunnel-status'),
 
   // Note: For user management and other APIs, use invoke() directly:
   // window.ipcRenderer.invoke('users:search', searchParams, token)

@@ -184,6 +184,13 @@ export default defineConfig({
     electron({
       main: {
         entry: 'electron/main.js',
+        vite: {
+          build: {
+            rollupOptions: {
+              external: ['@ngrok/ngrok'],
+            },
+          },
+        },
       },
       preload: {
         input: path.join(__dirname, 'electron/preload.js'),

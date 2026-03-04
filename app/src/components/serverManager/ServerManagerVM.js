@@ -46,6 +46,8 @@ export default class ServerManagerVM extends ViewModel {
     this.setState('mode', 'server');
     this.setState('fingerprint', null);
     this.setState('dev-server-status', null);
+    this.setState('tunnel-starting', false);
+    this.setState('tunnel-stopping', false);
     this.refreshDebounceTimer = null;
   }
 
@@ -193,6 +195,41 @@ export default class ServerManagerVM extends ViewModel {
   }
 
   async toggleMode() {}
+
+  async handleTunnelStart() {
+    this.updateState('tunnel-starting', true);
+    this.updateState('error', null);
+    try {
+      const result = await window.ipcRenderer.startTunnel();
+      if (result.success) {
+        this.updateState('success', 'Internet tunnel started. Share the URL with remote clients.');
+        setTimeout(() => this.updateState('success', null), 5000);
+        await this.checkStatus(false);
+      } else {
+        this.updateState('error', result.error || 'Failed to start tunnel');
+        setTimeout(() => this.updateState('error', null), 8000);
+      }
+    } catch (err) {
+      this.updateState('error', err?.message || 'Failed to start tunnel');
+    } finally {
+      this.updateState('tunnel-starting', false);
+    }
+  }
+
+  async handleTunnelStop() {
+    this.updateState('tunnel-stopping', true);
+    this.updateState('error', null);
+    try {
+      await window.ipcRenderer.stopTunnel();
+      this.updateState('success', 'Internet tunnel stopped.');
+      setTimeout(() => this.updateState('success', null), 3000);
+      await this.checkStatus(false);
+    } catch (err) {
+      this.updateState('error', err?.message || 'Failed to stop tunnel');
+    } finally {
+      this.updateState('tunnel-stopping', false);
+    }
+  }
 
   computeLicenseExpiryInfo(licenseStatus) {
     const license = licenseStatus?.license
