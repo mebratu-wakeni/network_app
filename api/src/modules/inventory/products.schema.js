@@ -5,13 +5,14 @@
 import { z } from 'zod'
 
 /**
- * Schema for a single product in bulk import
+ * Schema for a single product in bulk import.
+ * Only name is required. Category and unit are optional; backend auto-creates them if provided.
  */
 export const productSchema = z.object({
   name: z.string().min(1, 'Product name is required').trim(),
   description: z.string().trim().optional().nullable(),
-  category: z.string().min(1, 'Category is required').trim(),
-  unit: z.string().min(1, 'Unit is required').trim(),
+  category: z.string().trim().optional().nullable(),
+  unit: z.string().trim().optional().nullable(),
   remark: z.string().trim().optional().nullable()
 })
 

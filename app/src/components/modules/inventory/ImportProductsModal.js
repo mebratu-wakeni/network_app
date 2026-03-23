@@ -68,48 +68,35 @@ function parseCSV(text) {
   return { headers, rows };
 }
 
-// Validation function
-function validateProductRow(row, rowIndex, existingCategories = [], existingUnits = []) {
+/**
+ * Validates a product row for import. Only product name is required.
+ * Category and unit are optional; if provided, they will be auto-created by the backend
+ * when not already in their respective tables. All fields can be edited later.
+ */
+function validateProductRow(row, rowIndex) {
   const errors = [];
-  
+
   // Normalize field names (handle variations)
-  // Headers are converted to lowercase, so "Product Name" becomes "product name"
   const name = row.name || row['product name'] || row['product_name'] || row['productname'] || '';
   const description = row.description || row.desc || row['product description'] || '';
   const category = row.category || row.cat || row['product category'] || '';
   const unit = row.unit || row['unit of measure'] || row['unit_of_measure'] || row['unitofmeasure'] || '';
-  
-  if (!name && rowIndex === 0) {
-  }
-  
+
   if (!name || name.trim() === '') {
     errors.push('Product name is required');
   }
-  
-  if (!category || category.trim() === '') {
-    errors.push('Category is required');
-  } else if (existingCategories.length > 0 && !existingCategories.includes(category.trim())) {
-    errors.push(`Category "${category}" does not exist`);
-  }
-  
-  if (!unit || unit.trim() === '') {
-    errors.push('Unit is required');
-  } else if (existingUnits.length > 0 && !existingUnits.includes(unit.trim())) {
-    errors.push(`Unit "${unit}" does not exist`);
-  }
-  
-  // Ensure we always return a valid object structure
+
   const normalizedRow = {
     name: (name || '').trim(),
     description: (description || '').trim(),
-    category: (category || '').trim(),
-    unit: (unit || '').trim()
+    category: (category || '').trim() || undefined,
+    unit: (unit || '').trim() || undefined
   };
-  
+
   return {
     isValid: errors.length === 0,
     errors: errors.length > 0 ? errors : [],
-    normalizedRow: normalizedRow
+    normalizedRow
   };
 }
 
@@ -136,10 +123,6 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     const importing = props.getLocalState('importing');
     const importResults = props.getLocalState('importResults');
     const fileInputId = props.getLocalState('fileInputId');
-
-    // Mock existing categories and units (would come from viewModel/API)
-    const existingCategories = ['Regent', 'Supplies'];
-    const existingUnits = ['Bottle', 'PK', 'Kit', 'Box', 'Unit'];
 
     const handleFileSelect = (e) => {
       const selectedFile = e.target.files[0];
@@ -204,7 +187,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           // Validate each row
           const validationResults = rows.map((row, index) => {
             try {
-              return validateProductRow(row, index, existingCategories, existingUnits);
+              return validateProductRow(row, index);
             } catch (error) {
               console.error(`Error validating row ${index}:`, error, row);
               // Return an invalid validation result if validation throws an error
@@ -393,8 +376,8 @@ const ModalContent = (viewModel, delegator, handleClose) => {
             ]),
             Row({ class: 'text-xs text-gray-500 bg-blue-50 p-3 rounded border border-blue-200' }, [
               Row({ class: 'font-semibold text-blue-800 mb-1' }, 'CSV Format:'),
-              Row({}, 'Expected columns: Product Name, Description, Category, Unit'),
-              Row({ class: 'mt-1' }, 'First row should contain headers. Product Name, Category, and Unit are required.')
+              Row({}, 'Expected columns: Product Name (required), Description, Category, Unit'),
+              Row({ class: 'mt-1' }, 'First row: headers. Only Product Name is required; Category and Unit are optional and will be created if needed.')
             ])
           ]),
 

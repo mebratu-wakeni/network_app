@@ -83,6 +83,7 @@ export class LicenseService {
     if (!scriptUrl) {
       const err = new Error('LICENSE_SCRIPT_URL is not configured')
       err.status = 500
+      err.code = 'LICENSE_SCRIPT_URL_NOT_CONFIGURED'
       throw err
     }
 
@@ -91,6 +92,7 @@ export class LicenseService {
       if (!payload.installation_key || payload.installation_key !== installationSecret) {
         const err = new Error('Invalid installation key')
         err.status = 401
+        err.code = 'INVALID_INSTALLATION_KEY'
         throw err
       }
     }
@@ -127,9 +129,15 @@ export class LicenseService {
       clearTimeout(timeoutId)
       const msg = err?.message || String(err)
       if (msg.includes('abort') || err?.name === 'AbortError') {
-        throw new Error('License server request timed out. Check internet connection and retry.')
+        const e = new Error('License server request timed out. Check internet connection and retry.')
+        e.status = 504
+        e.code = 'LICENSE_SERVER_TIMEOUT'
+        throw e
       }
-      throw new Error(`License server unreachable: ${msg}. Check internet and Google Script URL.`)
+      const e = new Error(`License server unreachable: ${msg}. Check internet and Google Script URL.`)
+      e.status = 502
+      e.code = 'LICENSE_SERVER_UNREACHABLE'
+      throw e
     }
     clearTimeout(timeoutId)
 

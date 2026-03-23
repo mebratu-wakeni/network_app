@@ -27,6 +27,7 @@ class LicenseManager {
     if (!response.ok) {
       const err = new Error(data?.error || data?.message || `HTTP ${response.status}`)
       err.details = data?.details || null
+      err.code = data?.code || null
       throw err
     }
     return data
@@ -67,6 +68,7 @@ class LicenseManager {
         success: false,
         activated: false,
         error: error.message,
+        code: error.code || null,
         details: error.details || null
       }
     }

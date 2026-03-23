@@ -6,29 +6,52 @@ import { app } from 'electron'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+const isWin = process.platform === 'win32'
+
 /**
  * Build PATH for spawned processes. When the app is launched from Finder/Dock,
  * PATH is minimal and often lacks node/npm. Include common install locations.
  */
 function buildSpawnEnv(baseEnv) {
+  const existingPath = baseEnv.PATH || baseEnv.Path || process.env.PATH || ''
+  if (isWin) {
+    const extraPaths = [
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'),
+      path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'nodejs'),
+      path.join(process.env.APPDATA || '', 'npm')
+    ].filter(Boolean)
+    const pathEntries = [...extraPaths, existingPath]
+    return { ...baseEnv, PATH: pathEntries.filter(Boolean).join(';') }
+  }
   const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin']
-  const existingPath = baseEnv.PATH || baseEnv.Path || process.env.PATH || '/usr/bin:/bin'
-  const pathEntries = [...extraPaths, existingPath]
+  const pathEntries = [...extraPaths, existingPath || '/usr/bin:/bin']
   return { ...baseEnv, PATH: pathEntries.join(':') }
 }
 
 /**
- * Find node binary. In packaged apps launched from Finder, node may not be in PATH.
+ * Find node binary. In packaged apps launched from Finder/Dock, node may not be in PATH.
  */
 function findNodeBinary(env) {
+  const envWithPath = buildSpawnEnv(env || process.env)
+  const findCmd = isWin ? 'where node' : 'which node'
   try {
-    const result = execSync('which node', { encoding: 'utf8', env: buildSpawnEnv(env || process.env) })
-    const bin = (result || '').trim()
-    if (bin && fs.existsSync(bin)) return bin
+    const result = execSync(findCmd, { encoding: 'utf8', env: envWithPath, windowsHide: true })
+    const line = (result || '').trim().split('\n')[0]
+    if (line && fs.existsSync(line.trim())) return line.trim()
   } catch (_) {}
-  const candidates = ['/usr/local/bin/node', '/opt/homebrew/bin/node']
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p
+  if (isWin) {
+    const winCandidates = [
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', 'node.exe'),
+      path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'nodejs', 'node.exe')
+    ]
+    for (const p of winCandidates) {
+      if (p && fs.existsSync(p)) return p
+    }
+  } else {
+    const candidates = ['/usr/local/bin/node', '/opt/homebrew/bin/node']
+    for (const p of candidates) {
+      if (fs.existsSync(p)) return p
+    }
   }
   return 'node' // fallback — may fail
 }

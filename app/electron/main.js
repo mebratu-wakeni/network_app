@@ -116,6 +116,7 @@ function loadBootstrap() {
 function saveBootstrap(dataDirectory) {
   if (!dataDirectory || typeof dataDirectory !== 'string') return
   const resolved = path.resolve(dataDirectory)
+  if (isUnderProtectedPath(resolved)) return
   const p = getBootstrapPath()
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify({
@@ -125,13 +126,31 @@ function saveBootstrap(dataDirectory) {
   }, null, 2), 'utf8')
 }
 
+/** True if path is under a read-only system dir (e.g. Program Files). */
+function isUnderProtectedPath(dir) {
+  if (!dir || typeof dir !== 'string') return false
+  const normalized = path.resolve(dir).toLowerCase()
+  return (
+    normalized.includes('program files') ||
+    normalized.includes('program files (x86)') ||
+    /^[a-z]:\\windows\\/i.test(normalized)
+  )
+}
+
 /**
  * Resolve data directory: user-chosen location for config and DB (outside app).
  * Returns null if no bootstrap (first run, needs setup).
+ * Never uses Program Files or other protected paths (would cause EPERM on Windows).
  */
 function getDataDirectory() {
   const boot = loadBootstrap()
-  if (boot?.dataDirectory) return boot.dataDirectory
+  if (boot?.dataDirectory) {
+    if (isUnderProtectedPath(boot.dataDirectory)) {
+      try { fs.unlinkSync(getBootstrapPath()) } catch (_) {}
+      return null
+    }
+    return boot.dataDirectory
+  }
   const appDataRoot = getAppDataRoot()
   const legacyDataDir = path.join(appDataRoot, 'data')
   // Migration 1: config in app data root (old packaged layout)
@@ -190,8 +209,10 @@ function getDefaultDbDirectory() {
 
 function getRuntimeConfigPath() {
   const dataDir = getDataDirectory()
-  if (dataDir) return path.join(dataDir, 'runtime-config.json')
-  return path.join(getFallbackDataDirectory(), 'runtime-config.json')
+  const fallback = getFallbackDataDirectory()
+  const candidate = dataDir ? path.join(dataDir, 'runtime-config.json') : path.join(fallback, 'runtime-config.json')
+  // Never write under Program Files etc. (causes EPERM on Windows)
+  return isUnderProtectedPath(path.dirname(candidate)) ? path.join(fallback, 'runtime-config.json') : candidate
 }
 
 function getMachineFingerprintPath() {
@@ -444,11 +465,23 @@ function getTunnelStatus() {
   }
 }
 
-function normalizeLicenseActivationFailure(errorMessage) {
+function normalizeLicenseActivationFailure(errorMessage, apiCode = null) {
+  if (apiCode === 'INVALID_INSTALLATION_KEY') {
+    return { code: 'INVALID_INSTALLATION_KEY', error: 'Installation key is invalid. Provide the key you received from your administrator.' }
+  }
+  if (apiCode === 'LICENSE_SERVER_TIMEOUT') {
+    return { code: 'LICENSE_SERVER_TIMEOUT', error: 'License service timed out. Check internet connection and retry.' }
+  }
+  if (apiCode === 'LICENSE_SERVER_UNREACHABLE') {
+    return { code: 'LICENSE_SERVER_UNREACHABLE', error: 'License service is unreachable. Check internet and firewall/proxy settings.' }
+  }
+  if (apiCode === 'LICENSE_SCRIPT_URL_NOT_CONFIGURED') {
+    return { code: 'LICENSE_SCRIPT_URL_NOT_CONFIGURED', error: 'License service is not configured on this server.' }
+  }
   const msg = String(errorMessage || '')
   const lower = msg.toLowerCase()
   if (lower.includes('invalid installation key')) {
-    return { code: 'INVALID_INSTALLATION_KEY', error: 'Installation key is invalid.' }
+    return { code: 'INVALID_INSTALLATION_KEY', error: 'Installation key is invalid. Provide the key you received from your administrator.' }
   }
   if (lower.includes('already') && (lower.includes('machine') || lower.includes('fingerprint') || lower.includes('bound'))) {
     return { code: 'LICENSE_ALREADY_BOUND', error: 'This license is already activated on another machine.' }
@@ -461,10 +494,17 @@ function normalizeLicenseActivationFailure(errorMessage) {
   ) {
     return { code: 'INVALID_LICENSE_KEY', error: 'License key is invalid.' }
   }
-  if (lower.includes('fetch failed') || lower.includes('econnrefused') || lower.includes('network') || lower.includes('license server')) {
+  if (
+    lower.includes('fetch failed') ||
+    lower.includes('econnrefused') ||
+    lower.includes('network') ||
+    lower.includes('license server') ||
+    lower.includes('abort') ||
+    lower.includes('timed out')
+  ) {
     return {
-      code: 'SERVER_ERROR',
-      error: 'License service is unreachable. Check internet connection and Google Script deployment URL.'
+      code: 'LICENSE_SERVER_UNREACHABLE',
+      error: 'License service is unreachable. Check internet connection, firewall, and that script.google.com is reachable.'
     }
   }
   return { code: 'SERVER_ERROR', error: msg || 'License activation failed' }
@@ -1029,7 +1069,7 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
         company_phone: companyPhone
       })
       if (!activation?.success) {
-        const normalizedFailure = normalizeLicenseActivationFailure(activation?.error)
+        const normalizedFailure = normalizeLicenseActivationFailure(activation?.error, activation?.code)
         return {
           success: false,
           code: normalizedFailure.code,
