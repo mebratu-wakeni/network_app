@@ -187,11 +187,7 @@ export default defineConfig({
       main: {
         entry: 'electron/main.js',
         vite: {
-          build: {
-            rollupOptions: {
-              external: ['@ngrok/ngrok'],
-            },
-          },
+          build: {},
         },
       },
       preload: {
