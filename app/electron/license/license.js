@@ -35,11 +35,8 @@ class LicenseManager {
 
   async getStatus(deviceFingerprint = null) {
     const query = deviceFingerprint ? `?device_fingerprint=${encodeURIComponent(deviceFingerprint)}` : ''
-    const url = getApiUrl(`/license/status${query}`)
-    console.log('[license] getStatus url=', url)
     try {
       const data = await this.apiRequest(`/license/status${query}`, { method: 'GET' })
-      console.log('[license] getStatus ok=', data?.ok, 'valid=', data?.valid)
       return {
         success: !!data?.ok,
         valid: !!data?.valid,
@@ -47,7 +44,6 @@ class LicenseManager {
         license: data?.license || null
       }
     } catch (error) {
-      console.log('[license] getStatus error=', error.message)
       return { success: false, valid: false, reason: 'api_unavailable', error: error.message }
     }
   }

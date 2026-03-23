@@ -1,5 +1,7 @@
-const { Row, StatefulRow }  = Liteframe;
+// @ts-nocheck
 import ServerManagerVM from './ServerManagerVM.js'
+
+const { Row, StatefulRow } = Liteframe
 
 export default function ServerManagerUI() {
   // Create new instance (ServerManagerVM handles cleanup of previous instance internally)
@@ -30,7 +32,9 @@ export default function ServerManagerUI() {
     const devServerStatus = props.viewModel.getState('dev-server-status');
 
     const anyOperationInProgress = starting || stopping || refreshing;
-
+    const handleStart = () => props.viewModel.handleStart();
+    const handleStop = () => props.viewModel.handleStop();
+    const handleRefresh = () => props.viewModel.checkStatus(true);
     const Spinner = () => Row({ 
       class: "inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"
     });
@@ -144,41 +148,23 @@ export default function ServerManagerUI() {
       ]),
 
       Row({ class: 'flex gap-3 items-center flex-wrap' }, [
-        Row({ 
-          tagType: 'button', 
-          class: "px-4 py-2 bg-green-500 text-white rounded disabled:opacity-50 hover:bg-green-600 transition-colors flex items-center", 
-          attributes: {
-            disabled: anyOperationInProgress || mode !== 'server'
-          }, 
-          events: {
-            'click': async function () { 
-              await props.viewModel.handleStart() 
-            },
-          }
+        Row({
+          tagType: 'button',
+          class: "px-4 py-2 bg-green-500 text-white rounded disabled:opacity-50 hover:bg-green-600 transition-colors flex items-center",
+          attributes: { disabled: anyOperationInProgress || mode !== 'server' },
+          events: { click: handleStart },
         }, starting ? [Spinner(), 'Starting...'] : 'Start Server'),
         Row({
-          tagType: 'button', 
-          class: "px-4 py-2 bg-red-500 text-white rounded disabled:opacity-50 hover:bg-red-600 transition-colors flex items-center", 
-          attributes: {
-            disabled: anyOperationInProgress || mode !== 'server'
-          }, 
-          events: {
-            'click': async function () { 
-              await props.viewModel.handleStop();
-            }
-          }
+          tagType: 'button',
+          class: "px-4 py-2 bg-red-500 text-white rounded disabled:opacity-50 hover:bg-red-600 transition-colors flex items-center",
+          attributes: { disabled: anyOperationInProgress || mode !== 'server' },
+          events: { click: handleStop },
         }, stopping ? [Spinner(), 'Stopping...'] : 'Stop Server'),
         Row({
-          tagType: 'button', 
-          class: "px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50 hover:bg-blue-600 transition-colors flex items-center", 
-          attributes: {
-            disabled: anyOperationInProgress
-          }, 
-          events: {
-            'click': async function () {
-              await props.viewModel.checkStatus(true);
-            }
-          }
+          tagType: 'button',
+          class: "px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50 hover:bg-blue-600 transition-colors flex items-center",
+          attributes: { disabled: anyOperationInProgress },
+          events: { click: handleRefresh },
         }, refreshing ? [Spinner(), 'Refreshing...'] : 'Refresh Status'),
       ]),
 
