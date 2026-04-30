@@ -1,5 +1,50 @@
 const { ViewModel, SharedStateManager } = Liteframe;
 import { permissionChecker } from '../../utils/PermissionChecker';
+import { toApiDdMmYyyyFromUiDate } from '../../utils/DateUtils';
+
+function mapStockDataDatesForApi(stockData) {
+  const out = { ...stockData };
+  if (out.expiryDate !== undefined) out.expiryDate = toApiDdMmYyyyFromUiDate(out.expiryDate);
+  if (out.expiry_date !== undefined) out.expiry_date = toApiDdMmYyyyFromUiDate(out.expiry_date);
+  return out;
+}
+
+function mapAdjustmentDatesForApi(adjustmentData) {
+  const out = { ...adjustmentData };
+  if (out.adjustmentDate !== undefined) out.adjustmentDate = toApiDdMmYyyyFromUiDate(out.adjustmentDate);
+  if (out.adjustment_date !== undefined) out.adjustment_date = toApiDdMmYyyyFromUiDate(out.adjustment_date);
+  return out;
+}
+
+function mapBorrowPayloadDatesForApi(borrowData) {
+  const out = { ...borrowData };
+  if (out.expiryDate !== undefined) out.expiryDate = toApiDdMmYyyyFromUiDate(out.expiryDate);
+  if (out.expiry_date !== undefined) out.expiry_date = toApiDdMmYyyyFromUiDate(out.expiry_date);
+  return out;
+}
+
+function mapReturnBorrowedToPayloadForApi(returnData) {
+  const out = { ...returnData };
+  if (out.returnedDate !== undefined) out.returnedDate = toApiDdMmYyyyFromUiDate(out.returnedDate);
+  if (out.returned_date !== undefined) out.returned_date = toApiDdMmYyyyFromUiDate(out.returned_date);
+  if (Array.isArray(out.returnItems)) {
+    out.returnItems = out.returnItems.map((item) => {
+      if (!item || typeof item !== 'object') return item;
+      const it = { ...item };
+      if (it.expiry_date !== undefined) it.expiry_date = toApiDdMmYyyyFromUiDate(it.expiry_date);
+      if (it.expiryDate !== undefined) it.expiryDate = toApiDdMmYyyyFromUiDate(it.expiryDate);
+      return it;
+    });
+  }
+  return out;
+}
+
+function mapReturnBorrowedFromPayloadForApi(returnData) {
+  const out = { ...returnData };
+  if (out.returnedOn !== undefined) out.returnedOn = toApiDdMmYyyyFromUiDate(out.returnedOn);
+  if (out.returned_on !== undefined) out.returned_on = toApiDdMmYyyyFromUiDate(out.returned_on);
+  return out;
+}
 
 export class InventoryVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
@@ -250,6 +295,39 @@ export class InventoryVM extends ViewModel {
   }
 
   /**
+   * Keep `selected-product` aligned with the products table row (joined category/unit names).
+   * Raw PUT/findById rows omit display names; without this, exiting edit mode reverts labels to stale data.
+   */
+  syncSelectedProductWithProductList(productId) {
+    const current = this.getState('selected-product');
+    if (!current || Number(current.id) !== Number(productId)) return;
+
+    const list = this.getState('product-list') || [];
+    const fromList = list.find((p) => Number(p.id) === Number(productId));
+    if (fromList) {
+      this.updateState('selected-product', fromList);
+      return;
+    }
+
+    const categories = this.getCategoryList();
+    const units = this.getUnitList();
+    const category =
+      current.category_id != null
+        ? categories.find((c) => Number(c.id) === Number(current.category_id))
+        : null;
+    const unit =
+      current.unit_id != null
+        ? units.find((u) => Number(u.id) === Number(current.unit_id))
+        : null;
+
+    this.updateState('selected-product', {
+      ...current,
+      category: current.category_id != null ? category?.name ?? '' : '',
+      unit: current.unit_id != null ? unit?.name ?? '' : '',
+    });
+  }
+
+  /**
    * Load all products (for dropdowns/modals) - loads all products without pagination
    */
   async loadAllProducts() {
@@ -334,7 +412,7 @@ export class InventoryVM extends ViewModel {
     this.updateState('success', null);
 
     try {
-      const result = await window.ipcRenderer.invoke('inventory:create-borrowed-from-stock', borrowData);
+      const result = await window.ipcRenderer.invoke('inventory:create-borrowed-from-stock', mapBorrowPayloadDatesForApi(borrowData));
 
       if (result.success) {
         this.updateState('success', { message: 'Borrowed from stock created successfully' });
@@ -482,15 +560,19 @@ export class InventoryVM extends ViewModel {
     this.updateState('success', null);
 
     try {
+      if (!productData.name || !String(productData.name).trim()) {
+        throw new Error('Product name is required');
+      }
+
       // Prepare product data with category_id and unit_id
       const productPayload = {
-        name: productData.name,
+        name: String(productData.name).trim(),
         description: productData.description || null,
         remark: productData.remark || null,
         expiry_threshold: productData.expiry_threshold || 30
       };
 
-      // Handle category_id - use existing ID or look up by name
+      // Handle category_id - use existing ID, look up by name, or leave unset
       if (productData.category_id) {
         // Ensure category_id is a number
         productPayload.category_id = parseInt(productData.category_id, 10);
@@ -516,10 +598,10 @@ export class InventoryVM extends ViewModel {
           throw new Error(`Failed to find category "${productData.category}": ${error.message || 'Unknown error'}`);
         }
       } else {
-        throw new Error('Category is required');
+        productPayload.category_id = null;
       }
 
-      // Handle unit_id - use existing ID or look up by name
+      // Handle unit_id - use existing ID, look up by name, or leave unset
       if (productData.unit_id) {
         // Ensure unit_id is a number
         productPayload.unit_id = parseInt(productData.unit_id, 10);
@@ -545,7 +627,7 @@ export class InventoryVM extends ViewModel {
           throw new Error(`Failed to find unit "${productData.unit}": ${error.message || 'Unknown error'}`);
         }
       } else {
-        throw new Error('Unit is required');
+        productPayload.unit_id = null;
       }
 
       const result = await window.ipcRenderer.invoke('inventory:create-product', productPayload);
@@ -596,27 +678,37 @@ export class InventoryVM extends ViewModel {
         const updated = result.product || result.data;
         if (updated) {
           const prev = this.getState('selected-product');
-          if (prev && prev.id === productId) {
-            this.updateState('selected-product', { ...prev, ...updated });
+          const expiryFromResponse = updated.expiry_threshold ?? updated.expiryThreshold;
+          const expiryFromPayload = productData.expiry_threshold ?? productData.expiryThreshold;
+          const resolvedExpiry =
+            expiryFromResponse != null ? expiryFromResponse : expiryFromPayload;
+          if (prev && Number(prev.id) === Number(productId)) {
+            this.updateState('selected-product', {
+              ...prev,
+              ...updated,
+              ...(resolvedExpiry != null ? { expiry_threshold: resolvedExpiry } : {})
+            });
           }
           const form = this.getState('product-details-form');
-          const expiryThreshold = updated.expiry_threshold ?? updated.expiryThreshold;
           this.updateState('product-details-form', {
             ...form,
             name: updated.name ?? form.name,
             description: updated.description ?? form.description,
             category: updated.category ?? form.category,
-            category_id: updated.category_id ?? form.category_id,
+            category_id: Object.hasOwn(updated, 'category_id')
+              ? updated.category_id
+              : form.category_id,
             unit: updated.unit ?? form.unit,
-            unit_id: updated.unit_id ?? form.unit_id,
+            unit_id: Object.hasOwn(updated, 'unit_id') ? updated.unit_id : form.unit_id,
             remark: updated.remark ?? form.remark,
-            expiry_threshold: expiryThreshold != null ? expiryThreshold : (form.expiry_threshold ?? 30)
+            expiry_threshold: resolvedExpiry != null ? resolvedExpiry : (form.expiry_threshold ?? 30)
           });
         }
         // Set loading to false so loadProducts() can run
         this.updateState('loading', false);
         // Reload products list
         await this.loadProducts();
+        this.syncSelectedProductWithProductList(productId);
         return result.product;
       }
 
@@ -689,6 +781,110 @@ export class InventoryVM extends ViewModel {
     } catch (error) {
       console.error('Error importing products:', error);
       this.updateState('error', { message: error.message || 'Failed to import products' });
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  async bulkImportProductsFromFile(file) {
+    if (this.getState('loading')) {
+      return {
+        success: false,
+        error: 'Another inventory operation is already in progress',
+        summary: { total: 0, successful: 0, failed: 0 },
+        results: []
+      };
+    }
+    const maxBytes = 50 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error('File must be 50MB or smaller');
+    }
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    this.updateState('success', null);
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const result = await window.ipcRenderer.invoke('inventory:bulk-import-products-upload', {
+        fileBuffer: buf,
+        fileName: file.name
+      });
+      const s = result.summary || {};
+      const errCount =
+        typeof s.errors === 'number'
+          ? s.errors
+          : (result.results || []).filter((r) => r && r.success === false && r.issueKind !== 'warning')
+              .length;
+      const skippedCount =
+        typeof s.warnings === 'number'
+          ? s.warnings
+          : (result.results || []).filter((r) => r && r.success === false && r.issueKind === 'warning')
+              .length;
+
+      if (errCount > 0) {
+        if ((s.successful || 0) > 0) {
+          await this.loadProducts();
+        }
+        this.updateState('error', {
+          message:
+            (s.successful || 0) > 0
+              ? `Imported ${s.successful} product(s); ${errCount} row(s) with errors${
+                  skippedCount ? `, ${skippedCount} skipped` : ''
+                }.`
+              : result.error || 'No products were imported (see errors in the dialog).'
+        });
+      } else if ((s.successful || 0) > 0) {
+        await this.loadProducts();
+        this.updateState('success', {
+          message:
+            skippedCount > 0
+              ? `Imported ${s.successful} product(s). ${skippedCount} row(s) skipped.`
+              : `Successfully imported ${s.successful} product(s)`
+        });
+      } else if (skippedCount > 0 && (s.successful || 0) === 0) {
+        this.updateState('success', {
+          message: `No new products imported. ${skippedCount} row(s) skipped (e.g. already exists).`
+        });
+      } else {
+        this.updateState('error', { message: result.error || 'No products were imported' });
+      }
+      return result;
+    } catch (error) {
+      console.error('Error importing products from file:', error);
+      this.updateState('error', { message: error.message || 'Failed to import products' });
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  async bulkImportStockFromFile(file, reason = 'Initial Stock', purchase_date = null, acquisition_type = null) {
+    const maxBytes = 50 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error('File must be 50MB or smaller');
+    }
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    this.updateState('success', null);
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const result = await window.ipcRenderer.invoke('inventory:bulk-import-stock-upload', {
+        fileBuffer: buf,
+        fileName: file.name,
+        reason,
+        purchase_date,
+        acquisition_type
+      });
+      if (result.success) {
+        this.updateState('success', {
+          message: `Imported ${result.summary?.successful || 0} stock row(s)`
+        });
+        await this.loadStock();
+      }
+      return result;
+    } catch (error) {
+      console.error('Error importing stock from file:', error);
+      this.updateState('error', { message: error.message || 'Failed to import stock' });
       throw error;
     } finally {
       this.updateState('loading', false);
@@ -887,7 +1083,7 @@ export class InventoryVM extends ViewModel {
     try {
       const result = await window.ipcRenderer.invoke('inventory:adjust-stock', {
         stockId,
-        ...adjustmentData
+        ...mapAdjustmentDatesForApi(adjustmentData)
       });
 
       if (result.success) {
@@ -948,7 +1144,7 @@ export class InventoryVM extends ViewModel {
     try {
       const result = await window.ipcRenderer.invoke('inventory:return-borrowed-stock', {
         stockId,
-        ...returnData
+        ...mapReturnBorrowedToPayloadForApi(returnData)
       });
 
       if (result.success) {
@@ -1092,6 +1288,19 @@ export class InventoryVM extends ViewModel {
       [key]: value
     });
     // Trigger re-render by updating loading state
+    this.updateState('loading', true);
+    setTimeout(() => {
+      this.updateState('loading', false);
+    }, 0);
+  }
+
+  /** Apply several product-form fields in one state update (avoids losing updates from back-to-back single-field writes). */
+  updateProductFormFields(fields) {
+    const form = this.getState('product-form');
+    this.updateState('product-form', {
+      ...form,
+      ...fields
+    });
     this.updateState('loading', true);
     setTimeout(() => {
       this.updateState('loading', false);
@@ -1295,6 +1504,15 @@ export class InventoryVM extends ViewModel {
     });
   }
 
+  /** Apply several detail fields at once (category+id etc.) so concurrent updates are not dropped. */
+  updateProductDetailsFormFields(fields) {
+    const form = this.getState('product-details-form');
+    this.updateState('product-details-form', {
+      ...form,
+      ...fields
+    });
+  }
+
   setProductDetailsEditMode(editMode) {
     this.updateState('product-details-edit-mode', editMode);
     this.updateState('loading', true); // Trigger re-render
@@ -1431,7 +1649,7 @@ export class InventoryVM extends ViewModel {
     this.updateState('success', null);
 
     try {
-      const result = await window.ipcRenderer.invoke('inventory:process-borrow-to-return', returnData);
+      const result = await window.ipcRenderer.invoke('inventory:process-borrow-to-return', mapReturnBorrowedToPayloadForApi(returnData));
 
       if (result.success) {
         this.updateState('success', { message: 'Return processed successfully' });
@@ -1574,7 +1792,7 @@ export class InventoryVM extends ViewModel {
       // Send data directly - backend handles both formats
       // Frontend sends: {inventory_id, quantity}
       // Backend accepts: {inventory_id, quantity} OR {returningInventoryId, quantityReturned}
-      const result = await window.ipcRenderer.invoke('inventory:process-borrow-from-return', returnData);
+      const result = await window.ipcRenderer.invoke('inventory:process-borrow-from-return', mapReturnBorrowedFromPayloadForApi(returnData));
       const ok = result && (result.success === true || result.ok === true);
 
       if (ok) {
@@ -1705,7 +1923,7 @@ export class InventoryVM extends ViewModel {
     this.updateState('success', null);
 
     try {
-      const result = await window.ipcRenderer.invoke('inventory:update-stock', { stockId, stockData });
+      const result = await window.ipcRenderer.invoke('inventory:update-stock', { stockId, stockData: mapStockDataDatesForApi(stockData) });
 
       if (result.success) {
         this.updateState('success', { 

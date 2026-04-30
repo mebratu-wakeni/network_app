@@ -29,14 +29,13 @@ export function buildReceiptData(receipt, settings) {
   const paymentStatus = payment && payment.remaining_balance > 0.01 ? 'PARTIAL' : (meta.payment_status || 'PAID');
   const withholdPct = meta.withhold_percentage != null ? Number(meta.withhold_percentage) : null;
   const hasWithhold = withholdPct != null && (meta.withhold_amount || 0) > 0;
-  const isConfirmed = meta.withhold_confirmation === true;
-  const withholdRef = meta.sales_invoice_no || null;
+  const isConfirmed = !!meta.withhold_confirmation;
+  const withholdRef = meta.withhold_ref || meta.sales_invoice_no || null;
   let withholdInfo = 'N/A';
   if (hasWithhold) {
     const parts = [`${withholdPct}% withheld`];
-    // Show withhold_reference when withhold is confirmed
-    if (isConfirmed && meta.sales_invoice_no) {
-      parts.push(`Withhold Ref: ${meta.sales_invoice_no}`);
+    if (isConfirmed && withholdRef) {
+      parts.push(`Withhold Ref: ${withholdRef}`);
     }
     withholdInfo = parts.join(' · ');
   }

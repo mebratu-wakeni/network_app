@@ -4,6 +4,10 @@
  * records ledger entries, and creates bin card transactions.
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
+import {
+  effectiveWithholdConfirmed,
+  rawWithholdEffectivelyConfirmed
+} from '../../utils/salesWithhold.js'
 
 export class SalesRepository {
   constructor(knex) {
@@ -53,13 +57,17 @@ export class SalesRepository {
     return this.knex.transaction(async (trx) => {
       const { order, items } = payload
 
-      // 1) Insert sales_orders
+      // 1) Insert sales_orders — enforce: non-empty withhold_ref ⇒ withhold_confirmation true; else false and no ref.
+      const trimmedInv =
+        order.withhold_ref != null && String(order.withhold_ref).trim() !== ''
+          ? String(order.withhold_ref).trim()
+          : null
+      const withholdConfirmed = Boolean(trimmedInv)
       const [insertedOrder] = await trx('sales_orders')
         .insert({
           customer_id: order.customer_id ?? null,
           order_date: order.order_date,
           invoice_no: order.invoice_no ?? null,
-          sales_invoice_no: order.withhold_confirmation ? order.sales_invoice_no : null,
           remark: order.remark ?? null,
           payment_type: order.payment_type,
           payment_status: order.payment_status,
@@ -69,8 +77,8 @@ export class SalesRepository {
           withhold_amount: order.withhold_amount ?? null,
           received_amount: order.received_amount ?? null,
           withhold_settled: order.withhold_settled ?? false,
-          withhold_confirmation: order.withhold_confirmation ?? false,
-          sales_invoice_no: order.sales_invoice_no ?? null,
+          withhold_confirmation: withholdConfirmed,
+          withhold_ref: trimmedInv,
           receipt_no: order.receipt_no,
           status: order.status ?? 'completed',
           is_reversed: order.is_reversed ?? false,
@@ -293,15 +301,15 @@ export class SalesRepository {
     }
     if (stat_filter === 'withhold_unconfirmed') {
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_confirmation', false)
       base.andWhere('so.withhold_settled', false)
+      base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
     } else if (stat_filter === 'withhold_confirmed') {
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_confirmation', true)
+      base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
       base.andWhere('so.withhold_settled', false)
     } else if (stat_filter === 'settled') {
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_confirmation', true)
+      base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
       base.andWhere('so.withhold_settled', true)
     } else if (stat_filter === 'unsettled') {
       base.andWhere('so.withhold_amount', '>', 0.009)
@@ -324,7 +332,7 @@ export class SalesRepository {
       'so.is_reversed',
       'so.withhold_confirmation',
       'so.withhold_settled',
-      'so.sales_invoice_no',
+      'so.withhold_ref',
       'so.remark',
       netRaw,
       outstandingRaw
@@ -352,7 +360,11 @@ export class SalesRepository {
     const sortCol = allowedSort.includes(sort_by) ? sort_by : 'order_date'
     const sortDir = order_by === 'asc' ? 'asc' : 'desc'
 
-    const orders = await base.orderBy(sortCol, sortDir).limit(limit).offset(offset)
+    let orders = await base.orderBy(sortCol, sortDir).limit(limit).offset(offset)
+    orders = orders.map((row) => ({
+      ...row,
+      withhold_confirmation: effectiveWithholdConfirmed(row)
+    }))
 
     // Stats: static (no list filters). All = completed, non-reversed only.
     const statsBase = this.knex('sales_orders as so')
@@ -364,6 +376,8 @@ export class SalesRepository {
       'so.is_reversed',
       'so.withhold_confirmation',
       'so.withhold_settled',
+      'so.withhold_ref',
+      'so.remark',
       this.knex.raw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0)) as net_amount'),
       'so.amount_paid',
       'so.withhold_amount'
@@ -386,7 +400,7 @@ export class SalesRepository {
       const isReversed = !!row.is_reversed
       const isArchived = row.status === 'archived'
       const isCompleted = row.status === 'completed'
-      const confirmed = !!row.withhold_confirmation
+      const confirmed = effectiveWithholdConfirmed(row)
       const settled = !!row.withhold_settled
 
       // All: completed, non-reversed (exclude reversed and archived)
@@ -642,14 +656,14 @@ export class SalesRepository {
   }
 
   /**
-   * Confirm withhold: set sales_invoice_no and withhold_confirmation = true.
+   * Confirm withhold: set withhold_ref and withhold_confirmation = true.
    */
-  async confirmWithhold(orderId, sales_invoice_no) {
+  async confirmWithhold(orderId, withholdRef) {
     const n = await this.knex('sales_orders')
       .where({ id: orderId })
       .whereNot({ is_reversed: true })
       .update({
-        sales_invoice_no: sales_invoice_no || null,
+        withhold_ref: withholdRef || null,
         withhold_confirmation: true,
         last_updated: this.knex.fn.now()
       })
@@ -657,16 +671,26 @@ export class SalesRepository {
   }
 
   /**
-   * Rollback withhold: clear sales_invoice_no and withhold_confirmation.
+   * Rollback withhold: clear withhold_ref and withhold_confirmation.
    */
   async rollbackWithhold(orderId) {
+    const order = await this.knex('sales_orders').where({ id: orderId }).first()
+    if (!order) return false
+
+    let newRemark = order.remark
+    if (newRemark && typeof newRemark === 'string') {
+      newRemark = newRemark.replace(/\n?Withhold Ref:\s*[^\n]*/gi, '').trim()
+      if (newRemark === '') newRemark = null
+    }
+
     const n = await this.knex('sales_orders')
       .where({ id: orderId })
       .whereNot({ is_reversed: true })
       .update({
-        sales_invoice_no: null,
+        withhold_ref: null,
         withhold_confirmation: false,
         withhold_settled: false,
+        remark: newRemark,
         last_updated: this.knex.fn.now()
       })
     return n > 0
@@ -798,12 +822,14 @@ export class SalesRepository {
     const amountPaid = Number(order.amount_paid ?? 0)
     const receivedAmount = totalAmount - withholdAmount
     const outstanding_balance = Math.max(0, receivedAmount - amountPaid)
+    const withhold_confirmation = effectiveWithholdConfirmed(order)
 
     return {
       order: {
         ...order,
         customer_name: order.customer_name ?? null,
-        outstanding_balance
+        outstanding_balance,
+        withhold_confirmation
       },
       items
     }
@@ -834,7 +860,7 @@ export class SalesRepository {
         'so.encoder_fullname',
         'so.customer_id',
         'so.remark',
-        'so.sales_invoice_no',
+        'so.withhold_ref',
         'so.withhold_confirmation',
         'c.name as customer_name',
         'c.address as customer_address',
@@ -897,8 +923,8 @@ export class SalesRepository {
       net_amount: netAmount,
       invoice_no: order.invoice_no || null,
       withhold_reference: withhold_reference,
-      sales_invoice_no: order.sales_invoice_no || null,
-      withhold_confirmation: order.withhold_confirmation || false,
+      withhold_ref: order.withhold_ref || null,
+      withhold_confirmation: effectiveWithholdConfirmed(order),
     }
 
     const order_items = items.map((it) => ({

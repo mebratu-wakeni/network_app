@@ -3,6 +3,7 @@
  * Encapsulates all database queries for inventories table
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
+import { DEFAULT_STOCK_IMPORT_LOCATION } from './importCsvHelpers.js'
 
 export class InventoriesRepository {
   constructor(knex) {
@@ -303,192 +304,203 @@ export class InventoriesRepository {
   }
 
   /**
-   * Bulk import stock items
-   * @param {Array} stockItems - Array of stock items to import
-   * @param {Object} options - Import options (e.g., purchase_date, reason, created_by)
+   * Bulk import stock items (all-or-nothing: single DB transaction).
+   * On any row DB/processing error, the whole import is rolled back.
+   * Preflight (missing required fields) returns per-row failures without touching the DB.
    * @returns {Object} - { successful: [], failed: [], summary: {...} }
    */
-  async bulkImport(stockItems, options = {}) {
+  async bulkImport (stockItems, options = {}) {
     const successful = []
-    const failed = []
     const purchaseDate = options.purchase_date || new Date().toISOString().split('T')[0]
     const reason = (options.reason || 'Bulk Import').trim()
     const createdBy = options.created_by || null
 
-    // Validate reason - reject 'other' reason (not yet implemented)
     const reasonLower = reason.toLowerCase()
-    if (reasonLower === 'other') {
-      throw new Error('Import with "other" reason is not yet implemented. Please use "initial stock" for now.')
-    }
-
-    // Only "initial stock" is currently supported
     const isInitialStock = reasonLower === 'initial stock'
 
+    const preflightFailed = []
     for (let i = 0; i < stockItems.length; i++) {
       const item = stockItems[i]
-      
-      try {
-        // Validate required fields
-        if (!item.product_name || !item.quantity || !item.unit_cost) {
-          failed.push({
-            index: i,
-            item,
-            error: 'Missing required fields: product_name, quantity, or unit_cost'
-          })
-          continue
-        }
-
-        // Wrap each item's processing in its own transaction for atomicity
-        await this.knex.transaction(async (trx) => {
-          // Find product by code or name
-          let product = null
-          if (item.product_code && String(item.product_code).trim()) {
-            product = await trx('products').where({ product_code: String(item.product_code).trim() }).first()
-          }
-          if (!product && item.product_name) {
-            product = await trx('products')
-              .whereRaw('LOWER(name) = LOWER(?)', [item.product_name.trim()])
-              .first()
-          }
-
-          // If product not found, create it so stock import works without pre-importing products
-          if (!product) {
-            const categoryId = await this.resolveCategoryId(item.category, trx)
-            const unitId = await this.resolveUnitId(item.unit, trx)
-            if (categoryId == null || unitId == null) {
-              throw new Error('Cannot auto-create product: no categories or units in database. Import products first or add a category and unit.')
-            }
-            let productCode = (item.product_code && String(item.product_code).trim()) ? String(item.product_code).trim() : null
-            if (productCode) {
-              const existingByCode = await trx('products').where({ product_code: productCode }).first()
-              if (existingByCode) product = existingByCode
-            }
-            if (!product) {
-              if (!productCode) productCode = await this.getNextProductCode(trx)
-              const [created] = await trx('products')
-                .insert({
-                  name: item.product_name.trim(),
-                  product_code: productCode,
-                  category_id: categoryId,
-                  unit_id: unitId,
-                  description: null,
-                  remark: null,
-                  sync_status: 'pending'
-                })
-                .returning('*')
-              product = created
-            }
-          }
-
-          // Check if inventory record already exists with same variation
-          const existing = await this.findExistingInventory(
-            product.id,
-            item.batch_number || null,
-            item.expiry_date || null,
-            parseFloat(item.unit_cost),
-            trx
-          )
-
-          let inventoryCode
-          let inventoryId
-          let quantityAdded = parseInt(item.quantity)
-          let purchasePrice = parseFloat(item.unit_cost)
-
-          if (existing) {
-            // Use existing inventory code
-            inventoryCode = existing.inventory_code
-            inventoryId = existing.id
-            
-            // Update quantity (add to existing)
-            await trx('inventories')
-              .where({ id: existing.id })
-              .update({
-                quantity: trx.raw('quantity + ?', [quantityAdded]),
-                last_updated: trx.fn.now()
-              })
-          } else {
-            // Generate new inventory code
-            inventoryCode = await this.generateInventoryCode(product.product_code, trx)
-            
-            // Insert new inventory record
-            const [inserted] = await trx('inventories')
-              .insert({
-                product_id: product.id,
-                inventory_code: inventoryCode,
-                batch_no: item.batch_number || null,
-                expiry_date: item.expiry_date || null,
-                purchase_date: purchaseDate,
-                acquisition_type: options.acquisition_type || 'cash', // Use provided type or default to 'cash'
-                purchase_price: purchasePrice,
-                quantity: quantityAdded,
-                selling_price: item.selling_price ? parseFloat(item.selling_price) : null,
-                location: item.location || null,
-                notes: reason,
-                created_at: trx.fn.now(),
-                last_updated: trx.fn.now()
-              })
-              .returning('id')
-            
-            inventoryId = inserted.id || inserted
-          }
-
-          // Get opening balance for bin card transaction
-          const openingBalance = await this.getLastProductBalance(product.id, trx)
-
-          // Create bin card transaction for this import
-          await this.createBinCardTransaction({
-            productId: product.id,
-            inventoryId: inventoryId,
-            batchNo: item.batch_number || null,
-            expiryDate: item.expiry_date || null,
-            transactionDate: purchaseDate,
-            quantity: quantityAdded,
-            unitCost: purchasePrice,
-            openingBalance: openingBalance,
-            reason: reason,
-            createdBy: createdBy
-          }, trx)
-
-          // Create ledger entry for initial stock import (within transaction)
-          if (isInitialStock) {
-            await this.ledgerHelper.recordInitialStockImport({
-              inventoryId: inventoryId,
-              quantity: quantityAdded,
-              unitCost: purchasePrice,
-              transactionDate: purchaseDate,
-              referenceNumber: `INIT-${inventoryCode}`,
-              memo: `Initial stock import - ${reason}`,
-              createdBy: createdBy
-            }, trx)
-          }
-
-          // If we reach here, transaction will commit
-          successful.push({
-            index: i,
-            item,
-            inventory_id: inventoryId,
-            inventory_code: inventoryCode,
-            product_id: product.id,
-            product_code: product.product_code
-          })
-        })
-
-      } catch (error) {
-        failed.push({
+      if (!item.product_name || item.quantity == null || item.unit_cost == null) {
+        preflightFailed.push({
           index: i,
           item,
-          error: error.message || 'Unknown error during import'
+          error: 'Missing required fields: product_name, quantity, or unit_cost (purchase cost)'
         })
+      }
+    }
+    if (preflightFailed.length > 0) {
+      return {
+        successful: [],
+        failed: preflightFailed,
+        summary: {
+          total: stockItems.length,
+          successful: 0,
+          failed: preflightFailed.length
+        }
+      }
+    }
+
+    const processOne = async (trx, item, i) => {
+      let product = null
+      if (item.product_code && String(item.product_code).trim()) {
+        product = await trx('products').where({ product_code: String(item.product_code).trim() }).first()
+      }
+      if (!product && item.product_name) {
+        product = await trx('products')
+          .whereRaw('LOWER(name) = LOWER(?)', [item.product_name.trim()])
+          .first()
+      }
+
+      if (!product) {
+        const categoryId = await this.resolveCategoryId(item.category, trx)
+        const unitId = await this.resolveUnitId(item.unit, trx)
+        if (categoryId == null || unitId == null) {
+          throw new Error('Cannot auto-create product: no categories or units in database. Import products first or add a category and unit.')
+        }
+        let productCode = (item.product_code && String(item.product_code).trim()) ? String(item.product_code).trim() : null
+        if (productCode) {
+          const existingByCode = await trx('products').where({ product_code: productCode }).first()
+          if (existingByCode) product = existingByCode
+        }
+        if (!product) {
+          if (!productCode) productCode = await this.getNextProductCode(trx)
+          const [created] = await trx('products')
+            .insert({
+              name: item.product_name.trim(),
+              product_code: productCode,
+              category_id: categoryId,
+              unit_id: unitId,
+              description: null,
+              remark: null,
+              sync_status: 'pending'
+            })
+            .returning('*')
+          product = created
+        }
+      }
+
+      const existing = await this.findExistingInventory(
+        product.id,
+        item.batch_number || null,
+        item.expiry_date || null,
+        parseFloat(item.unit_cost),
+        trx
+      )
+
+      let inventoryCode
+      let inventoryId
+      const quantityAdded = parseInt(item.quantity, 10)
+      const purchasePrice = parseFloat(item.unit_cost)
+
+      if (existing) {
+        inventoryCode = existing.inventory_code
+        inventoryId = existing.id
+
+        await trx('inventories')
+          .where({ id: existing.id })
+          .update({
+            quantity: trx.raw('quantity + ?', [quantityAdded]),
+            last_updated: trx.fn.now()
+          })
+      } else {
+        inventoryCode = await this.generateInventoryCode(product.product_code, trx)
+
+        const [inserted] = await trx('inventories')
+          .insert({
+            product_id: product.id,
+            inventory_code: inventoryCode,
+            batch_no: item.batch_number || null,
+            expiry_date: item.expiry_date || null,
+            purchase_date: purchaseDate,
+            acquisition_type: options.acquisition_type || 'cash',
+            purchase_price: purchasePrice,
+            quantity: quantityAdded,
+            selling_price: item.selling_price ? parseFloat(item.selling_price) : null,
+            location: (item.location && String(item.location).trim()) || DEFAULT_STOCK_IMPORT_LOCATION,
+            notes: reason,
+            created_at: trx.fn.now(),
+            last_updated: trx.fn.now()
+          })
+          .returning('id')
+
+        inventoryId = inserted.id || inserted
+      }
+
+      const openingBalance = await this.getLastProductBalance(product.id, trx)
+
+      await this.createBinCardTransaction({
+        productId: product.id,
+        inventoryId,
+        batchNo: item.batch_number || null,
+        expiryDate: item.expiry_date || null,
+        transactionDate: purchaseDate,
+        quantity: quantityAdded,
+        unitCost: purchasePrice,
+        openingBalance,
+        reason,
+        createdBy
+      }, trx)
+
+      if (isInitialStock) {
+        await this.ledgerHelper.recordInitialStockImport({
+          inventoryId,
+          quantity: quantityAdded,
+          unitCost: purchasePrice,
+          transactionDate: purchaseDate,
+          referenceNumber: `INIT-${inventoryCode}`,
+          memo: `Initial stock import - ${reason}`,
+          createdBy
+        }, trx)
+      }
+
+      successful.push({
+        index: i,
+        item,
+        inventory_id: inventoryId,
+        inventory_code: inventoryCode,
+        product_id: product.id,
+        product_code: product.product_code
+      })
+    }
+
+    try {
+      await this.knex.transaction(async (trx) => {
+        for (let i = 0; i < stockItems.length; i++) {
+          const item = stockItems[i]
+          try {
+            await processOne(trx, item, i)
+          } catch (err) {
+            const e = new Error(err.message || 'Unknown error during import')
+            e.rowIndex = i
+            throw e
+          }
+        }
+      })
+    } catch (error) {
+      return {
+        successful: [],
+        failed: [{
+          index: error.rowIndex ?? 0,
+          csvRowNumber: stockItems[error.rowIndex ?? 0]?._csvRowNumber ?? null,
+          error: error.message || 'Import rolled back (all-or-nothing)'
+        }],
+        summary: {
+          total: stockItems.length,
+          successful: 0,
+          failed: stockItems.length
+        },
+        atomicAborted: true
       }
     }
 
     return {
       successful,
-      failed,
+      failed: [],
       summary: {
         total: stockItems.length,
         successful: successful.length,
-        failed: failed.length
+        failed: 0
       }
     }
   }
@@ -1300,8 +1312,8 @@ export class InventoriesRepository {
 
     // Wrap all operations in a transaction for atomicity
     return await this.knex.transaction(async (trx) => {
-      // Get last balance for this product
-      const openingBalance = await this.getLastProductBalance(product.id)
+      // Get last balance for this product (same transaction — avoids pool deadlock)
+      const openingBalance = await this.getLastProductBalance(product.id, trx)
 
       // Calculate quantity change
       let quantityIn = 0
@@ -1506,7 +1518,8 @@ export class InventoriesRepository {
         productIdValue,
         batchNoValue,
         expiryDateValue,
-        purchasePriceValue
+        purchasePriceValue,
+        trx
       )
 
       let inventoryCode
@@ -1529,7 +1542,7 @@ export class InventoriesRepository {
           })
       } else {
         // Generate new inventory code
-        inventoryCode = await this.generateInventoryCode(product.product_code)
+        inventoryCode = await this.generateInventoryCode(product.product_code, trx)
         
         // Insert new inventory record
         const [inserted] = await trx('inventories')
@@ -1577,9 +1590,8 @@ export class InventoriesRepository {
         })
         .returning('*')
 
-      // 4. Get opening balance for bin card transaction
-      // For opening balance, we want the last committed balance, so using this.knex is fine
-      const openingBalance = await this.getLastProductBalance(productIdValue)
+      // 4. Get opening balance for bin card transaction (use trx — avoid nested pool connections)
+      const openingBalance = await this.getLastProductBalance(productIdValue, trx)
 
       // 5. Create bin card transaction for this borrow from (within transaction)
       const finalQuantityIn = quantityAdded
@@ -1768,7 +1780,7 @@ export class InventoriesRepository {
 
       // 5. Process each return item (create inventory, bin card, return record)
       const returnRecords = []
-      let currentOpeningBalance = await this.getLastProductBalance(borrowToRecord.product_id)
+      let currentOpeningBalance = await this.getLastProductBalance(borrowToRecord.product_id, trx)
 
       for (const item of itemsToProcess) {
         // Find or create inventory record for this batch/expiry combination
@@ -1776,7 +1788,8 @@ export class InventoriesRepository {
           item.product_id,
           item.batch_no,
           item.expiry_date,
-          item.unit_cost
+          item.unit_cost,
+          trx
         )
 
         let inventoryId
@@ -1796,7 +1809,7 @@ export class InventoriesRepository {
             })
         } else {
           // Create new inventory record
-          inventoryCode = await this.generateInventoryCode(product.product_code)
+          inventoryCode = await this.generateInventoryCode(product.product_code, trx)
           
           // Insert new inventory record
           const [inserted] = await trx('inventories')

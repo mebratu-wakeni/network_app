@@ -113,7 +113,7 @@ export function SalesIpcHandlers() {
         customer_id: currentSale.customer_id != null && currentSale.customer_id !== '' ? Number(currentSale.customer_id) : null,
         order_date,
         invoice_no: currentSale.invoice_no || null,
-        sales_invoice_no: currentSale.sales_invoice_no || null,
+        withhold_ref: currentSale.withhold_ref || null,
         remark: currentSale.remark || null,
         withhold_reference: (currentSale.withhold_reference || '').trim() || null,
         payment_type,
@@ -152,9 +152,9 @@ export function SalesIpcHandlers() {
     }
   })
 
-  ipcMain.handle('sales:confirm-withhold', async (_event, { orderId, sales_invoice_no }) => {
+  ipcMain.handle('sales:confirm-withhold', async (_event, { orderId, withhold_ref }) => {
     try {
-      return await salesManager.confirmWithhold(orderId, { sales_invoice_no }, getToken())
+      return await salesManager.confirmWithhold(orderId, { withhold_ref }, getToken())
     } catch (error) {
       console.error('[Sales IPC] confirm-withhold:', error)
       return { success: false, error: error.message }

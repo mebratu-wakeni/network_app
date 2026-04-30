@@ -1,6 +1,10 @@
 const { ViewModel, SharedStateManager } = Liteframe
 import { permissionChecker } from '../utils/PermissionChecker'
 
+/** Filled in dev builds only — avoids typing during local work. */
+const DEV_LOGIN_USERNAME = 'admin'
+const DEV_LOGIN_PASSWORD = 'adminuser'
+
 const MENU = [
   { title: 'Dashboard', route: '/', icon: "grid-outline" },
   { title: 'Inventory', route: '/inventory', icon: "layers-outline" },
@@ -47,6 +51,8 @@ class NavigationVM extends ViewModel {
     this.setState('startup-loading-expanded', false);
     this.setState('startup-error-details-open', false);
 
+    this._devAutoLoginDone = false
+
     // Auth state
     this.setState('auth', {
       isAuthenticated: false,
@@ -54,10 +60,9 @@ class NavigationVM extends ViewModel {
       loading: false,
       error: null,
       token: null,
-      loginForm: {
-        username: '',
-        password: ''
-      }
+      loginForm: import.meta.env.DEV
+        ? { username: DEV_LOGIN_USERNAME, password: DEV_LOGIN_PASSWORD }
+        : { username: '', password: '' }
     })
 
     // Listen for boot-progress events pushed by the main process during
@@ -84,6 +89,27 @@ class NavigationVM extends ViewModel {
         [key]: value
       }
     })
+  }
+
+  /**
+   * Dev only: submit login once per visit to the login screen (after refresh or logout).
+   */
+  async maybeDevAutoLogin () {
+    if (!import.meta.env.DEV) return
+    if (this._devAutoLoginDone) return
+    const auth = this.getState('auth') || {}
+    if (auth.isAuthenticated) return
+
+    this._devAutoLoginDone = true
+    this.updateState('auth', {
+      ...auth,
+      loginForm: {
+        username: DEV_LOGIN_USERNAME,
+        password: DEV_LOGIN_PASSWORD
+      },
+      error: null
+    })
+    await this.login()
   }
 
   // Attempt to login using IPC (auth:login). Stores token in localStorage on success.
@@ -119,13 +145,16 @@ class NavigationVM extends ViewModel {
   // Logout: clear token and reset auth state
   logout() {
     try { localStorage.removeItem('authToken') } catch (e) {}
+    this._devAutoLoginDone = false
     this.updateState('auth', {
       isAuthenticated: false,
       user: null,
       token: null,
       loading: false,
       error: null,
-      loginForm: { username: '', password: '' }
+      loginForm: import.meta.env.DEV
+        ? { username: DEV_LOGIN_USERNAME, password: DEV_LOGIN_PASSWORD }
+        : { username: '', password: '' }
     })
     this.updateState('startup-mode', null)
   }

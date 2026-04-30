@@ -45,10 +45,10 @@ export const createUnitSchema = z.object({
 export const createProductSchema = z.object({
   name: z.string().min(1, 'Product name is required').trim(),
   description: z.string().trim().optional().nullable(),
-  category_id: z.number().int().positive('Category ID is required'),
-  unit_id: z.number().int().positive('Unit ID is required'),
+  category_id: z.union([z.number().int().positive(), z.null()]).optional(),
+  unit_id: z.union([z.number().int().positive(), z.null()]).optional(),
   remark: z.string().trim().optional().nullable(),
-  expiry_threshold: z.number().int().positive('Expiry threshold must be a positive number').optional()
+  expiry_threshold: z.coerce.number().int().positive('Expiry threshold must be a positive number').optional()
 })
 
 /**

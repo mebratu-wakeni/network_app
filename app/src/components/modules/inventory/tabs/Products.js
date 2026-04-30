@@ -316,11 +316,11 @@ function ProductTable(props, productList = []) {
           class: 'px-4 py-3'
         }, [
           ActionItem({
-            label: 'Edit',
-            icon: 'create-outline',
+            label: 'View',
+            icon: 'eye-outline',
             onClick: async () => {
-              const hasPermission = await permissionChecker.checkPermission('CanEditProductDetails', {
-                actionName: 'edit products'
+              const hasPermission = await permissionChecker.checkPermission('CanSeeProductDetails', {
+                actionName: 'view product details'
               });
               if (hasPermission) {
                 props.setLocalState('selectedRowId', row.id);
@@ -464,8 +464,10 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
         description: newCategoryDescription
       });
       // Add to category options and select it
-      props.viewModel.updateProductDetailsForm('category', category.name);
-      props.viewModel.updateProductDetailsForm('category_id', category.id);
+      props.viewModel.updateProductDetailsFormFields({
+        category: category.name,
+        category_id: category.id
+      });
       props.setLocalState('show-new-category-form', false);
       props.setLocalState('new-category-name', '');
       props.setLocalState('new-category-description', '');
@@ -495,8 +497,10 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
         abbreviation: newUnitAbbreviation
       });
       // Add to unit options and select it
-      props.viewModel.updateProductDetailsForm('unit', unit.name);
-      props.viewModel.updateProductDetailsForm('unit_id', unit.id);
+      props.viewModel.updateProductDetailsFormFields({
+        unit: unit.name,
+        unit_id: unit.id
+      });
       props.setLocalState('show-new-unit-form', false);
       props.setLocalState('new-unit-name', '');
       props.setLocalState('new-unit-abbreviation', '');
@@ -523,57 +527,73 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
     }
 
     try {
+      // Read latest form from VM so Save isn't stale: `Input` uses the `change` event,
+      // which for type="number" often fires on blur—clicks can submit before that.
+      const form = props.viewModel.getState('product-details-form') || {};
+      const categoryName = form.category || '';
+      const categoryId = form.category_id || null;
+      const unitName = form.unit || '';
+      const unitId = form.unit_id || null;
+      const rawExpiry = form.expiry_threshold;
+      const expiryNum =
+        rawExpiry === '' || rawExpiry === undefined || rawExpiry === null
+          ? NaN
+          : parseInt(String(rawExpiry), 10);
+      const expiryThreshold = Number.isFinite(expiryNum) && expiryNum >= 1 ? expiryNum : 30;
+
+      if (!(form.name ?? '').trim()) {
+        throw new Error('Product name is required');
+      }
+
       // Prepare product data with category_id and unit_id
       const productPayload = {
-        name: productName,
-        description: productDescription || null,
-        remark: productDetailsForm.remark || null,
-        expiry_threshold: productExpiryThreshold || 30
+        name: (form.name ?? '').trim(),
+        description: form.description || null,
+        remark: form.remark || null,
+        expiry_threshold: expiryThreshold
       };
 
-      // Handle category_id - use existing ID or look up by name
-      if (productCategoryId) {
-        productPayload.category_id = parseInt(productCategoryId, 10);
-      } else if (productCategory && productCategory.trim() !== '') {
+      // Handle category_id - use existing ID, look up by name, or clear
+      if (categoryId) {
+        productPayload.category_id = parseInt(categoryId, 10);
+      } else if (categoryName && categoryName.trim() !== '') {
         // Category name provided - look it up by name
         try {
-          const result = await window.ipcRenderer.invoke('inventory:find-category-by-name', productCategory);
+          const result = await window.ipcRenderer.invoke('inventory:find-category-by-name', categoryName);
           if (result.success && result.category && result.category.id) {
             productPayload.category_id = parseInt(result.category.id, 10);
           } else {
-            throw new Error(`Category "${productCategory}" not found`);
+            throw new Error(`Category "${categoryName}" not found`);
           }
         } catch (error) {
-          throw new Error(`Failed to find category "${productCategory}": ${error.message || 'Unknown error'}`);
+          throw new Error(`Failed to find category "${categoryName}": ${error.message || 'Unknown error'}`);
         }
       } else {
-        throw new Error('Category is required');
+        productPayload.category_id = null;
       }
 
-      // Handle unit_id - use existing ID or look up by name
-      if (productUnitId) {
-        productPayload.unit_id = parseInt(productUnitId, 10);
-      } else if (productUnit && productUnit.trim() !== '') {
+      // Handle unit_id - use existing ID, look up by name, or clear
+      if (unitId) {
+        productPayload.unit_id = parseInt(unitId, 10);
+      } else if (unitName && unitName.trim() !== '') {
         // Unit name provided - look it up by name
         try {
-          const result = await window.ipcRenderer.invoke('inventory:find-unit-by-name', productUnit);
+          const result = await window.ipcRenderer.invoke('inventory:find-unit-by-name', unitName);
           if (result.success && result.unit && result.unit.id) {
             productPayload.unit_id = parseInt(result.unit.id, 10);
           } else {
-            throw new Error(`Unit "${productUnit}" not found`);
+            throw new Error(`Unit "${unitName}" not found`);
           }
         } catch (error) {
-          throw new Error(`Failed to find unit "${productUnit}": ${error.message || 'Unknown error'}`);
+          throw new Error(`Failed to find unit "${unitName}": ${error.message || 'Unknown error'}`);
         }
       } else {
-        throw new Error('Unit is required');
+        productPayload.unit_id = null;
       }
 
       await props.viewModel.updateProduct(product.id, productPayload);
       props.viewModel.setProductDetailsEditMode(false);
-      // Reload products list to show updated data
-      props.viewModel.updateState('loading', false);
-      await props.viewModel.loadProducts();
+      // List reload + selected-product sync happen inside updateProduct()
     } catch (error) {
       // Error is handled by viewModel and displayed via error state
       console.error('Error updating product:', error);
@@ -611,7 +631,7 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
             // Row 2: Product Name and Description (2 columns)
             Row({ class: 'grid grid-cols-2 gap-6' }, [
               DetailField({ 
-                label: 'Product Name', 
+                label: 'Product Name *', 
                 value: editMode ? null : (productName || '-'),
                 editMode: editMode,
                 inputProps: {
@@ -650,12 +670,16 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                         if (categoryId !== '') {
                           const selectedCategory = categories.find(c => String(c.id) === categoryId);
                           if (selectedCategory) {
-                            props.viewModel.updateProductDetailsForm('category', selectedCategory.name);
-                            props.viewModel.updateProductDetailsForm('category_id', selectedCategory.id);
+                            props.viewModel.updateProductDetailsFormFields({
+                              category: selectedCategory.name,
+                              category_id: selectedCategory.id
+                            });
                           }
                         } else {
-                          props.viewModel.updateProductDetailsForm('category', '');
-                          props.viewModel.updateProductDetailsForm('category_id', null);
+                          props.viewModel.updateProductDetailsFormFields({
+                            category: '',
+                            category_id: null
+                          });
                         }
                       },
                       delegator: props.delegator
@@ -702,12 +726,16 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                         if (unitId !== '') {
                           const selectedUnit = units.find(u => String(u.id) === unitId);
                           if (selectedUnit) {
-                            props.viewModel.updateProductDetailsForm('unit', selectedUnit.name);
-                            props.viewModel.updateProductDetailsForm('unit_id', selectedUnit.id);
+                            props.viewModel.updateProductDetailsFormFields({
+                              unit: selectedUnit.name,
+                              unit_id: selectedUnit.id
+                            });
                           }
                         } else {
-                          props.viewModel.updateProductDetailsForm('unit', '');
-                          props.viewModel.updateProductDetailsForm('unit_id', null);
+                          props.viewModel.updateProductDetailsFormFields({
+                            unit: '',
+                            unit_id: null
+                          });
                         }
                       },
                       delegator: props.delegator
@@ -753,7 +781,17 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                     type: 'number',
                     min: 1,
                     value: productExpiryThreshold || 30,
-                    onChange: (e) => props.viewModel.updateProductDetailsForm('expiry_threshold', parseInt(e.target.value) || 30),
+                    // `Input` wires `change` (often blur for number); sync on `input` so Save sees latest value.
+                    onInput: (e) =>
+                      props.viewModel.updateProductDetailsForm(
+                        'expiry_threshold',
+                        parseInt(e.target.value, 10) || 30
+                      ),
+                    onChange: (e) =>
+                      props.viewModel.updateProductDetailsForm(
+                        'expiry_threshold',
+                        parseInt(e.target.value, 10) || 30
+                      ),
                     name: 'expiry-threshold',
                     placeholder: 'Enter number of days'
                   }
@@ -777,7 +815,7 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
           delegator: props.delegator,
           class: 'flex items-center gap-2'
         }, [
-          IonIcon({ name: 'create-outline', class: 'text-lg' }),
+          IonIcon({ name: 'create-outline', class: 'text-lg text-white' }),
           'Edit'
         ])
       ]

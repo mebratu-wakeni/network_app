@@ -43,6 +43,7 @@ export default class UsersVM extends ViewModel {
     this.setState('user-form', DEFAULT_USER_FORM);
     this.setState('creating', false);
     this.setState('avatar-preview', '');
+    this.setState('export-notice', null);
   }
 
   reload() {
@@ -106,19 +107,27 @@ export default class UsersVM extends ViewModel {
   async exportUsersToCsv() {
     this.updateState('loading', true);
     this.updateState('error', null);
-
+    this.updateState('export-notice', null);
 
     try {
       const result = await window.ipcRenderer.invoke('users:export-csv');
 
-      if( result.success ) {
-        return result.filePath
+      if (result && result.success) {
+        const hint = result.fileName
+          ? `Exported ${result.rowCount ?? ''} row(s). Showing file in Downloads…`
+          : 'Export completed.';
+        this.updateState('export-notice', hint.trim());
+        return result;
       }
 
-      throw new Error(result.error || 'Failed to export users');
+      const msg = (result && result.error) || 'Failed to export users';
+      this.updateState('error', msg);
+      return { success: false, error: msg };
     } catch (error) {
       console.error('Error exporting users: ', error);
-      this.updateState('error', error.message || 'Failed to export users');
+      const msg = error.message || 'Failed to export users';
+      this.updateState('error', msg);
+      return { success: false, error: msg };
     } finally {
       this.updateState('loading', false);
     }

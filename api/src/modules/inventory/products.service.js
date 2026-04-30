@@ -69,8 +69,10 @@ export class ProductsService {
   }
 
   /**
-   * Bulk import products
-   * @param {Array} products - Array of product objects with { name, description, category, unit }
+   * Bulk import products from CSV-shaped rows.
+   * Only **name** is required per row. **category** and **unit** are optional (auto-created when a name string is provided).
+   * **product_code** is never taken from the client import payload — it is generated in this method.
+   * @param {Array} products - Array of product objects with { name, description?, category?, unit? }
    * @returns {Object} Summary with { total, successful, failed, results }
    */
   async bulkImport(products) {
@@ -103,6 +105,7 @@ export class ProductsService {
           results.push({
             index,
             success: false,
+            issueKind: 'error',
             error: 'Product name is required',
             product: product
           })
@@ -161,6 +164,7 @@ export class ProductsService {
           results.push({
             index,
             success: false,
+            issueKind: 'warning',
             error: `Product with name "${name}" already exists`,
             product: product,
             existingProduct: existing
@@ -199,6 +203,7 @@ export class ProductsService {
         results.push({
           index,
           success: false,
+          issueKind: 'error',
           error: error.message || 'Unknown error during validation',
           product: product
         })
@@ -223,6 +228,7 @@ export class ProductsService {
         for (const result of results) {
           if (result.success && !result.product.id) {
             result.success = false
+            result.issueKind = 'error'
             result.error = `Bulk insert failed: ${error.message}`
           }
         }
@@ -230,14 +236,18 @@ export class ProductsService {
       }
     }
 
-    // Calculate summary
+    // Calculate summary: errors = invalid / requirement failures; warnings = skipped (e.g. duplicate)
     const successful = results.filter(r => r.success).length
-    const failed = results.filter(r => !r.success).length
+    const warnings = results.filter(r => !r.success && r.issueKind === 'warning').length
+    const errors = results.filter(r => !r.success && r.issueKind !== 'warning').length
+    const failed = errors + warnings
 
     return {
       total: products.length,
       successful,
       failed,
+      errors,
+      warnings,
       results
     }
   }
@@ -340,8 +350,8 @@ export class ProductsService {
       product_code: productCode,
       name: data.name.trim(),
       description: data.description?.trim() || null,
-      category_id: data.category_id,
-      unit_id: data.unit_id,
+      category_id: data.category_id ?? null,
+      unit_id: data.unit_id ?? null,
       remark: data.remark?.trim() || null,
       sync_status: 'pending'
     }
@@ -381,14 +391,20 @@ export class ProductsService {
     const updateData = {
       name: data.name?.trim() || existing.name,
       description: data.description?.trim() || null,
-      category_id: data.category_id || existing.category_id,
-      unit_id: data.unit_id || existing.unit_id,
+      category_id: Object.hasOwn(data, 'category_id')
+        ? (data.category_id ?? null)
+        : existing.category_id,
+      unit_id: Object.hasOwn(data, 'unit_id')
+        ? (data.unit_id ?? null)
+        : existing.unit_id,
       remark: data.remark?.trim() || null,
       expiry_threshold: data.expiry_threshold != null ? data.expiry_threshold : (existing.expiry_threshold != null ? existing.expiry_threshold : 30)
     }
 
-    const result = await this.repository.update(id, updateData)
-    return Array.isArray(result) ? result[0] : result
+    await this.repository.update(id, updateData)
+    // Always read back the row so clients get the full persisted record (e.g. expiry_threshold)
+    // even if the driver's UPDATE … RETURNING shape varies.
+    return this.repository.findById(id)
   }
 
   /**

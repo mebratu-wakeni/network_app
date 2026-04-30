@@ -167,7 +167,7 @@ export class SalesController {
     try {
       const { id } = req.params
       const body = req.validBody || req.body
-      await this.service.confirmWithhold(id, body.sales_invoice_no)
+      await this.service.confirmWithhold(id, body.withhold_ref)
       const order = await this.service.getOrderDetails(id)
       res.json({ ok: true, order: order?.order })
     } catch (err) {

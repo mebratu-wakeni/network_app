@@ -46,7 +46,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
   const items = currentSale.items || [];
   const itemCount = items.length;
   const isWithholding = currentSale.is_withholding;
-  const withholdRef = currentSale.sales_invoice_no || '';
+  const withholdRef = currentSale.withhold_ref || '';
   const withholdPct = viewModel.getState('withhold-percentage');
   const amountPaid =
     paymentMode === 'credit'

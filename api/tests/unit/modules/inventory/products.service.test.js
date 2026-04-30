@@ -63,7 +63,10 @@ describe('ProductsService', () => {
     expect(result.total).toBe(2)
     expect(result.successful).toBe(1)
     expect(result.failed).toBe(1)
+    expect(result.errors).toBe(0)
+    expect(result.warnings).toBe(1)
     expect(result.results[0].success).toBe(false)
+    expect(result.results[0].issueKind).toBe('warning')
     expect(result.results[0].error).toContain('already exists')
   })
 

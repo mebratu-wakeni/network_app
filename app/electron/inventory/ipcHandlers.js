@@ -57,6 +57,14 @@ export function InventoryIpcHandlers() {
     return await inventoryManager.bulkImportProducts(products, getToken());
   });
 
+  ipcMain.handle('inventory:bulk-import-products-upload', async (event, { fileBuffer, fileName }) => {
+    return await inventoryManager.bulkImportProductsUpload(fileBuffer, fileName, getToken());
+  });
+
+  ipcMain.handle('inventory:bulk-import-stock-upload', async (event, { fileBuffer, fileName, reason, purchase_date, acquisition_type }) => {
+    return await inventoryManager.bulkImportStockUpload(fileBuffer, fileName, { reason, purchase_date, acquisition_type }, getToken());
+  });
+
   ipcMain.handle('inventory:export-products', async (event, searchParams) => {
     return await inventoryManager.exportProducts(searchParams, getToken());
   });

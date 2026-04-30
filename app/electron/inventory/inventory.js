@@ -1,4 +1,6 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import axios from 'axios';
+import FormData from 'form-data';
 
 /**
  * InventoryManager - Handles all API communication for inventory management
@@ -603,6 +605,96 @@ class InventoryManager {
         stack: error.stack
       });
       // Re-throw the error instead of returning mock data
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk import products from multipart CSV (parse/validate on API)
+   * @param {Uint8Array|ArrayBuffer|number[]} fileBuffer
+   */
+  async bulkImportProductsUpload(fileBuffer, fileName, token) {
+    try {
+      const form = new FormData();
+      form.append('file', Buffer.from(fileBuffer), fileName || 'products.csv');
+      const url = getApiUrl('/products/bulk-import-upload');
+      const res = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token}`
+        },
+        maxBodyLength: 55 * 1024 * 1024,
+        maxContentLength: 55 * 1024 * 1024
+      });
+      const data = res.data;
+      return {
+        success: data.ok !== false && data.success !== false,
+        summary: data.summary || {},
+        results: data.results || [],
+        rowErrors: data.rowErrors,
+        validationFailed: data.validationFailed
+      };
+    } catch (error) {
+      if (error.response?.data) {
+        const d = error.response.data;
+        return {
+          success: false,
+          error: d.error || d.message || error.message,
+          summary: d.summary,
+          results: d.results,
+          rowErrors: d.rowErrors,
+          validationFailed: d.validationFailed
+        };
+      }
+      console.error('Error bulk importing products (upload):', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk import stock from multipart CSV (validate + all-or-nothing on API)
+   */
+  async bulkImportStockUpload(fileBuffer, fileName, fields, token) {
+    const { reason, purchase_date, acquisition_type } = fields || {};
+    try {
+      const form = new FormData();
+      form.append('file', Buffer.from(fileBuffer), fileName || 'stock.csv');
+      if (reason) form.append('reason', reason);
+      if (purchase_date) form.append('purchase_date', purchase_date);
+      if (acquisition_type) form.append('acquisition_type', acquisition_type);
+
+      const url = getApiUrl('/inventories/bulk-import-upload');
+      const res = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token}`
+        },
+        maxBodyLength: 55 * 1024 * 1024,
+        maxContentLength: 55 * 1024 * 1024
+      });
+      const data = res.data;
+      return {
+        success: data.ok !== false && data.success !== false,
+        summary: data.summary || {},
+        results: data.results || [],
+        rowErrors: data.rowErrors,
+        validationFailed: data.validationFailed,
+        atomicFailed: data.atomicFailed
+      };
+    } catch (error) {
+      if (error.response?.data) {
+        const d = error.response.data;
+        return {
+          success: false,
+          error: d.error || d.message || error.message,
+          summary: d.summary,
+          results: d.results,
+          rowErrors: d.rowErrors,
+          validationFailed: d.validationFailed,
+          atomicFailed: d.atomicFailed
+        };
+      }
+      console.error('Error bulk importing stock (upload):', error);
       throw error;
     }
   }

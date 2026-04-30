@@ -1,3 +1,6 @@
+import { parseCSVText } from '../../utils/csvImportParse.js'
+import { csvRowsToProducts, MAX_UPLOAD_ROWS } from './importCsvHelpers.js'
+
 /**
  * Controller: HTTP layer for products
  * Handles request/response, delegates business logic to service
@@ -48,12 +51,13 @@ export class ProductsController {
       
       const result = await this.service.bulkImport(products)
       
-      // Log failed results for debugging
-      const failed = result.results.filter(r => !r.success)
-      if (failed.length > 0) {
-        console.error(`[ProductsController] Import failed for ${failed.length} products:`)
-        failed.forEach(f => {
-          console.error(`  Row ${f.index}: ${f.error || 'Unknown error'}`)
+      // Log rows that did not import (errors or warnings)
+      const skipped = result.results.filter(r => !r.success)
+      if (skipped.length > 0) {
+        console.error(`[ProductsController] Import skipped ${skipped.length} row(s) (${result.errors} error(s), ${result.warnings} warning(s)):`)
+        skipped.forEach(f => {
+          const kind = f.issueKind === 'warning' ? 'warning' : 'error'
+          console.error(`  Row ${f.index} [${kind}]: ${f.error || 'Unknown'}`)
           if (f.product) {
             console.error(`    Product: ${f.product.name || JSON.stringify(f.product)}`)
           }
@@ -62,16 +66,65 @@ export class ProductsController {
       
       res.json({
         ok: true,
-        success: result.failed === 0,
+        success: result.errors === 0,
         summary: {
           total: result.total,
           successful: result.successful,
-          failed: result.failed
+          failed: result.failed,
+          errors: result.errors,
+          warnings: result.warnings
         },
         results: result.results
       })
     } catch (error) {
       console.error('[ProductsController] Bulk import error:', error)
+      next(error)
+    }
+  }
+
+  /**
+   * POST /api/products/bulk-import-upload
+   * Multipart CSV upload; parse + normalize + import on server (partial success per row).
+   */
+  bulkImportUpload = async (req, res, next) => {
+    try {
+      if (!req.file?.buffer) {
+        return res.status(400).json({ ok: false, error: 'No file uploaded' })
+      }
+      const text = req.file.buffer.toString('utf8')
+      const { rows } = parseCSVText(text)
+      if (rows.length > MAX_UPLOAD_ROWS) {
+        return res.status(400).json({
+          ok: false,
+          error: `Too many data rows (max ${MAX_UPLOAD_ROWS})`
+        })
+      }
+      const products = csvRowsToProducts(rows)
+      if (products.length === 0) {
+        return res.status(400).json({ ok: false, error: 'No valid product rows in CSV' })
+      }
+
+      const result = await this.service.bulkImport(products)
+
+      const skipped = result.results.filter(r => !r.success)
+      if (skipped.length > 0) {
+        console.error(`[ProductsController] Import skipped ${skipped.length} row(s) (upload): ${result.errors} error(s), ${result.warnings} warning(s)`)
+      }
+
+      res.json({
+        ok: true,
+        success: result.errors === 0,
+        summary: {
+          total: result.total,
+          successful: result.successful,
+          failed: result.failed,
+          errors: result.errors,
+          warnings: result.warnings
+        },
+        results: result.results
+      })
+    } catch (error) {
+      console.error('[ProductsController] Bulk import upload error:', error)
       next(error)
     }
   }

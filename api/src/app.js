@@ -5,6 +5,7 @@ import knex from './db/knex.js'
 import v1Routes from './routes/index.js'
 import { notFound, errorHandler } from './middleware/error.js'
 import { serverIP } from './detectIp.js'
+import { getUploadsRoot, ensureUploadDirs, migrateLegacyAvatarFiles } from './config/storagePaths.js'
 
 dotenv.config()
 
@@ -68,8 +69,10 @@ export function createApp() {
   app.use(express.json())
   app.use(express.urlencoded({ extended: true }))
 
-  // Serve static files (avatars)
-  app.use('/uploads', express.static('uploads'));
+  // Serve static files (avatars) from writable dir next to SQLite DB (see storagePaths.js)
+  ensureUploadDirs()
+  migrateLegacyAvatarFiles()
+  app.use('/uploads', express.static(getUploadsRoot()))
 
   // Attach knex instance to req if needed by middlewares/controllers
   app.use((req, _res, next) => { req.knex = knex; next() })

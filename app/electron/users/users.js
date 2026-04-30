@@ -3,7 +3,7 @@ import FormData from 'form-data';
 import fs from 'fs/promises';
 import path from 'path';
 import { stringify } from 'csv/sync';
-import { app } from 'electron';
+import { app, shell } from 'electron';
 
 /**
  * UsersManager - Handles all API communication for user management
@@ -167,45 +167,57 @@ class UsersManager {
         body: JSON.stringify({
           searchQuery: '',
           tableConfig: {
-            limit: 10000, // to get all the users
+            limit: 10000,
             offset: 0,
             sortBy: 'id',
             orderBy: 'desc'
           }
-        }),
+        })
       }, token);
 
       const userList = response.users || [];
-      // Explicit column definition (CRITICAL)
+
       const columns = [
         { key: 'id', header: 'ID' },
-        { key: 'username', header: 'Username'},
+        { key: 'username', header: 'Username' },
         { key: 'display_name', header: 'Name' },
-        { key: 'status', header: 'Status' },
+        { key: 'email', header: 'Email' },
+        { key: 'status', header: 'Status' }
       ];
 
-      const records = userList.map(user => ({
+      const records = userList.map((user) => ({
         id: user.id,
-        username: user.user,
-        display_name: user.display_name,
-        status: user.is_active ? 'Active' : 'Not Active',
+        username: user.username ?? '',
+        display_name: user.display_name ?? '',
+        email: user.email ?? '',
+        status: user.is_active ? 'Active' : 'Inactive'
       }));
-      const csv = stringify(records, {
-        header: true,
-        columns,
-      });
-      const outputDir = app.getPath('downloads');
 
+      const csv = stringify(records, { header: true, columns });
+      const outputDir = app.getPath('downloads');
       const fileName = `users_${Date.now()}.csv`;
       const filePath = path.join(outputDir, fileName);
 
       await fs.writeFile(filePath, csv, 'utf8');
 
+      const apiOk = response.ok === true || response.success === true;
+      if (!apiOk) {
+        return {
+          success: false,
+          error: 'Unexpected response from server when loading users for export'
+        };
+      }
+      try {
+        shell.showItemInFolder(filePath);
+      } catch (_) {
+        /* non-fatal — file was written */
+      }
+
       return {
-        success: response.ok,
+        success: true,
         filePath,
         fileName,
-        rowCount: records.length,
+        rowCount: records.length
       };
     } catch (error) {
       return {

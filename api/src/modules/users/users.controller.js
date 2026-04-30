@@ -6,6 +6,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import sharp from 'sharp';
+import { getAvatarsDir } from '../../config/storagePaths.js';
 export class UsersController {
   constructor(service) {
     this.service = service
@@ -194,7 +195,7 @@ export class UsersController {
       const upload = multer({
         storage: multer.diskStorage({
           destination: (req, file, cb) => {
-            const uploadDir = 'uploads/avatars/';
+            const uploadDir = getAvatarsDir()
             if (!fs.existsSync(uploadDir)) {
               fs.mkdirSync(uploadDir, { recursive: true });
             }
@@ -319,7 +320,7 @@ export class UsersController {
   deleteAvatarFile(avatarKey) {
     // Delete the file from filesystem if it exists
     if (avatarKey) {
-      const filePath = path.join('uploads', 'avatars', avatarKey);
+      const filePath = path.join(getAvatarsDir(), avatarKey);
       try {
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);

@@ -15,7 +15,7 @@ export class SalesService {
       customer_id,
       order_date,
       invoice_no,
-      sales_invoice_no,
+      withhold_ref,
       remark,
       withhold_reference,
       payment_type,
@@ -56,7 +56,7 @@ export class SalesService {
 
     const receipt_no = await this.repository.generateNextSalesReceiptNumber()
 
-    // Store withhold_reference in remark field if withholding is applied
+    // Optional note only (e.g. customer will provide withholding receipt later). Not the same as withhold_ref.
     const hasWithholdRef = withhold_reference && String(withhold_reference).trim()
     const withholdRefTrimmed = hasWithholdRef ? String(withhold_reference).trim() : null
     let finalRemark = remark ?? null
@@ -66,14 +66,20 @@ export class SalesService {
         : `Withhold Ref: ${withholdRefTrimmed}`
     }
 
-    // When withhold_reference is filled, order is considered withhold confirmed
-    const withholdConfirmed = !!withholdRefTrimmed
+    const trimmedWithholdRef =
+      withhold_ref != null && String(withhold_ref).trim() !== ''
+        ? String(withhold_ref).trim()
+        : null
+    const hasWithhold = Number(withhold_amount || 0) > 0.009
+    const resolvedWithholdRef = hasWithhold ? trimmedWithholdRef : null
+    // Enforced: non-null withhold_ref ⇒ withhold_confirmation true; promise-only ⇒ both null/false.
+    const withholdConfirmed = Boolean(resolvedWithholdRef)
 
     const orderPayload = {
       customer_id: customer_id ?? null,
       order_date,
       invoice_no: invoice_no ?? null,
-      sales_invoice_no: withholdConfirmed ? withholdRefTrimmed : (sales_invoice_no ?? null),
+      withhold_ref: resolvedWithholdRef,
       remark: finalRemark,
       payment_type,
       payment_status,
@@ -217,12 +223,18 @@ export class SalesService {
     return this.repository.recordPayment(Number(orderId), paymentData, userId)
   }
 
-  /** Confirm withhold: set sales_invoice_no and withhold_confirmation. */
-  async confirmWithhold(orderId, sales_invoice_no) {
-    return this.repository.confirmWithhold(Number(orderId), sales_invoice_no)
+  /** Confirm withhold: requires non-empty withhold_ref; sets withhold_confirmation true. */
+  async confirmWithhold(orderId, withholdRef) {
+    const t = withholdRef != null ? String(withholdRef).trim() : ''
+    if (!t) {
+      const err = new Error('Withhold ref is required')
+      err.status = 400
+      throw err
+    }
+    return this.repository.confirmWithhold(Number(orderId), t)
   }
 
-  /** Rollback withhold: clear sales_invoice_no and withhold_confirmation. */
+  /** Rollback withhold: clear withhold_ref and withhold_confirmation. */
   async rollbackWithhold(orderId) {
     return this.repository.rollbackWithhold(Number(orderId))
   }

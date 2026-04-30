@@ -679,7 +679,18 @@ function LoginLayout(props) {
 
   // props.ensureStateKey('auth');
 
-  return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
+  return Row({
+    class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2',
+    lifecycle: import.meta.env.DEV
+      ? {
+          onMount: () => {
+            queueMicrotask(() => {
+              props.viewModel.maybeDevAutoLogin()
+            })
+          }
+        }
+      : undefined
+  }, [
     Row({ class: 'w-full max-w-md p-10 bg-white rounded-2xl shadow-xl' }, [
       Row({ tagType: 'div', class: 'mb-6 text-center' }, [
         Row({ tagType: 'h1', class: 'text-3xl font-extrabold text-indigo-700' }, 'PharmaSuit'),

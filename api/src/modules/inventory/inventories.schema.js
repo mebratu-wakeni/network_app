@@ -3,6 +3,62 @@
  * Defines and validates request/response shapes for inventories/stock
  */
 import { z } from 'zod'
+import { ddMmYyyyToIso } from '../../utils/ddMmYyyy.js'
+
+const MSG_DDMMYYYY = 'Date must be dd/mm/yyyy (e.g. 31/12/2025)'
+
+/** CSV / import: blank → ''; else strict dd/mm/yyyy → ISO yyyy-mm-dd */
+const zDdMmYyyyExpiryImport = z.preprocess(
+  (v) => {
+    if (v === undefined || v === null || v === '') return ''
+    return String(v).trim()
+  },
+  z.string()
+).refine((s) => s === '' || ddMmYyyyToIso(s) !== null, { message: MSG_DDMMYYYY })
+  .transform((s) => (s === '' ? '' : ddMmYyyyToIso(s)))
+
+/** Optional body field: omit → undefined; blank → null; dd/mm/yyyy → ISO */
+const zOptionalDdMmYyyyToIsoNull = z.preprocess(
+  (v) => {
+    if (v === undefined) return undefined
+    if (v === null || v === '') return ''
+    return String(v).trim()
+  },
+  z.union([z.undefined(), z.string()])
+).superRefine((val, ctx) => {
+  if (val === undefined || val === '') return
+  if (ddMmYyyyToIso(val) === null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: MSG_DDMMYYYY })
+  }
+}).transform((val) => {
+  if (val === undefined) return undefined
+  if (val === '') return null
+  return ddMmYyyyToIso(val)
+})
+
+const zDdMmYyyyRequiredIso = z.preprocess(
+  (v) => (v == null ? '' : String(v).trim()),
+  z.string().min(1, 'Date is required')
+).refine((s) => ddMmYyyyToIso(s) !== null, { message: MSG_DDMMYYYY })
+  .transform((s) => ddMmYyyyToIso(s))
+
+const zDdMmYyyyOptionalIso = z.preprocess(
+  (v) => {
+    if (v === undefined || v === null || String(v).trim() === '') return undefined
+    return String(v).trim()
+  },
+  z.union([z.undefined(), z.string().min(1)])
+).refine((v) => v === undefined || ddMmYyyyToIso(v) !== null, { message: MSG_DDMMYYYY })
+  .transform((v) => (v === undefined ? undefined : ddMmYyyyToIso(v)))
+
+const zDdMmYyyyPurchaseOptional = z.preprocess(
+  (v) => {
+    if (v === undefined || v === null || String(v).trim() === '') return undefined
+    return String(v).trim()
+  },
+  z.union([z.undefined(), z.string().min(1)])
+).refine((v) => v === undefined || ddMmYyyyToIso(v) !== null, { message: MSG_DDMMYYYY })
+  .transform((v) => (v === undefined ? undefined : ddMmYyyyToIso(v)))
 
 /**
  * Schema for a single stock item in bulk import
@@ -22,8 +78,8 @@ export const stockItemSchema = z.object({
   quantity: z.number().int().positive('Quantity must be a positive integer'),
   unitCost: z.number().positive('Unit cost must be a positive number').optional(),
   unit_cost: z.number().positive('Unit cost must be a positive number').optional(),
-  expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
-  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  expiryDate: zDdMmYyyyExpiryImport.optional().nullable(),
+  expiry_date: zDdMmYyyyExpiryImport.optional().nullable(),
   batchNumber: z.string().trim().optional().nullable(),
   batch_number: z.string().trim().optional().nullable(),
   sellingPrice: z.number().positive('Selling price must be a positive number').optional().nullable(),
@@ -36,10 +92,10 @@ export const stockItemSchema = z.object({
   { message: 'Product name is required', path: ['productName'] }
 ).refine(
   (data) => {
-    const unitCost = data.unitCost !== undefined ? data.unitCost : data.unit_cost
-    return unitCost !== undefined && unitCost > 0
+    const cost = data.unitCost ?? data.unit_cost
+    return cost !== undefined && cost !== null && !Number.isNaN(Number(cost)) && Number(cost) > 0
   },
-  { message: 'Unit cost is required and must be a positive number', path: ['unitCost'] }
+  { message: 'Unit cost (purchase cost) is required and must be positive', path: ['unitCost'] }
 )
 
 /**
@@ -47,7 +103,7 @@ export const stockItemSchema = z.object({
  */
 export const bulkImportStockSchema = z.object({
   stockItems: z.array(stockItemSchema).min(1, 'At least one stock item is required'),
-  purchase_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Purchase date must be in YYYY-MM-DD format').optional(),
+  purchase_date: zDdMmYyyyPurchaseOptional,
   acquisition_type: z.enum(['purchase', 'cash', 'credit', 'cheque', 'borrow']).optional(),
   reason: z.string().min(1, 'Reason is required').trim(),
   created_by: z.number().int().positive().optional().nullable()
@@ -67,8 +123,8 @@ export const updateStockItemSchema = z.object({
   // Editable fields
   batchNo: z.string().trim().optional().nullable(),
   batch_no: z.string().trim().optional().nullable(),
-  expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
-  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  expiryDate: zOptionalDdMmYyyyToIsoNull,
+  expiry_date: zOptionalDdMmYyyyToIsoNull,
   unitCost: z.number().positive('Unit cost must be a positive number').optional(),
   unit_cost: z.number().positive('Unit cost must be a positive number').optional(),
   sellingPrice: z.number().positive('Selling price must be a positive number').optional().nullable(),
@@ -86,8 +142,8 @@ export const adjustStockItemSchema = z.object({
   newQuantity: z.number().int().nonnegative('New quantity must be a non-negative integer'),
   reason: z.string().min(1, 'Reason is required').trim(),
   notes: z.string().trim().optional().nullable(),
-  adjustmentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Adjustment date must be in YYYY-MM-DD format').optional(),
-  adjustment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Adjustment date must be in YYYY-MM-DD format').optional(),
+  adjustmentDate: zDdMmYyyyOptionalIso,
+  adjustment_date: zDdMmYyyyOptionalIso,
   partnerId: z.coerce.number().int().positive().optional().nullable(),
   partner_id: z.coerce.number().int().positive().optional().nullable()
 })
@@ -105,8 +161,8 @@ export const borrowFromStockSchema = z.object({
   quantity: z.number().int().positive('Quantity must be a positive integer'),
   batchNo: z.string().trim().optional().nullable(),
   batch_no: z.string().trim().optional().nullable(),
-  expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
-  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  expiryDate: zOptionalDdMmYyyyToIsoNull,
+  expiry_date: zOptionalDdMmYyyyToIsoNull,
   description: z.string().trim().optional().nullable(),
   location: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable()
@@ -142,7 +198,7 @@ const borrowToReturnItemSchema = z.object({
   unit_cost: z.coerce.number().positive('Unit cost is required and must be positive'),
   batch_number: z.string().trim().optional().nullable(),
   batch_no: z.string().trim().optional().nullable(),
-  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expiry date must be in YYYY-MM-DD format').optional().nullable(),
+  expiry_date: zOptionalDdMmYyyyToIsoNull,
   quantity_returned: z.coerce.number().int().positive('Quantity returned must be a positive integer'),
   quantityReturned: z.coerce.number().int().positive('Quantity returned must be a positive integer').optional().nullable(),
   location: z.string().trim().optional().nullable()
@@ -162,8 +218,8 @@ export const returnBorrowedToStockSchema = z.object({
   quantity_returned: z.coerce.number().int().positive('Quantity returned must be a positive integer').optional().nullable(),
   // New format: array of return items
   returnItems: z.array(borrowToReturnItemSchema).min(1, 'At least one return item is required').optional().nullable(),
-  returnedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Returned date must be in YYYY-MM-DD format'),
-  returned_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Returned date must be in YYYY-MM-DD format').optional().nullable(),
+  returnedDate: zDdMmYyyyRequiredIso.optional(),
+  returned_date: zDdMmYyyyRequiredIso.optional(),
   notes: z.string().trim().optional().nullable(),
   condition: z.enum(['good', 'damaged', 'expired', 'other']).optional().nullable()
 }).refine(
@@ -218,8 +274,8 @@ export const returnBorrowedFromStockSchema = z.object({
   borrowedInventoryId: z.coerce.number().int().positive('Borrowed Inventory ID is required'),
   borrowed_inventory_id: z.coerce.number().int().positive('Borrowed Inventory ID is required').optional().nullable(),
   returnItems: z.array(returnItemSchema).min(1, 'At least one return item is required'),
-  returnedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Returned date must be in YYYY-MM-DD format'),
-  returned_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Returned date must be in YYYY-MM-DD format').optional().nullable(),
+  returnedOn: zDdMmYyyyRequiredIso.optional(),
+  returned_on: zDdMmYyyyRequiredIso.optional(),
   note: z.string().trim().optional().nullable()
 }).refine(
   (data) => {

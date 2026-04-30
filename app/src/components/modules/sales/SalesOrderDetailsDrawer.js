@@ -106,12 +106,12 @@ function renderDetails(props, order, items) {
             Row({ class: 'flex items-center justify-between gap-4 flex-wrap' }, [
               Row({ class: 'text-sm text-gray-700' }, [
                 Row({}, `Amount: Br ${financeFormat(order.withhold_amount)}`),
-                Row({ class: 'mt-1 font-medium text-gray-900' }, withholdConfirmed ? `Confirmed${order.sales_invoice_no ? ` · Invoice: ${order.sales_invoice_no}` : ''}` : 'Not confirmed'),
+                Row({ class: 'mt-1 font-medium text-gray-900' }, withholdConfirmed ? `Confirmed${order.withhold_ref ? ` · Withhold Ref: ${order.withhold_ref}` : ''}` : 'Not confirmed'),
               ]),
               Row({ class: 'flex flex-wrap gap-2' }, [
                 withholdConfirmed
                   ? Row({ class: 'flex flex-col gap-1' }, [
-                      Row({ class: 'text-xs text-gray-500 max-w-[220px]' }, 'Customer declined to confirm or provide sales invoice? Clear the confirmation so this order is no longer marked as withhold-confirmed.'),
+                      Row({ class: 'text-xs text-gray-500 max-w-[220px]' }, 'Customer declined to confirm or provide withhold ref? Clear the confirmation so this order is no longer marked as withhold-confirmed.'),
                       Button({
                         variant: 'outline',
                         onClick: () => props.setDrawerContentType('rollback-withhold'),
@@ -294,8 +294,8 @@ function renderPaymentForm(props, order, outstanding, onClose) {
 }
 
 function renderConfirmWithholdForm(props, order, onClose) {
-  props.ensureLocalStateKey('sales-invoice-no', order.sales_invoice_no || '');
-  const value = props.getLocalState('sales-invoice-no') || '';
+  props.ensureLocalStateKey('withhold-ref-confirm', order.withhold_ref || '');
+  const value = props.getLocalState('withhold-ref-confirm') || '';
 
   const handleSubmit = async () => {
     try {
@@ -310,12 +310,12 @@ function renderConfirmWithholdForm(props, order, onClose) {
 
   return Row({ class: 'flex flex-col gap-4' }, [
     Row({}, [
-      Row({ tagType: 'label', class: 'block text-sm font-medium text-gray-700 mb-2' }, 'Sales invoice no. (optional)'),
+      Row({ tagType: 'label', class: 'block text-sm font-medium text-gray-700 mb-2' }, 'Withhold Ref.'),
       Input({
         type: 'text',
         value,
-        onChange: (e) => props.setLocalState('sales-invoice-no', e.target.value),
-        placeholder: 'e.g. from tax authority',
+        onChange: (e) => props.setLocalState('withhold-ref-confirm', e.target.value),
+        placeholder: 'Customer withholding receipt reference',
         class: 'w-full',
       }),
     ]),
@@ -340,7 +340,7 @@ function renderRollbackConfirm(props, order, onClose) {
   };
 
   return Row({ class: 'flex flex-col gap-4' }, [
-    Row({ class: 'text-sm text-gray-600' }, 'This will clear the withhold confirmation and sales invoice number for this order.'),
+    Row({ class: 'text-sm text-gray-600' }, 'This will clear the withhold confirmation and withhold ref for this order.'),
     Row({ class: 'flex justify-end' }, [
       Button({ variant: 'danger', onClick: handleSubmit, disabled: props.viewModel.getState('loading') }, 'Rollback Withhold'),
     ]),

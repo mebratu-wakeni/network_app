@@ -17,6 +17,7 @@ const Input = (props) => {
     type = 'text',
     name,
     value,
+    accept,
     onChange,
     onInput,
     focusIn,
@@ -54,7 +55,8 @@ const Input = (props) => {
       type: type,
       name: name,
       id: name, // ID links to the Label's 'for' attribute
-      value: value,
+      ...(type === 'file' ? {} : { value: value }),
+      ...(accept ? { accept } : {}),
       placeholder: placeholder,
       'aria-invalid': isError ? "true" : "false",
       required,

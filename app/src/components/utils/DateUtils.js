@@ -39,6 +39,8 @@ export const toDateInputValue = (date) => {
   }
 };
 
+const ISO_YYYY_MM_DD = /^(\d{4})-(\d{2})-(\d{2})$/
+
 /**
  * Formats a date string or Date object into dd/mm/yyyy format
  * @param {string|Date|null|undefined} date - Date string (YYYY-MM-DD), Date object, null, or undefined
@@ -65,3 +67,18 @@ export const formatDateDDMMYYYY = (date) => {
     return '-';
   }
 };
+
+/**
+ * Shifts a value from &lt;input type="date"&gt; (YYYY-MM-DD) to API-expected dd/mm/yyyy.
+ * If the value is already free text, returns it unchanged (caller may send dd/mm from CSV-only flows).
+ * @param {string|null|undefined} value
+ * @returns {string|null}
+ */
+export const toApiDdMmYyyyFromUiDate = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const s = String(value).trim()
+  if (!s) return null
+  const m = ISO_YYYY_MM_DD.exec(s)
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`
+  return s
+}

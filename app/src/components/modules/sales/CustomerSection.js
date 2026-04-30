@@ -45,9 +45,9 @@ export function CustomerSection(props) {
       ]),
       isWithholding && !isWalkIn && formItem('Withhold Ref.', Input({
         type: 'text',
-        value: currentSale.sales_invoice_no || '',
-        onChange: (e) => props.viewModel.updateCurrentSaleField('sales_invoice_no', e.target.value),
-        placeholder: 'Optional',
+        value: currentSale.withhold_ref || '',
+        onChange: (e) => props.viewModel.updateCurrentSaleField('withhold_ref', e.target.value),
+        placeholder: 'Optional — customer receipt ref. if confirming now',
         class: 'w-full',
       })),
       formItem('Invoice No.', Input({

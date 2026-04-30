@@ -1,0 +1,81 @@
+{
+  "$comment": "Agent instructions for adding a PharmaSuit front-end module (Liteframe + this repo). Read docs/liteframe.md for Row, EventDelegator, ViewModel, StatefulRow, Router.",
+  "liteframeDoc": "docs/liteframe.md",
+  "summary": "A module is a feature area: a ViewModel (state + IPC/API), a UI root built with StatefulRow + Row, optional tab components under tabs/, route registration in navigation, and modals that use the Modal helper with a dedicated EventDelegator.",
+  "fileLayout": {
+    "root": "app/src/components/modules/<moduleName>/",
+    "typicalFiles": [
+      "<ModuleName>VM.js — class extends ViewModel; initializeState(); IPC via window.ipcRenderer.invoke; updateState for list/loading/errors",
+      "<ModuleName>.js or <ModuleName>UI.js — export function <ModuleName>UI(props?) { const viewModel = new ...VM(); return StatefulRow({ viewModel, stateKeys: [...], class }, render); }",
+      "tabs/<Tab>.js — composed Row trees; read VM via props.viewModel / getState; avoid assuming many keys exist on viewModelState"
+    ],
+    "naming": "Match existing neighbors (e.g. InventoryVM + Inventory.js, FinancialVM + Financial.js)."
+  },
+  "stateKeysAndRerender": {
+    "problem": "Each entry in stateKeys registers a ViewModel subscription; every updateState on that key triggers a full StatefulRow rerender/morph. Many keys ⇒ many redundant morphs.",
+    "preferredPattern": "Keep stateKeys minimal — typically only loading (or one other 'governor' key) per module StatefulRow so one subscription batches UI refresh. In render, read lists and detail state via viewModel.getState('...') when the governor key has just transitioned (e.g. after fetch ends).",
+    "localState": "getLocalState/setLocalState were for simple UI-only values (booleans, etc.). Prefer avoiding them when awkward; many screens use VM-only state and loading-driven paints.",
+    "tradeoff": "If a VM key is not in stateKeys and you never update a subscribed key afterward, morph will not run for that change — design flows so the visible refresh is tied to loading (or add a minimal extra subscribed key intentionally)."
+  },
+  "statefulRowPattern": {
+    "mustDo": [
+      "Instantiate the module ViewModel inside the UI factory (or pass in if tests require).",
+      "Return StatefulRow({ viewModel, stateKeys, class, ... }, render). Prefer stateKeys: ['loading'] only (or similarly small set) — not every VM field.",
+      "In render(props), read bulk data with props.viewModel.getState('product-list') etc.; use props.viewModelState only for the few subscribed keys (e.g. loading).",
+      "In render(props), build layout with Row({ class, tagType?, attributes?, events?, delegator? }, children). Follow existing files: use class string, pass delegator on interactive Rows inside modals.",
+      "Use props.viewModel for imperative calls (loadProducts, updateTab). Avoid expanding local state unless a trivial flag is clearer than VM."
+    ],
+    "avoid": [
+      "Listing many keys in stateKeys 'because the render reads them' — that multiplies rerenders; use getState + a governor key instead.",
+      "Sprawling ensureStateKey usage for many VM fields — same cost as listing them in stateKeys.",
+      "Do not put props.children / lifecycle / delegator into StatefulRow spread props unless intentional — they can override the wrapper.",
+      "Do not rely on clicks on Row with events but without delegator inside a modal — use the modal's delegator (see liteframe.md)."
+    ]
+  },
+  "viewModelPattern": {
+    "mustDo": [
+      "extend ViewModel (or compose SharedStateManager per project convention).",
+      "Implement initializeState() and call it from constructor; use this.setState(key, initial) once per key.",
+      "Use this.updateState(key, value) for changes after init.",
+      "Prefix or namespace state keys if shared navigation VM is involved; module-local keys live in module VM.",
+      "Use this.execute(async () => { ... }) for async IPC to get consistent error logging."
+    ],
+    "optional": [
+      "cleanup() when a route is torn down only if the VM registered subscriptions beyond StatefulRow (see routeCleanup)."
+    ]
+  },
+  "navigationAndRouter": {
+    "where": "app/src/components/navigation/NavigationUI.js registers routes on props.router.",
+    "steps": [
+      "Add a menu entry in NavigationVM (menuOptions): route path (lower-case, matches Router normalizePath), label, requireRule if gated, showInNav.",
+      "In NavigationUI, inside the forEach that calls router.addRoute(option.route, () => { ... }), add a branch: if (option.route === '/your-path') return YourModuleUI({ router, navigationVM: props.viewModel }) (pass props as needed for other modules);",
+      "Return a DOM root: usually the result of YourModuleUI() — must be truthy or Router keeps previous view.",
+      "If the module needs router.navigate or navigationVM, pass props from the route callback (see PurchaseUI, SalesUI, DashboardUI patterns)."
+    ],
+    "routeCleanup": "If the module registers global listeners or singleton VM state, add an entry to ROUTE_CLEANUP_REGISTRY in NavigationUI.js and export a cleanup function from the module VM."
+  },
+  "modalPattern": {
+    "helper": "app/src/components/shared/Modal.js",
+    "usage": [
+      "Modal(props, (delegator, handleClose) => ModalContent(viewModelOrProps, delegator, handleClose));",
+      "Every Row with events.click or other delegated events inside the modal must receive the same delegator argument.",
+      "Use attributes: { type: 'button' } for buttons that must not submit forms.",
+      "For file inputs, label + for=fileInputId or ensure Input id matches; hidden file input still needs delegator if using change events per Liteframe rules."
+    ]
+  },
+  "ipcAndApi": {
+    "pattern": "ViewModel invokes window.ipcRenderer.invoke('channel:name', payload); preload exposes channels; Electron main forwards to API. Keep channel names grep-friendly."
+  },
+  "importAndStyling": {
+    "pattern": "Import utilities from app/src/components/utils/ (Button, Card, Input, Table, etc.). Use Tailwind class strings on Row consistent with sibling modules."
+  },
+  "checklistForNewModule": [
+    "[ ] <Module>VM.js with initializeState + keys",
+    "[ ] <Module> UI root with StatefulRow and minimal stateKeys (e.g. loading only); render uses viewModel.getState for data",
+    "[ ] tabs/ or subcomponents as needed",
+    "[ ] NavigationVM menuOptions + NavigationUI router.addRoute branch",
+    "[ ] ROUTE_CLEANUP_REGISTRY if cleanup required on leave",
+    "[ ] Modals: Modal(delegator, handleClose) pattern for delegated events",
+    "[ ] Permissions: permissionChecker / requireRule on menu if applicable"
+  ]
+}

@@ -2,6 +2,10 @@
  * Financial repository: expenses, deposits, cash loans, withhold settlements
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
+import {
+  effectiveWithholdConfirmed,
+  rawWithholdEffectivelyConfirmed
+} from '../../utils/salesWithhold.js'
 
 export class FinancialRepository {
   constructor(knex) {
@@ -571,11 +575,11 @@ export class FinancialRepository {
       .whereRaw('coalesce(so.withhold_amount, 0) > 0.009')
 
     if (status === 'confirmed_unsettled') {
-      base = base.andWhere('so.withhold_confirmation', true).andWhere('so.withhold_settled', false)
+      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', false)
     } else if (status === 'unconfirmed') {
-      base = base.andWhere('so.withhold_confirmation', false).andWhere('so.withhold_settled', false)
+      base = base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', false)
     } else if (status === 'settled') {
-      base = base.andWhere('so.withhold_confirmation', true).andWhere('so.withhold_settled', true)
+      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', true)
     }
 
     base = base.select(
@@ -586,7 +590,8 @@ export class FinancialRepository {
       'so.withhold_amount',
       'so.withhold_confirmation',
       'so.withhold_settled',
-      'so.sales_invoice_no',
+      'so.withhold_ref',
+      'so.remark',
       'c.name as customer_name'
     ).orderBy('so.order_date', 'desc').orderBy('so.id', 'desc')
 
@@ -598,7 +603,13 @@ export class FinancialRepository {
       .where('so.status', 'completed')
       .where('so.is_reversed', false)
       .whereRaw('coalesce(so.withhold_amount, 0) > 0.009')
-      .select('so.withhold_confirmation', 'so.withhold_settled', 'so.withhold_amount')
+      .select(
+        'so.withhold_confirmation',
+        'so.withhold_settled',
+        'so.withhold_amount',
+        'so.withhold_ref',
+        'so.remark'
+      )
 
     let totalUnsettled = 0
     let countConfirmedUnsettled = 0
@@ -606,7 +617,7 @@ export class FinancialRepository {
     let countSettled = 0
     for (const r of statsRows) {
       const amt = Number(r.withhold_amount || 0)
-      const confirmed = !!r.withhold_confirmation
+      const confirmed = effectiveWithholdConfirmed(r)
       const settled = !!r.withhold_settled
       if (!settled) totalUnsettled += amt
       if (confirmed && !settled) countConfirmedUnsettled += 1
@@ -620,9 +631,9 @@ export class FinancialRepository {
       order_date: r.order_date,
       total_amount: Number(r.total_amount || 0),
       withhold_amount: Number(r.withhold_amount || 0),
-      withhold_confirmation: !!r.withhold_confirmation,
+      withhold_confirmation: effectiveWithholdConfirmed(r),
       withhold_settled: !!r.withhold_settled,
-      sales_invoice_no: r.sales_invoice_no,
+      withhold_ref: r.withhold_ref,
       customer_name: r.customer_name
     }))
 
@@ -664,8 +675,8 @@ export class FinancialRepository {
         .where('status', 'completed')
         .where('is_reversed', false)
         .whereRaw('coalesce(withhold_amount, 0) > 0.009')
-        .where('withhold_confirmation', true)
         .where('withhold_settled', false)
+        .whereRaw(rawWithholdEffectivelyConfirmed(trx, 'sales_orders'))
         .select('id', 'receipt_no', 'withhold_amount')
 
       if (orders.length !== sales_order_ids.length) {

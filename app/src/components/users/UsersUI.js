@@ -44,6 +44,7 @@ const UsersTable = () => {
     const loading = props.viewModel.getState('loading');
     const loadingMore = false;//props.viewModel.getState('loading-more');
     const error = props.viewModel.getState('error');
+    const exportNotice = props.viewModel.getState('export-notice');
     const selectedUser = props.viewModel.getState('selected-user');
     const selectedUserId = 1; //props.viewModel.getState('selected-user-id');
     const detailsLoading = false;  // props.viewModel.getState('details-loading');
@@ -74,6 +75,7 @@ const UsersTable = () => {
         ]),
         CardBody({class: 'flex-1 flex flex-col overflow-y-auto'}, [
           error && Row({ class: 'mb-3 p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm flex-shrink-0' }, error),
+          exportNotice && Row({ class: 'mb-3 p-3 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex-shrink-0' }, exportNotice),
           loading && userList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0' }, 'Loading users...'),
           !loading && userList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0' }, 'No users found'),
           Row({class: 'flex-shrink-0'}, [PageControl(props)]),
@@ -99,7 +101,7 @@ const UsersTable = () => {
       ]);
   }
 
-  return StatefulRow({id: 'users-view', class: 'h-full', viewModel }, render);
+  return StatefulRow({ id: 'users-view', class: 'h-full', viewModel, stateKeys: ['loading', 'error', 'export-notice', 'user-list', 'search-query', 'table-config', 'total-count', 'selected-user'] }, render);
 }
 
 function table({ userList, selectedUserId, onRowClick }) {

@@ -198,10 +198,16 @@ function StockUI(props) {
         Button({ 
           variant: 'outline', 
           class: 'text-nowrap flex items-center gap-2',
-          onClick: () => openImportStockModal(props),
-          delegator: props.delegator
+          onClick: async () => {
+            const hasPermission = await permissionChecker.checkPermission('CanImportStock', {
+              actionName: 'import stock'
+            });
+            if (hasPermission) {
+              openImportStockModal(props);
+            }
+          }
         }, [
-          IonIcon({ name: 'cloud-upload-outline', class: 'text-lg text-white font-bold' }),
+          IonIcon({ name: 'cloud-upload-outline', class: 'text-lg' }),
           'Import Stock'
         ]),
       ]),

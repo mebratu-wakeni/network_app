@@ -774,10 +774,10 @@ function filterAndSortWithholdOrders(orders, search, sortBy, orderBy) {
     list = list.filter((o) => {
       const receipt = (o.receipt_no || '').toLowerCase()
       const customer = (o.customer_name || '').toLowerCase()
-      const invoice = (o.sales_invoice_no || '').toLowerCase()
+      const ref = (o.withhold_ref || '').toLowerCase()
       const dateStr = formatDateDDMMYYYY(o.order_date) || ''
       const amtStr = financeFormat(o.withhold_amount)
-      return `${receipt} ${customer} ${invoice} ${dateStr} ${amtStr}`.includes(searchLower)
+      return `${receipt} ${customer} ${ref} ${dateStr} ${amtStr}`.includes(searchLower)
     })
   }
   const by = sortBy || 'order_date'
@@ -787,7 +787,7 @@ function filterAndSortWithholdOrders(orders, search, sortBy, orderBy) {
     if (by === 'order_date') cmp = new Date(a.order_date || 0) - new Date(b.order_date || 0)
     else if (by === 'receipt_no') cmp = (a.receipt_no || '').localeCompare(b.receipt_no || '')
     else if (by === 'customer_name') cmp = (a.customer_name || '').localeCompare(b.customer_name || '')
-    else if (by === 'sales_invoice_no') cmp = (a.sales_invoice_no || '').localeCompare(b.sales_invoice_no || '')
+    else if (by === 'withhold_ref') cmp = (a.withhold_ref || '').localeCompare(b.withhold_ref || '')
     else if (by === 'withhold_amount') cmp = Number(a.withhold_amount || 0) - Number(b.withhold_amount || 0)
     return cmp * dir
   })
@@ -969,7 +969,7 @@ function WithholdReceivables(props) {
         Row({ class: 'relative w-full' }, [
           IonIcon({ name: 'search-outline', class: 'absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xl pointer-events-none' }),
           Input({
-            placeholder: 'Search receipt, customer, invoice...',
+            placeholder: 'Search receipt, customer, withhold ref...',
             class: 'pl-10 pr-4 w-full',
             value: search,
             onChange: (e) => vm.setWithholdSearch(e.target.value)
@@ -1006,7 +1006,7 @@ function WithholdReceivables(props) {
               TableHCell({ class: `${headerClass} w-28`, onClick: () => vm.setWithholdSort('receipt_no') }, [Row({ class: headerLabelWrapClass }, ['Receipt #', sortIcon('receipt_no')])]),
               TableHCell({ class: headerClass, onClick: () => vm.setWithholdSort('customer_name') }, [Row({ class: headerLabelWrapClass }, ['Customer', sortIcon('customer_name')])]),
               TableHCell({ class: `${headerClass} w-28`, onClick: () => vm.setWithholdSort('order_date') }, [Row({ class: headerLabelWrapClass }, ['Date', sortIcon('order_date')])]),
-              TableHCell({ class: `${headerClass} w-24` }, 'Invoice #'),
+              TableHCell({ class: `${headerClass} w-24`, onClick: () => vm.setWithholdSort('withhold_ref') }, [Row({ class: headerLabelWrapClass }, ['Withhold Ref', sortIcon('withhold_ref')])]),
               TableHCell({ class: `${headerClass} text-right w-28`, onClick: () => vm.setWithholdSort('withhold_amount') }, [Row({ class: `${headerLabelWrapClass} justify-end` }, ['Withhold', sortIcon('withhold_amount')])]),
               TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase w-28' }, 'Status'),
               TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase w-28' }, 'Action')
@@ -1053,7 +1053,7 @@ function WithholdReceivables(props) {
                   TableDCell({ class: 'w-28' }, order.receipt_no || '—'),
                   TableDCell({}, order.customer_name || '—'),
                   TableDCell({ class: 'w-28' }, formatDateDDMMYYYY(order.order_date)),
-                  TableDCell({ class: 'w-24' }, order.sales_invoice_no || '—'),
+                  TableDCell({ class: 'w-24' }, order.withhold_ref || '—'),
                   TableDCell({ class: 'text-right w-28' }, `Br ${financeFormat(order.withhold_amount)}`),
                   TableDCell({ class: 'text-center w-28' }, Badge({ label: statusBadge.label, tone: statusBadge.tone, class: 'text-xs px-2 py-0.5' })),
                   TableDCell({ class: 'text-center w-28' }, ActionDropdown({

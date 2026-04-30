@@ -4,7 +4,7 @@
  * - customer_id: was retailer_id; FK to customers.
  * - receipt_no: system-generated sales order identifier (required, unique).
  * - invoice_no: government/tax authority reference (optional).
- * - sales_invoice_no: used for withhold confirmation (optional, unique).
+ * - withhold_ref: customer withholding receipt reference (optional, unique).
  * - withhold_percentage: no default; value comes from settings when applicable.
  * - Withholding is inferred from withhold_percentage and withhold_amount (no separate boolean).
  * - Hold orders live in sales_hold_orders (snapshot of current-order state); no is_held/hold_until here.
@@ -37,7 +37,7 @@ export const up = async (knex) => {
     t.decimal('received_amount', 15, 2)
     t.boolean('withhold_settled').defaultTo(false)
     t.boolean('withhold_confirmation').defaultTo(false) // Important for withhold workflow
-    t.string('sales_invoice_no', 255) // For withhold confirmation (optional, unique)
+    t.string('withhold_ref', 255) // Customer withholding receipt ref. (optional, unique)
 
     // System-generated receipt (sales order identifier)
     t.string('receipt_no', 255).notNullable().unique()
@@ -88,11 +88,11 @@ export const up = async (knex) => {
     `)
   }
 
-  // Unique index for sales_invoice_no (nullable)
+  // Unique index for withhold_ref (nullable)
   await knex.raw(`
-    CREATE UNIQUE INDEX sales_orders_sales_invoice_no_unique
-    ON sales_orders (sales_invoice_no)
-    WHERE sales_invoice_no IS NOT NULL
+    CREATE UNIQUE INDEX sales_orders_withhold_ref_unique
+    ON sales_orders (withhold_ref)
+    WHERE withhold_ref IS NOT NULL
   `)
 }
 

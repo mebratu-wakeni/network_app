@@ -1,3 +1,7 @@
+import { parseCSVText } from '../../utils/csvImportParse.js'
+import { ddMmYyyyToIso } from '../../utils/ddMmYyyy.js'
+import { validateStockRowsForUpload, MAX_UPLOAD_ROWS } from './importCsvHelpers.js'
+
 /**
  * Controller: HTTP layer for inventories/stock
  * Handles request/response, delegates business logic to service
@@ -73,6 +77,111 @@ export class InventoriesController {
       })
     } catch (error) {
       console.error('[InventoriesController] Bulk import error:', error)
+      next(error)
+    }
+  }
+
+  /**
+   * POST /api/inventories/bulk-import-upload
+   * Multipart CSV: validate on server, then all-or-nothing stock import.
+   */
+  bulkImportUpload = async (req, res, next) => {
+    try {
+      const purchase_date_raw = req.body.purchase_date || req.body.purchaseDate
+      let purchase_date = undefined
+      if (purchase_date_raw != null && String(purchase_date_raw).trim() !== '') {
+        const iso = ddMmYyyyToIso(String(purchase_date_raw).trim())
+        if (!iso) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Purchase date must be dd/mm/yyyy (e.g. 31/12/2025)'
+          })
+        }
+        purchase_date = iso
+      }
+      const acquisition_type = req.body.acquisition_type || req.body.acquisitionType
+      const reason = (req.body.reason || 'Initial Stock').trim()
+      const userId = req.user?.id || req.body.created_by || req.body.createdBy || null
+
+      if (!req.file?.buffer) {
+        return res.status(400).json({ ok: false, error: 'No file uploaded' })
+      }
+
+      const text = req.file.buffer.toString('utf8')
+      const { rows } = parseCSVText(text)
+      if (rows.length > MAX_UPLOAD_ROWS) {
+        return res.status(400).json({
+          ok: false,
+          error: `Too many data rows (max ${MAX_UPLOAD_ROWS})`
+        })
+      }
+
+      const { validItems, errors: rowErrors } = validateStockRowsForUpload(rows)
+      if (rowErrors.length > 0) {
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          validationFailed: true,
+          rowErrors,
+          summary: {
+            total: rows.length,
+            successful: 0,
+            failed: rowErrors.length,
+            errors: rowErrors.length,
+            warnings: 0
+          }
+        })
+      }
+
+      if (validItems.length === 0) {
+        return res.status(400).json({ ok: false, error: 'No data rows in CSV' })
+      }
+
+      const result = await this.service.bulkImport(validItems, {
+        purchase_date,
+        acquisition_type,
+        reason,
+        created_by: userId
+      })
+
+      if (result.failed > 0) {
+        const rowErrors = (result.results || [])
+          .filter((r) => r && r.success === false)
+          .map((r) => ({
+            rowNumber: r.csvRowNumber ?? (r.index != null ? r.index + 2 : null),
+            error: r.error || 'Import failed',
+            issueKind: 'error'
+          }))
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          atomicFailed: true,
+          summary: {
+            total: result.total,
+            successful: result.successful,
+            failed: result.failed,
+            errors: result.failed,
+            warnings: 0
+          },
+          rowErrors: rowErrors.length ? rowErrors : [{ rowNumber: null, error: 'Import failed (all rows rolled back)', issueKind: 'error' }],
+          results: result.results
+        })
+      }
+
+      res.json({
+        ok: true,
+        success: true,
+        summary: {
+          total: result.total,
+          successful: result.successful,
+          failed: result.failed,
+          errors: 0,
+          warnings: 0
+        },
+        results: result.results
+      })
+    } catch (error) {
+      console.error('[InventoriesController] Bulk import upload error:', error)
       next(error)
     }
   }

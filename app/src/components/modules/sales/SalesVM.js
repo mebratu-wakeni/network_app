@@ -31,7 +31,7 @@ const DEFAULT_CURRENT_SALE = {
   withhold_percentage: null, // From settings when applicable
   withhold_amount: null, // Computed
   withhold_reference: '', // Stored in remark field
-  sales_invoice_no: null, // Set when confirming withhold
+  withhold_ref: null, // Customer withholding receipt ref. when confirming at sale
   withhold_confirmation: false, // Set when confirming withhold
   withhold_settled: false, // Set when withhold is settled
   
@@ -326,7 +326,7 @@ export class SalesVM extends ViewModel {
     this.updateState('current-sale', {
       ...currentSale,
       is_withholding: isWithholding,
-      ...(isWithholding ? {} : { withhold_reference: '' }),
+      ...(isWithholding ? {} : { withhold_reference: '', withhold_ref: null }),
     });
     this.updateState('loading', true);
     setTimeout(() => this.updateState('loading', false), 0);
@@ -476,7 +476,7 @@ export class SalesVM extends ViewModel {
       is_withholding: isWalkIn ? false : currentSale.is_withholding,
       withhold_reference: isWalkIn ? '' : currentSale.withhold_reference,
       // Reset withhold confirmation fields when customer changes
-      sales_invoice_no: null,
+      withhold_ref: null,
       withhold_confirmation: false
     });
     this.updateState('selected-customer', customer);
@@ -491,7 +491,8 @@ export class SalesVM extends ViewModel {
       customer_id: walkIn?.id ?? null, 
       customer: walkIn,
       is_withholding: false,
-      withhold_reference: ''
+      withhold_reference: '',
+      withhold_ref: null,
     });
     this.updateState('selected-customer', walkIn);
   }
@@ -716,7 +717,7 @@ export class SalesVM extends ViewModel {
           withhold_percentage: snapshot.withhold_percentage != null ? Number(snapshot.withhold_percentage) : null,
           withhold_amount: null, // Will be computed
           withhold_reference: isWalkIn ? '' : (snapshot.withhold_reference || ''),
-          sales_invoice_no: null, // Set when confirming withhold
+          withhold_ref: isWalkIn ? null : (snapshot.withhold_ref ?? snapshot.sales_invoice_no ?? null),
           withhold_confirmation: false,
           withhold_settled: false,
           
@@ -797,6 +798,7 @@ export class SalesVM extends ViewModel {
         withhold_percentage: currentSale.is_withholding ? Number(this.getState('withhold-percentage')) : null,
         withhold_amount: totals.withhold_amount || null,
         withhold_reference: currentSale.withhold_reference || null,
+        withhold_ref: currentSale.withhold_ref || null,
         first_payment: currentSale.payment_mode === 'credit' ? Number(currentSale.first_payment || 0) : null,
         cheque_details: currentSale.payment_mode === 'cheque' && currentSale.cheque_details ? { ...currentSale.cheque_details, amount: Number(currentSale.cheque_details.amount) } : null,
         remark: currentSale.remark || null,
@@ -901,11 +903,11 @@ export class SalesVM extends ViewModel {
     }
   }
 
-  async confirmWithhold(orderId, sales_invoice_no) {
+  async confirmWithhold(orderId, withholdRef) {
     if (this.getState('loading')) return;
     this.updateState('loading', true);
     try {
-      const result = await window.ipcRenderer.invoke('sales:confirm-withhold', { orderId, sales_invoice_no });
+      const result = await window.ipcRenderer.invoke('sales:confirm-withhold', { orderId, withhold_ref: withholdRef });
       if (result && result.success) {
         await this.loadOrderDetails(orderId);
         await this.loadSalesOrders();

@@ -21,9 +21,9 @@ export const createSalesOrderSchema = z.object({
   customer_id: z.number().int().positive().optional().nullable(), // null = walk-in
   order_date: isoDate,
   invoice_no: z.string().trim().optional().nullable(),
-  sales_invoice_no: z.string().trim().optional().nullable(),
+  withhold_ref: z.string().trim().optional().nullable(), // Customer withholding receipt no.; when set, confirmation is enforced server-side
   remark: z.string().trim().optional().nullable(),
-  withhold_reference: z.string().trim().optional().nullable(), // when filled, order is withhold confirmed
+  withhold_reference: z.string().trim().optional().nullable(), // Optional note; copied to remark only — does not set withhold_ref or confirm
   payment_type: z.enum(['cash', 'credit', 'cheque']),
   withhold_percentage: z.number().nonnegative().optional().nullable(),
   amount_paid: z.number().nonnegative().optional().nullable(),
@@ -63,7 +63,7 @@ export const paySalesOrderSchema = z.object({
 
 /** PATCH /api/sales/orders/:id/withhold-confirmation */
 export const confirmWithholdSchema = z.object({
-  sales_invoice_no: z.string().trim().optional().nullable()
+  withhold_ref: z.string().trim().min(1, 'Withhold ref is required')
 })
 
 /** POST /api/sales/orders/:id/reverse */

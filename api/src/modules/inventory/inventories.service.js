@@ -35,8 +35,10 @@ export class InventoriesService {
       })).concat(
         result.failed.map(r => ({
           success: false,
+          issueKind: 'error',
           index: r.index,
-          error: r.error
+          csvRowNumber: r.csvRowNumber ?? null,
+          error: r.error || r.message
         }))
       )
     }
