@@ -555,102 +555,289 @@ export class SalesRepository {
   }
 
   /**
+   * Completed, non-reversed sales for one customer with net outstanding &gt; 0 (same basis as trade receivables).
+   */
+  async queryOutstandingSalesForCustomer(knexOrTrx, customerId) {
+    const cid = Number(customerId)
+    if (!Number.isFinite(cid) || cid <= 0) return []
+
+    const spSub = knexOrTrx('sales_payments')
+      .select('sales_order_id')
+      .sum({ total_paid: 'amount' })
+      .groupBy('sales_order_id')
+      .as('sp')
+
+    const rows = await knexOrTrx('sales_orders as so')
+      .leftJoin(spSub, 'so.id', 'sp.sales_order_id')
+      .where('so.customer_id', cid)
+      .where('so.status', 'completed')
+      .where('so.is_reversed', false)
+      .select(
+        'so.id',
+        'so.receipt_no',
+        'so.order_date',
+        'so.total_amount',
+        'so.withhold_amount',
+        knexOrTrx.raw('coalesce(sp.total_paid, 0) as total_paid')
+      )
+
+    const orders = []
+    for (const row of rows) {
+      const net = Number(row.total_amount || 0) - Number(row.withhold_amount || 0)
+      const paid = Number(row.total_paid || 0)
+      const outstanding = Math.max(0, net - paid)
+      if (outstanding > 0.01) {
+        orders.push({
+          id: row.id,
+          receipt_no: row.receipt_no,
+          order_date: row.order_date,
+          net_amount: net,
+          amount_paid: paid,
+          outstanding_balance: outstanding
+        })
+      }
+    }
+    return orders
+  }
+
+  async getCustomerOutstandingForPayment(customerId) {
+    const hasSales = await this.knex.schema.hasTable('sales_orders')
+    if (!hasSales) return { orders: [], total_outstanding: 0 }
+    const orders = await this.queryOutstandingSalesForCustomer(this.knex, customerId)
+    const total_outstanding = orders.reduce((s, o) => s + o.outstanding_balance, 0)
+    return { orders, total_outstanding }
+  }
+
+  /**
+   * Apply one payment slice to a sales order inside an existing transaction.
+   */
+  async recordPaymentInTrx(trx, orderId, paymentData, userId = null) {
+    const amount = Number(paymentData.amount)
+    const order = await trx('sales_orders').where({ id: orderId }).first()
+    if (!order) {
+      const err = new Error('Sales order not found')
+      err.status = 404
+      throw err
+    }
+    if (order.is_reversed) {
+      const err = new Error('Cannot pay a reversed order')
+      err.status = 400
+      throw err
+    }
+    const totalAmount = Number(order.total_amount || 0)
+    const withholdAmount = Number(order.withhold_amount || 0)
+    const netAmount = totalAmount - withholdAmount
+
+    const hasPaymentsTable = await trx.schema.hasTable('sales_payments')
+    let alreadyPaid = 0
+    if (hasPaymentsTable) {
+      const paymentsAgg = await trx('sales_payments')
+        .where('sales_order_id', orderId)
+        .sum({ total_paid: 'amount' })
+        .first()
+      alreadyPaid = Number(paymentsAgg?.total_paid || 0)
+    } else {
+      alreadyPaid = Number(order.amount_paid || 0)
+    }
+    const newPaid = alreadyPaid + amount
+
+    if (newPaid > netAmount + 0.01) {
+      const err = new Error('Payment would exceed amount due')
+      err.status = 400
+      throw err
+    }
+    if (amount <= 0) {
+      const err = new Error('Payment amount must be greater than zero')
+      err.status = 400
+      throw err
+    }
+    let payment_status = 'unpaid'
+    if (newPaid >= netAmount - 0.009) payment_status = 'paid'
+    else if (newPaid > 0) payment_status = 'partial'
+
+    const paymentDate = paymentData.payment_date || new Date().toISOString().split('T')[0]
+    let paymentId = orderId
+
+    if (hasPaymentsTable) {
+      const [payment] = await trx('sales_payments')
+        .insert({
+          sales_order_id: orderId,
+          payment_date: paymentDate,
+          amount,
+          payment_method: paymentData.payment_method || 'cash',
+          note: paymentData.note || null,
+          cheque_no: paymentData.cheque_no || null,
+          bank_name: paymentData.bank_name || null,
+          cheque_date: paymentData.cheque_date || null,
+          last_updated: trx.fn.now(),
+          sync_status: 'pending',
+        })
+        .returning('*')
+      if (payment && payment.id) paymentId = payment.id
+    }
+
+    await trx('sales_orders')
+      .where({ id: orderId })
+      .update({
+        amount_paid: newPaid,
+        payment_status,
+        last_updated: trx.fn.now()
+      })
+
+    const hasLedger = await trx.schema.hasTable('account_ledger')
+    if (hasLedger) {
+      await this.ledgerHelper.recordSalesPayment({
+        salesOrderId: orderId,
+        paymentId,
+        amount,
+        paymentMethod: paymentData.payment_method || 'cash',
+        transactionDate: paymentDate,
+        referenceNumber: order.receipt_no || null,
+        memo: paymentData.note || null,
+        createdBy: userId
+      }, trx)
+    }
+
+    return {
+      amount_paid: newPaid,
+      payment_status,
+      outstanding_balance: Math.max(0, netAmount - newPaid)
+    }
+  }
+
+  /**
    * Record payment on a sales order. Updates amount_paid to the sum total of all payments (from sales_payments when table exists).
    * Inserts into sales_payments when table exists; posts ledger entry (DR Cash, CR AR) when account_ledger exists.
    */
   async recordPayment(orderId, paymentData, userId = null) {
     return this.knex.transaction(async (trx) => {
-      const amount = Number(paymentData.amount)
-      const order = await trx('sales_orders').where({ id: orderId }).first()
-      if (!order) {
-        const err = new Error('Sales order not found')
-        err.status = 404
-        throw err
-      }
-      if (order.is_reversed) {
-        const err = new Error('Cannot pay a reversed order')
+      return this.recordPaymentInTrx(trx, orderId, paymentData, userId)
+    })
+  }
+
+  /**
+   * Apply one customer payment across multiple orders (FIFO / LIFO / manual). Single DB transaction.
+   */
+  async recordBulkCustomerPayment({
+    customerId,
+    paymentAmount,
+    allocation,
+    manualAllocations,
+    paymentPayload,
+    userId = null
+  }) {
+    const totalPay = Number(paymentAmount)
+    if (!Number.isFinite(totalPay) || totalPay <= 0) {
+      const err = new Error('Payment amount must be greater than zero')
+      err.status = 400
+      throw err
+    }
+
+    const paymentDate =
+      paymentPayload.payment_date || new Date().toISOString().split('T')[0]
+    const payment_method = paymentPayload.payment_mode || 'cash'
+    const note = paymentPayload.notes || null
+    const cheque = paymentPayload.cheque_details || {}
+    const bank_name = cheque.bank_name || null
+    const cheque_no = cheque.cheque_number || cheque.cheque_no || null
+    const cheque_date = cheque.cheque_date || null
+
+    const baseSlice = {
+      payment_date: paymentDate,
+      payment_method,
+      note,
+      bank_name,
+      cheque_no,
+      cheque_date
+    }
+
+    return this.knex.transaction(async (trx) => {
+      const rows = await this.queryOutstandingSalesForCustomer(trx, customerId)
+      if (rows.length === 0) {
+        const err = new Error('No outstanding orders for this customer')
         err.status = 400
         throw err
       }
-      const totalAmount = Number(order.total_amount || 0)
-      const withholdAmount = Number(order.withhold_amount || 0)
-      const netAmount = totalAmount - withholdAmount
 
-      const hasPaymentsTable = await trx.schema.hasTable('sales_payments')
-      let alreadyPaid = 0
-      if (hasPaymentsTable) {
-        const paymentsAgg = await trx('sales_payments')
-          .where('sales_order_id', orderId)
-          .sum({ total_paid: 'amount' })
-          .first()
-        alreadyPaid = Number(paymentsAgg?.total_paid || 0)
-      } else {
-        alreadyPaid = Number(order.amount_paid || 0)
-      }
-      const newPaid = alreadyPaid + amount
-
-      if (newPaid > netAmount + 0.01) {
-        const err = new Error('Payment would exceed amount due')
+      const totalOutstanding = rows.reduce((s, r) => s + r.outstanding_balance, 0)
+      if (totalPay > totalOutstanding + 0.02) {
+        const err = new Error('Payment amount exceeds total outstanding for this customer')
         err.status = 400
         throw err
       }
-      if (amount <= 0) {
-        const err = new Error('Payment amount must be greater than zero')
-        err.status = 400
-        throw err
-      }
-      let payment_status = 'unpaid'
-      if (newPaid >= netAmount - 0.009) payment_status = 'paid'
-      else if (newPaid > 0) payment_status = 'partial'
 
-      const paymentDate = paymentData.payment_date || new Date().toISOString().split('T')[0]
-      let paymentId = orderId // fallback for ledger reference when no sales_payments row
+      const applied = []
 
-      if (hasPaymentsTable) {
-        const [payment] = await trx('sales_payments')
-          .insert({
-            sales_order_id: orderId,
-            payment_date: paymentDate,
-            amount,
-            payment_method: paymentData.payment_method || 'cash',
-            note: paymentData.note || null,
-            cheque_no: paymentData.cheque_no || null,
-            bank_name: paymentData.bank_name || null,
-            cheque_date: paymentData.cheque_date || null,
-            last_updated: trx.fn.now(),
-            sync_status: 'pending',
+      if (allocation === 'manual') {
+        const list = manualAllocations || []
+        const sumManual = list.reduce((s, m) => s + Number(m.amount || 0), 0)
+        if (Math.abs(sumManual - totalPay) > 0.02) {
+          const err = new Error('Manual allocations must sum to the payment amount')
+          err.status = 400
+          throw err
+        }
+        const byId = new Map(rows.map((r) => [r.id, r]))
+        for (const m of list) {
+          const oid = Number(m.sales_order_id)
+          const slice = Number(m.amount)
+          if (slice <= 0.009) continue
+          const row = byId.get(oid)
+          if (!row) {
+            const err = new Error(`Order ${oid} is not outstanding for this customer`)
+            err.status = 400
+            throw err
+          }
+          if (slice > row.outstanding_balance + 0.02) {
+            const err = new Error(`Amount for order ${row.receipt_no || oid} exceeds outstanding balance`)
+            err.status = 400
+            throw err
+          }
+          await this.recordPaymentInTrx(trx, oid, { ...baseSlice, amount: slice }, userId)
+          applied.push({
+            sales_order_id: oid,
+            receipt_no: row.receipt_no,
+            amount: slice
           })
-          .returning('*')
-        if (payment && payment.id) paymentId = payment.id
-      }
+        }
+      } else {
+        let remaining = totalPay
+        let ordered = [...rows]
+        if (allocation === 'fifo') {
+          ordered.sort((a, b) => {
+            const cmp = String(a.order_date || '').localeCompare(String(b.order_date || ''))
+            if (cmp !== 0) return cmp
+            return a.id - b.id
+          })
+        } else {
+          ordered.sort((a, b) => {
+            const cmp = String(b.order_date || '').localeCompare(String(a.order_date || ''))
+            if (cmp !== 0) return cmp
+            return b.id - a.id
+          })
+        }
 
-      // amount_paid = sum total of all payments (after insert; when no payments table, newPaid = order.amount_paid + amount)
-      await trx('sales_orders')
-        .where({ id: orderId })
-        .update({
-          amount_paid: newPaid,
-          payment_status,
-          last_updated: trx.fn.now()
-        })
-
-      const hasLedger = await trx.schema.hasTable('account_ledger')
-      if (hasLedger) {
-        await this.ledgerHelper.recordSalesPayment({
-          salesOrderId: orderId,
-          paymentId,
-          amount,
-          paymentMethod: paymentData.payment_method || 'cash',
-          transactionDate: paymentDate,
-          referenceNumber: order.receipt_no || null,
-          memo: paymentData.note || null,
-          createdBy: userId
-        }, trx)
+        for (const row of ordered) {
+          if (remaining <= 0.009) break
+          const slice = Math.min(remaining, row.outstanding_balance)
+          if (slice <= 0.009) continue
+          await this.recordPaymentInTrx(trx, row.id, { ...baseSlice, amount: slice }, userId)
+          applied.push({
+            sales_order_id: row.id,
+            receipt_no: row.receipt_no,
+            amount: slice
+          })
+          remaining -= slice
+        }
+        if (remaining > 0.02) {
+          const err = new Error('Could not allocate full payment (data changed during transaction)')
+          err.status = 409
+          throw err
+        }
       }
 
       return {
-        amount_paid: newPaid,
-        payment_status,
-        outstanding_balance: Math.max(0, netAmount - newPaid)
+        total_applied: totalPay,
+        applied
       }
     })
   }

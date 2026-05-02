@@ -20,6 +20,20 @@ export class ReportsRepository {
   }
 
   /**
+   * Chart of accounts for financial reports: include inactive rows that still have ledger activity
+   * so statement lines are not silently dropped (which breaks the balance sheet identity).
+   */
+  async getChartOfAccountsForReporting() {
+    const codesWithLedger = await this.knex('account_ledger').distinct('account_code').pluck('account_code')
+    const rows = await this.knex('chart_of_accounts')
+      .where(function includeActiveOrUsed() {
+        this.where({ is_active: true }).orWhereIn('account_code', codesWithLedger)
+      })
+      .orderBy('account_code', 'asc')
+    return rows
+  }
+
+  /**
    * Get closing balance per account as of a date.
    * Delegates to LedgerHelper.getClosingBalances (computed from debit/credit).
    */

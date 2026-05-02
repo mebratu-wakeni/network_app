@@ -23,7 +23,7 @@ const Modal = (props, childComponent) => {
   const childContent = childComponent(delegator, handleClose);
   // Lift dialog above backdrop fills in nested fixed/flex layouts (Electron/WebKit).
   const panelWrap = Row(
-    { class: 'relative z-10 w-full flex justify-center items-center max-h-[90vh] min-h-0' },
+    { class: 'relative z-10 w-full flex justify-center items-center max-h-[90vh] min-h-0 overflow-visible' },
     [childContent]
   );
   modal.appendChild(panelWrap);

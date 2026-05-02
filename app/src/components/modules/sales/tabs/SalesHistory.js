@@ -7,6 +7,7 @@ import { SelectFluid, SelectOptions, SelectRelative } from '../../../utils/Selec
 import { showAlert } from '../../../utils/ModalHelpers';
 import { formatDateDDMMYYYY } from '../../../utils/DateUtils';
 import { openReceiptModal } from '../ReceiptModal';
+import { openBulkCustomerPaymentModal } from '../BulkCustomerPaymentModal';
 import { SalesOrderDetailsDrawer } from '../SalesOrderDetailsDrawer';
 
 const { Row } = Liteframe;
@@ -348,6 +349,17 @@ function SalesHistoryTableSection(props) {
         ]),
       ]),
       Row({ class: 'flex items-center gap-4' }, [
+        Button({
+          variant: 'outline',
+          class: 'text-xs px-2 py-1.5 min-h-0 whitespace-nowrap',
+          onClick: async () => {
+            try {
+              await openBulkCustomerPaymentModal({ viewModel: props.viewModel });
+            } catch (e) {
+              console.error(e);
+            }
+          },
+        }, 'Receive payment (customer)'),
         Row({ tagType: 'p', class: 'text-sm text-gray-400 text-nowrap' }, 'Rows per page'),
         SelectRelative({ name: 'sales-limit', onChange: (e) => handleSetLimit(parseInt(e.target.value, 10)), value: paginationLimit }, SelectOptions({ options: ['10', '25', '50', '100'], selectedOption: String(paginationLimit) })),
         Row({ tagType: 'p' }, '|'),

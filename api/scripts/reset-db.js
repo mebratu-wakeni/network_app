@@ -68,8 +68,13 @@ async function main() {
 
     if (runSeed) {
       console.log('Running seeds...');
-      const [batchNo, seedNames] = await db.seed.run();
-      console.log('  Seeds run:', seedNames?.length ?? 0, seedNames?.length ? `(batch ${batchNo})` : '');
+      // Knex returns [ [ filepath, ... ] ] — not [batch, names]
+      const [seedLog] = await db.seed.run();
+      console.log(
+        '  Seeds run:',
+        seedLog?.length ?? 0,
+        seedLog?.length ? seedLog.map((p) => path.basename(p)).join(', ') : ''
+      );
     } else {
       console.log('Skipping seeds (use --seed to run seeds).');
     }

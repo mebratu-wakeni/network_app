@@ -104,6 +104,31 @@ class SalesManager {
     }
   }
 
+  async getCustomerOutstandingForPayment(customerId, token) {
+    const response = await this.apiRequest(
+      `/sales/customers/${encodeURIComponent(customerId)}/outstanding-for-payment`,
+      { method: 'GET' },
+      token
+    )
+    return {
+      success: response.ok === true,
+      orders: response.orders || [],
+      total_outstanding: response.total_outstanding != null ? Number(response.total_outstanding) : 0
+    }
+  }
+
+  async bulkPayCustomerSales(body, token) {
+    const response = await this.apiRequest('/sales/orders/bulk-pay', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    }, token)
+    return {
+      success: response.ok === true,
+      total_applied: response.total_applied,
+      applied: response.applied || []
+    }
+  }
+
   async confirmWithhold(orderId, body, token) {
     const response = await this.apiRequest(`/sales/orders/${orderId}/withhold-confirmation`, {
       method: 'PATCH',

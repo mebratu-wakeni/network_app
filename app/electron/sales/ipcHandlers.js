@@ -152,6 +152,24 @@ export function SalesIpcHandlers() {
     }
   })
 
+  ipcMain.handle('sales:get-customer-outstanding', async (_event, customerId) => {
+    try {
+      return await salesManager.getCustomerOutstandingForPayment(customerId, getToken())
+    } catch (error) {
+      console.error('[Sales IPC] get-customer-outstanding:', error)
+      return { success: false, orders: [], total_outstanding: 0, error: error.message }
+    }
+  })
+
+  ipcMain.handle('sales:bulk-pay-customer', async (_event, body) => {
+    try {
+      return await salesManager.bulkPayCustomerSales(body || {}, getToken())
+    } catch (error) {
+      console.error('[Sales IPC] bulk-pay-customer:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
   ipcMain.handle('sales:confirm-withhold', async (_event, { orderId, withhold_ref }) => {
     try {
       return await salesManager.confirmWithhold(orderId, { withhold_ref }, getToken())

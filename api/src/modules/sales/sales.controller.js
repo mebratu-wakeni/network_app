@@ -163,6 +163,31 @@ export class SalesController {
     }
   }
 
+  getCustomerOutstandingForPayment = async (req, res, next) => {
+    try {
+      const customerId = parseInt(req.params.customerId, 10)
+      if (!Number.isFinite(customerId) || customerId <= 0) {
+        const err = new Error('Invalid customer id')
+        err.status = 400
+        return next(err)
+      }
+      const result = await this.service.getCustomerOutstandingForPayment(customerId)
+      res.json({ ok: true, ...result })
+    } catch (err) {
+      next(err)
+    }
+  }
+
+  bulkPayCustomerSales = async (req, res, next) => {
+    try {
+      const body = req.validBody || req.body
+      const result = await this.service.recordBulkCustomerSales(body, req.user?.id)
+      res.json({ ok: true, ...result })
+    } catch (err) {
+      next(err)
+    }
+  }
+
   confirmWithhold = async (req, res, next) => {
     try {
       const { id } = req.params

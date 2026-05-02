@@ -205,6 +205,41 @@ export class SalesService {
     return this.repository.archiveHoldOrder(Number(holdOrderId))
   }
 
+  /** Outstanding completed sales for one customer (for bulk payment preview). */
+  async getCustomerOutstandingForPayment(customerId) {
+    return this.repository.getCustomerOutstandingForPayment(Number(customerId))
+  }
+
+  /**
+   * Apply one customer payment across outstanding orders (FIFO, LIFO, or manual allocations).
+   */
+  async recordBulkCustomerSales(payload, userId = null) {
+    const {
+      customer_id: customerId,
+      payment_amount: paymentAmount,
+      allocation,
+      manual_allocations: manualAllocations,
+      payment_mode,
+      payment_date,
+      cheque_details,
+      notes
+    } = payload
+
+    return this.repository.recordBulkCustomerPayment({
+      customerId: Number(customerId),
+      paymentAmount: Number(paymentAmount),
+      allocation: allocation || 'fifo',
+      manualAllocations: manualAllocations || null,
+      paymentPayload: {
+        payment_mode: payment_mode || 'cash',
+        payment_date,
+        cheque_details: cheque_details || null,
+        notes: notes ?? null
+      },
+      userId
+    })
+  }
+
   /** Record payment on a sales order (supports cash and cheque with details). */
   async recordPayment(orderId, payload, userId = null) {
     const amount = Number(payload.payment_amount)

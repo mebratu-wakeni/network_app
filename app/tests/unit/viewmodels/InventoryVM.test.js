@@ -40,17 +40,26 @@ describe('InventoryVM', () => {
     expect(vm.getState('product-stats')).toEqual({ outOfStock: 2, lowStock: 4 })
   })
 
-  it('fails createProduct when category is missing and sets error state', async () => {
+  it('createProduct sends null category_id when category omitted', async () => {
+    let payload
+    window.ipcRenderer.invoke.mockImplementation(async (channel, p) => {
+      if (channel === 'inventory:create-product') {
+        payload = p
+        return { success: true, product: { id: 99, ...p } }
+      }
+      return { success: true }
+    })
+
     const vm = new InventoryVM()
     vm.updateState('loading', false)
-    await expect(
-      vm.createProduct({
-        name: 'New Product',
-        unit_id: 1
-      })
-    ).rejects.toThrow('Category is required')
+    await vm.createProduct({
+      name: 'New Product',
+      unit_id: 1,
+    })
 
-    expect(vm.getState('error')).toEqual({ message: 'Category is required' })
+    expect(payload.category_id).toBeNull()
+    expect(payload.unit_id).toBe(1)
+    expect(payload.name).toBe('New Product')
   })
 
   it('updates filter, resets paging, and triggers reload', () => {

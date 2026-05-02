@@ -11,6 +11,7 @@ import {
   validate,
   createSalesOrderSchema,
   paySalesOrderSchema,
+  bulkPayCustomerSalesSchema,
   confirmWithholdSchema,
   reverseSalesOrderSchema,
   createHoldOrderSchema
@@ -28,6 +29,8 @@ router.get('/settings/withhold-percentage', requireAnyRule(['CanCreateSale', 'Ca
 router.post('/orders', requireRules(['CanCreateSale']), validate(createSalesOrderSchema), controller.createOrder)
 router.get('/orders', requireRules(['CanSeeSale']), controller.listOrders)
 router.get('/orders/export', requireRules(['CanSeeSale']), controller.exportSalesOrder)
+router.post('/orders/bulk-pay', requireRules(['CanSeeSale']), validate(bulkPayCustomerSalesSchema), controller.bulkPayCustomerSales)
+router.get('/customers/:customerId/outstanding-for-payment', requireRules(['CanSeeSale']), controller.getCustomerOutstandingForPayment)
 router.get('/orders/:id', requireRules(['CanSeeSale']), controller.getOrderDetails)
 router.get('/orders/:id/receipt', requireRules(['CanSeeSale']), controller.getOrderReceipt)
 router.post('/orders/:id/pay', requireRules(['CanSeeSale']), validate(paySalesOrderSchema), controller.payOrder)

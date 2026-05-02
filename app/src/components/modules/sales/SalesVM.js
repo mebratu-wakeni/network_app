@@ -545,6 +545,64 @@ export class SalesVM extends ViewModel {
     return this.getState('customer-list') || [];
   }
 
+  /**
+   * Partners suitable as sales customers for bulk AR payment (excludes walk-in). Does not toggle global loading.
+   */
+  async fetchPartnersForBulkCustomerPayment() {
+    try {
+      const [retailersResult, bothResult, otherResult] = await Promise.all([
+        window.ipcRenderer.invoke('inventory:get-partners', 'retailer'),
+        window.ipcRenderer.invoke('inventory:get-partners', 'both'),
+        window.ipcRenderer.invoke('inventory:get-partners', 'other'),
+      ]);
+      const retailers = Array.isArray(retailersResult) ? retailersResult : [];
+      const both = Array.isArray(bothResult) ? bothResult : [];
+      const others = Array.isArray(otherResult) ? otherResult : [];
+      const merged = [...retailers];
+      const seenIds = new Set(merged.map((c) => c.id));
+      both.forEach((c) => {
+        if (!seenIds.has(c.id)) {
+          merged.push(c);
+          seenIds.add(c.id);
+        }
+      });
+      const walkIn = others.find((c) => this.isWalkInCustomer(c));
+      const walkInId = walkIn?.id;
+      return merged.filter((c) => c.id !== walkInId && !this.isWalkInCustomer(c));
+    } catch (error) {
+      console.error('[SalesVM] fetchPartnersForBulkCustomerPayment error:', error);
+      return [];
+    }
+  }
+
+  /** Outstanding completed sales for bulk payment preview. Does not toggle global loading. */
+  async getCustomerOutstandingForPayment(customerId) {
+    const id = Number(customerId);
+    if (!Number.isFinite(id) || id <= 0) {
+      return { orders: [], total_outstanding: 0 };
+    }
+    const result = await window.ipcRenderer.invoke('sales:get-customer-outstanding', id);
+    if (result && result.success) {
+      return {
+        orders: result.orders || [],
+        total_outstanding: Number(result.total_outstanding) || 0,
+      };
+    }
+    throw new Error(result?.error || 'Failed to load customer outstanding balance');
+  }
+
+  /**
+   * Bulk customer payment across outstanding orders. Refreshes sales order list on success; does not use global loading.
+   */
+  async bulkPayCustomerSales(payload) {
+    const result = await window.ipcRenderer.invoke('sales:bulk-pay-customer', payload);
+    if (result && result.success) {
+      await this.loadSalesOrders();
+      return result;
+    }
+    throw new Error(result?.error || 'Failed to record bulk payment');
+  }
+
   getSalesOrderList() {
     return this.getState('sales-order-list') || { orders: [], total: 0, stats: {} };
   }

@@ -1622,6 +1622,28 @@ export class InventoriesRepository {
           last_updated: trx.fn.now()
         })
 
+      const ledgerTableExists = await trx.schema.hasTable('account_ledger')
+      if (ledgerTableExists) {
+        const borrowFromId =
+          borrowFromRecord != null && typeof borrowFromRecord === 'object'
+            ? borrowFromRecord.id
+            : borrowFromRecord
+        await this.ledgerHelper.recordBorrowFrom(
+          {
+            inventoryId,
+            borrowFromId,
+            quantity: quantityValue,
+            unitCost: purchasePrice,
+            partnerId: partnerIdValue,
+            transactionDate: purchaseDate,
+            referenceNumber: `BORROW-FROM-${borrowFromId}`,
+            memo: notes || description || null,
+            createdBy: userId
+          },
+          trx
+        )
+      }
+
       // Return borrow_from_inventories record with inventory info
       return {
         ...borrowFromRecord,
@@ -2106,293 +2128,8 @@ export class InventoriesRepository {
   }
 
   /**
-   * Process a single borrow return item
-   * Enhanced version that processes one returning inventory with quantity
-   * Designed to be called in a loop for multiple return items
-    const {
-      borrowedInventoryId,
-      borrowed_inventory_id,
-      returnItems,
-      returnedOn,
-      returned_on,
-      note
-    } = returnData
-
-    const borrowed_inventory_id_value = borrowedInventoryId || borrowed_inventory_id
-    const returned_on_value = returnedOn || returned_on || new Date().toISOString().split('T')[0]
-
-    // Validate returnItems array
-    if (!Array.isArray(returnItems) || returnItems.length === 0) {
-      throw new Error('returnItems must be a non-empty array')
-    }
-
-    // Normalize return items
-    const normalizedReturnItems = returnItems.map(item => ({
-      returningInventoryId: item.returningInventoryId || item.returning_inventory_id,
-      quantityReturned: parseInt(item.quantityReturned || item.quantity_returned || 0, 10)
-    })).filter(item => item.returningInventoryId && item.quantityReturned > 0)
-
-    if (normalizedReturnItems.length === 0) {
-      throw new Error('No valid return items provided')
-    }
-
-    // Helper for financial rounding to 2 decimal places
-    const fm = (num) => Math.round((num + Number.EPSILON) * 100) / 100
-
-    // Use transaction to ensure all operations succeed or fail together
-    return await this.knex.transaction(async (trx) => {
-      // 1. Data Retrieval - Get borrowed inventory
-      const borrowedInventory = await trx('inventories')
-        .where('id', borrowed_inventory_id_value)
-        .first()
-
-      if (!borrowedInventory) {
-        throw new Error('Borrowed inventory record not found.')
-      }
-
-      // Get all returning inventories
-      const returningInventoryIds = normalizedReturnItems.map(item => item.returningInventoryId)
-      const returningInventories = await trx('inventories')
-        .whereIn('id', returningInventoryIds)
-        .select('*')
-
-      if (returningInventories.length !== returningInventoryIds.length) {
-        throw new Error('One or more returning inventory records not found.')
-      }
-
-      const returningInventoryMap = {}
-      returningInventories.forEach(inv => {
-        returningInventoryMap[inv.id] = inv
-      })
-
-      // Find the borrow_from_inventories record by matching product and characteristics
-      // Note: inventory_id exists but may be NULL if inventory was deleted, so we match by product_id, batch_no, expiry_date, and unit_cost
-      let originalBorrowRecord = await trx('borrow_from_inventories')
-        .where('product_id', borrowedInventory.product_id)
-        .where('unit_cost', borrowedInventory.purchase_price)
-        .where(function() {
-          if (borrowedInventory.batch_no) {
-            this.where('batch_no', borrowedInventory.batch_no)
-          } else {
-            this.whereNull('batch_no')
-          }
-        })
-        .where(function() {
-          if (borrowedInventory.expiry_date) {
-            this.where('expiry_date', borrowedInventory.expiry_date)
-          } else {
-            this.whereNull('expiry_date')
-          }
-        })
-        .where('status', 'active')
-        .orderBy('id', 'desc')
-        .first()
-
-      if (!originalBorrowRecord) {
-        throw new Error('Borrow from inventory record not found for this inventory item.')
-      }
-
-      // Check if borrow_from_returns table exists
-      const returnsTableExists = await trx.schema.hasTable('borrow_from_returns')
-      if (!returnsTableExists) {
-        throw new Error('borrow_from_returns table does not exist')
-      }
-
-      // 2. Get existing return history and sales data
-      const borrowReturnsRaw = await trx('borrow_from_returns')
-        .where('borrowed_inventory_id', borrowed_inventory_id_value)
-        .select('*')
-      const borrowReturns = Array.isArray(borrowReturnsRaw) ? borrowReturnsRaw : []
-
-      const salesTableExists = await trx.schema.hasTable('sales_order_items')
-      const soldItemsRaw = salesTableExists
-        ? await trx('sales_order_items').where('inventory_id', borrowed_inventory_id_value).select('*')
-        : []
-      const soldItems = Array.isArray(soldItemsRaw) ? soldItemsRaw : []
-
-      const totalReturnedBefore = borrowReturns.reduce((sum, r) => sum + (r.quantity_returned || 0), 0)
-      const totalSoldBefore = soldItems.reduce((sum, s) => sum + (s.quantity || 0), 0)
-
-      // 3. Calculate total quantity to return and validate
-      const totalQuantityToReturn = normalizedReturnItems.reduce((sum, item) => sum + item.quantityReturned, 0)
-      const unreturnedQty = originalBorrowRecord.quantity - totalReturnedBefore
-
-      if (totalQuantityToReturn > unreturnedQty) {
-        throw new Error(`Cannot return ${totalQuantityToReturn}. Only ${unreturnedQty} remaining in debt.`)
-      }
-
-      // 4. Process each return item and determine high-water mark (highest cost)
-      const lastAdjustedCost = borrowedInventory.purchase_price
-      const borrowReturnIds = []
-      let highestReturningCost = lastAdjustedCost // Start with current price
-
-      // First pass: Create return records and find the highest cost (high-water mark)
-      for (const returnItem of normalizedReturnItems) {
-        const returningInventory = returningInventoryMap[returnItem.returningInventoryId]
-        if (!returningInventory) {
-          throw new Error(`Returning inventory ${returnItem.returningInventoryId} not found`)
-        }
-
-        const returningCost = parseFloat(returningInventory.purchase_price) || 0
-        
-        // Track highest cost (true high-water mark)
-        if (returningCost > highestReturningCost) {
-          highestReturningCost = returningCost
-        }
-
-        // Create return record (using same pattern as other inserts in this file)
-        const insertResult = await trx('borrow_from_returns')
-          .insert({
-            borrowed_inventory_id: borrowed_inventory_id_value,
-            returning_inventory_id: returnItem.returningInventoryId,
-            estimated_price: returningCost,
-            actual_price: returningCost,
-            quantity_returned: returnItem.quantityReturned,
-            returned_on: returned_on_value,
-            note: note || null,
-            created_at: trx.fn.now(),
-            last_updated: trx.fn.now(),
-            sync_status: 'pending'
-          })
-          .returning('id')
-        
-        // Handle insert result (PostgreSQL returns array of objects: [{id: 1}])
-        if (!insertResult || !Array.isArray(insertResult) || insertResult.length === 0) {
-          throw new Error('Failed to create borrow_from_returns record')
-        }
-        
-        const borrowReturnId = insertResult[0]?.id || insertResult[0]
-        if (borrowReturnId) {
-          borrowReturnIds.push(borrowReturnId)
-        }
-
-        // Decrement quantity from returning inventory
-        await trx('inventories')
-          .where('id', returnItem.returningInventoryId)
-          .decrement('quantity', returnItem.quantityReturned)
-      }
-
-      // Update borrowed inventory price to the highest cost (high-water mark)
-      // This ensures the borrowed inventory is valued at the highest cost among all returns
-      await trx('inventories')
-        .where('id', borrowed_inventory_id_value)
-        .update({
-          purchase_price: highestReturningCost,
-          last_updated: trx.fn.now()
-        })
-
-      // 5. Update borrow_from_inventories status
-      const totalReturnedAfter = totalReturnedBefore + totalQuantityToReturn
-      const isSettled = totalReturnedAfter === originalBorrowRecord.quantity
-
-      await trx('borrow_from_inventories')
-        .where('id', originalBorrowRecord.id)
-        .update({
-          status: isSettled ? 'returned' : 'partially_returned',
-          last_updated: trx.fn.now()
-        })
-
-      // 6. GL Entry Generation (aggregated across all returns)
-      // Use high-water mark (highest cost) for GL calculations
-      const entries = []
-      const finalCostDiff = fm(highestReturningCost - lastAdjustedCost)
-      const excessSoldQty = Math.max(totalSoldBefore, totalReturnedBefore) - totalReturnedBefore
-      const unreturnedQtyAfter = originalBorrowRecord.quantity - totalReturnedAfter
-
-      // A. Revalue the Debt/Inventory Basis (Mark-to-Market) - based on final price
-      if (finalCostDiff !== 0) {
-        const totalAdj = fm(Math.abs(finalCostDiff * unreturnedQtyAfter))
-        entries.push({
-          account_code: '1300', // Inventory
-          debit: finalCostDiff > 0 ? totalAdj : 0,
-          credit: finalCostDiff < 0 ? totalAdj : 0,
-          description: `Mark-to-market adjustment for unreturned quantity (${unreturnedQtyAfter} units)`
-        })
-        entries.push({
-          account_code: '3100', // Accounts Payable
-          debit: finalCostDiff < 0 ? totalAdj : 0,
-          credit: finalCostDiff > 0 ? totalAdj : 0,
-          description: `Mark-to-market adjustment for unreturned quantity (${unreturnedQtyAfter} units)`
-        })
-      }
-
-      // B. Catch-up COGS for units already sold at the old price
-      if (excessSoldQty > 0 && finalCostDiff !== 0) {
-        const cogsAdj = fm(Math.abs(finalCostDiff * excessSoldQty))
-        entries.push({
-          account_code: '6100', // Cost of Goods Sold
-          debit: finalCostDiff > 0 ? cogsAdj : 0,
-          credit: finalCostDiff < 0 ? cogsAdj : 0,
-          description: `COGS catch-up for excess sold quantity (${excessSoldQty} units)`
-        })
-        entries.push({
-          account_code: '1300', // Inventory
-          debit: finalCostDiff < 0 ? cogsAdj : 0,
-          credit: finalCostDiff > 0 ? cogsAdj : 0,
-          description: `COGS catch-up for excess sold quantity (${excessSoldQty} units)`
-        })
-      }
-
-      // C. Settlement (Clear specific quantity from debt) - aggregate all returns
-      const totalSettlementVal = normalizedReturnItems.reduce((sum, item) => {
-        const returningInv = returningInventoryMap[item.returningInventoryId]
-        return sum + fm(returningInv.purchase_price * item.quantityReturned)
-      }, 0)
-
-      entries.push({
-        account_code: '3100', // Accounts Payable
-        debit: totalSettlementVal,
-        credit: 0,
-        description: `Settlement for returned quantity (${totalQuantityToReturn} units)`
-      })
-      entries.push({
-        account_code: '1300', // Inventory
-        debit: 0,
-        credit: totalSettlementVal,
-        description: `Settlement for returned quantity (${totalQuantityToReturn} units)`
-      })
-
-      // 7. Post GL Transaction (single transaction for all returns)
-      if (Array.isArray(entries) && entries.length > 0 && borrowReturnIds.length > 0) {
-        await this.ledgerHelper.postGLTransaction({
-          transaction_date: returned_on_value,
-          reference_no: `BR-${borrowReturnIds.join(',')}`,
-          reference_table: 'borrow_from_returns',
-          reference_id: borrowReturnIds[0], // Use first return ID as primary reference
-          description: `Market adjustment & return for debt batch ${borrowed_inventory_id_value} (${normalizedReturnItems.length} items)`,
-          transaction_type: 'borrow_return',
-          entries: entries,
-          inventory_id: borrowed_inventory_id_value,
-          created_by: userId
-        }, trx)
-      }
-
-      return {
-        success: true,
-        borrowReturnIds,
-        isSettled,
-        oldAdjustedPrice: lastAdjustedCost,
-        newAdjustedPrice: highestReturningCost, // High-water mark (highest cost)
-        priceDifference: finalCostDiff,
-        totalQuantityReturned: totalQuantityToReturn
-      }
-    })
-  }
-
-  /**
-   * Process a single borrow return item
-   * Enhanced version that processes one returning inventory with quantity
-   * Designed to be called in a loop for multiple return items
-   * 
-   * @param {Object} trx - Knex transaction object (must be provided)
-   * @param {Object} borrowReturnData - Return data for single item
-   * @param {number} borrowReturnData.borrowed_inventory_id - ID of the borrowed inventory
-   * @param {number} borrowReturnData.returning_inventory_id - ID of the returning inventory
-   * @param {number} borrowReturnData.quantity_returned - Quantity being returned
-   * @param {string} borrowReturnData.returned_on - Return date (YYYY-MM-DD)
-   * @param {string} [borrowReturnData.note] - Optional note
-   * @param {number} [borrowReturnData.userId] - User ID processing the return
-   * @returns {Promise<Object>} Result with borrowReturnId and adjustment details
+   * Process one borrow-from return line item (bin card, status, GL).
+   * GL settlement (DR 3100 / CR 1300 for returned value) mirrors borrow-from creation (DR 1300 / CR 3100).
    */
   async processBorrowReturn(trx, borrowReturnData) {
     const {

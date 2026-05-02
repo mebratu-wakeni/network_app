@@ -177,16 +177,29 @@ export class LedgerHelper {
       throw new Error('Debits and credits must be equal')
     }
 
-    // Get account names for each entry
-    const accountCodes = entries.map(entry => entry.account_code)
+    // Only active COA rows may post to the GL (codes must exist and be usable)
+    const accountCodes = [...new Set(entries.map((entry) => entry.account_code))]
     const accounts = await db('chart_of_accounts')
       .whereIn('account_code', accountCodes)
+      .where('is_active', true)
       .select('account_code', 'account_name')
 
     const accountMap = {}
-    accounts.forEach(account => {
+    accounts.forEach((account) => {
       accountMap[account.account_code] = account.account_name
     })
+
+    const foundActive = new Set(accounts.map((a) => a.account_code))
+    for (const code of accountCodes) {
+      if (foundActive.has(code)) continue
+      const row = await db('chart_of_accounts').where({ account_code: code }).first()
+      if (!row) {
+        throw new Error(`Account code ${code} not found in chart of accounts`)
+      }
+      throw new Error(
+        `Account code ${code} (${row.account_name}) is inactive — reactivate it in Chart of Accounts or use another code`
+      )
+    }
 
     // Extract fiscal year and period from transaction date
     const fiscalYear = transaction_date.substring(0, 4)
@@ -197,9 +210,6 @@ export class LedgerHelper {
     // Post each entry (creates one row per account)
     for (const entry of entries) {
       const accountName = accountMap[entry.account_code]
-      if (!accountName) {
-        throw new Error(`Account code ${entry.account_code} not found`)
-      }
 
       // Use computed SUM(debit-credit) of existing rows for prior balance.
       // The old logic used stored balance from last row by date, which breaks for backdated
@@ -489,8 +499,9 @@ export class LedgerHelper {
   }
 
   /**
-   * Record ledger entry for borrow from (receiving borrowed stock)
-   * DR Inventory (1300), CR Accounts Payable (3100)
+   * Record ledger entry for borrow from (receiving borrowed stock from a partner/customer).
+   * DR Inventory (1300), CR Accounts Payable (3100), same amounts — balanced entry.
+   * Mirrors `processBorrowReturn` settlement: return posts DR 3100 / CR 1300 for returned value.
    * @param {Object} params - Transaction parameters
    * @param {number} params.inventoryId - Inventory ID
    * @param {number} params.borrowFromId - Borrow from inventory record ID
@@ -517,19 +528,20 @@ export class LedgerHelper {
       createdBy = null
     } = params
 
-    const totalAmount = quantity * unitCost
+    const fm = (num) => Math.round((num + Number.EPSILON) * 100) / 100
+    const totalAmount = fm(quantity * unitCost)
 
     const description = `Borrow From - ${quantity} units @ ${unitCost.toFixed(2)} (Partner ID: ${partnerId})`
 
     const entries = [
       {
-        account_code: '1300', // Inventory
+        account_code: '1300', // Inventory — mirrors borrow_return settlement (CR 1300)
         debit: totalAmount,
         credit: 0,
         description: description
       },
       {
-        account_code: '3100', // Accounts Payable
+        account_code: '3100', // Accounts Payable — mirrors borrow_return settlement (DR 3100)
         debit: 0,
         credit: totalAmount,
         description: description

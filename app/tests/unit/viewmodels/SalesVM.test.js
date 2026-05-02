@@ -88,4 +88,54 @@ describe('SalesVM', () => {
     const calls = window.ipcRenderer.invoke.mock.calls.filter(([channel]) => channel === 'sales:pay-order')
     expect(calls).toHaveLength(1)
   })
+
+  it('getCustomerOutstandingForPayment returns IPC payload', async () => {
+    window.ipcRenderer.invoke.mockImplementation(async (channel) => {
+      if (channel === 'sales:get-withhold-percentage') return { success: true, withhold_percentage: 2 }
+      if (channel === 'sales:get-customer-outstanding') {
+        return {
+          success: true,
+          orders: [{ id: 3, outstanding_balance: 40, receipt_no: 'S1' }],
+          total_outstanding: 40,
+        }
+      }
+      return { success: true }
+    })
+
+    const vm = new SalesVM()
+    const r = await vm.getCustomerOutstandingForPayment(9)
+    expect(r.orders).toHaveLength(1)
+    expect(r.orders[0].id).toBe(3)
+    expect(r.total_outstanding).toBe(40)
+    expect(window.ipcRenderer.invoke).toHaveBeenCalledWith('sales:get-customer-outstanding', 9)
+  })
+
+  it('bulkPayCustomerSales calls IPC and reloads sales list', async () => {
+    const channels = []
+    window.ipcRenderer.invoke.mockImplementation(async (channel) => {
+      channels.push(channel)
+      if (channel === 'sales:get-withhold-percentage') return { success: true, withhold_percentage: 2 }
+      if (channel === 'sales:bulk-pay-customer') return { success: true, total_applied: 50, applied: [] }
+      if (channel === 'sales:get-orders') return { success: true, orders: [], total: 0, stats: {} }
+      return { success: true }
+    })
+
+    const vm = new SalesVM()
+    await vm.bulkPayCustomerSales({
+      customer_id: 2,
+      payment_amount: 50,
+      allocation: 'fifo',
+      payment_mode: 'cash',
+      payment_date: '2026-04-30',
+    })
+
+    expect(channels).toContain('sales:bulk-pay-customer')
+    expect(channels).toContain('sales:get-orders')
+    const bulkCall = window.ipcRenderer.invoke.mock.calls.find(([c]) => c === 'sales:bulk-pay-customer')
+    expect(bulkCall[1]).toMatchObject({
+      customer_id: 2,
+      payment_amount: 50,
+      allocation: 'fifo',
+    })
+  })
 })
