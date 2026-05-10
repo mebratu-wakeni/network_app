@@ -431,7 +431,7 @@ export class InventoriesController {
 
   /**
    * POST /api/inventories/borrow-from/return
-   * Process return of borrowed-from items with GL adjustments
+   * Process return of borrowed-from items (AP, Borrow Variance 6400, inventory at returning lot cost)
    */
   processBorrowFromReturn = async (req, res, next) => {
     try {

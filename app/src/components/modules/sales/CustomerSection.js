@@ -20,9 +20,7 @@ function getCustomerTypeBadgeColor(type) {
 }
 
 export function CustomerSection(props) {
-  const customers = props.viewModel.getCustomerList();
   const currentSale = props.viewModel.getState('current-sale') || {};
-  const searchQuery = props.viewModel.getState('customer-search-query') || '';
   const isWithholding = currentSale.is_withholding;
   // Walk-in customers cannot have withholding
   const isWalkIn = props.viewModel.isWalkInSale(currentSale);
@@ -63,6 +61,7 @@ export function CustomerSection(props) {
 function SearchCustomer(props) {
   const currentSale = props.viewModel.getState('current-sale') || {};
   const customerSearchQuery = props.viewModel.getState('customer-search-query') || '';
+  const customerDropdownLoading = props.viewModel.getState('customer-dropdown-loading') === true;
   props.ensureLocalStateKey('showCustomerDropdown', false);
   const showCustomerDropdown = props.getLocalState('showCustomerDropdown');
   const filteredCustomers = props.viewModel.getState('customer-list') || [];
@@ -81,55 +80,71 @@ function SearchCustomer(props) {
     props.setLocalState('showCustomerDropdown', false);
   };
 
+  const menuRows = []
+  if (customerDropdownLoading) {
+    menuRows.push(
+      Row({ key: 'cust-dd-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…')
+    )
+  } else if (filteredCustomers.length === 0) {
+    menuRows.push(
+      Row(
+        { key: 'cust-dd-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+        customerSearchQuery.trim() ? 'No customers match your search.' : 'No customers found for sales (retailer / both / other). Add them in Customer Management.'
+      )
+    )
+  } else {
+    menuRows.push(
+      ...filteredCustomers.map((customer) => {
+        const isWalkInOption = (customer.name || customer.full_name || '').trim().toLowerCase() === 'walk-in';
+        const contactPerson = customer.contact_person || '';
+        const phone = customer.phone || customer.contact_number || '';
+        const partnerChildren = [
+          Row({ class: 'flex items-center justify-between gap-2' }, [
+            Row({ class: 'font-semibold text-gray-900 flex items-center gap-2' }, [
+              isWalkInOption ? IonIcon({ name: 'walk-outline', class: 'text-base text-gray-500' }) : null,
+              customer.name || customer.full_name || 'Unknown'
+            ].filter(Boolean)),
+            isWalkInOption
+              ? Badge({ label: 'Walk-in', tone: 'default', class: 'text-xs px-2 py-0.5' })
+              : Badge({
+                  label: capitalizeCustomerType(customer.customer_type),
+                  tone: getCustomerTypeBadgeColor(customer.customer_type),
+                  class: 'text-xs px-2 py-0.5',
+                }),
+          ]),
+          !isWalkInOption && Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, [
+            ...(contactPerson ? [
+              Row({ class: 'flex items-center gap-1' }, [
+                IonIcon({ name: 'person-outline', class: 'text-xs' }),
+                contactPerson,
+              ]),
+            ] : []),
+            ...(contactPerson && phone ? [Row({}, '•')] : []),
+            ...(phone ? [Row({}, phone)] : []),
+          ]),
+        ].filter(Boolean);
+        return DropdownSearchItem({
+          onSelect: () => handleCustomerSelect(customer),
+          key: customer.id,
+          class: 'py-3',
+        }, [
+          Row({ class: 'flex flex-col gap-1' }, partnerChildren),
+        ]);
+      })
+    )
+  }
+
   return DropdownSearch({
     open: showCustomerDropdown,
     value: showCustomerDropdown ? customerSearchQuery : displayValue,
-    placeholder: 'Search customers...',
+    placeholder: 'Search customers…',
     onInput: handleCustomerSearch,
     onFocus: () => {
-      props.viewModel.loadCustomers('');
+      props.viewModel.loadCustomers(props.viewModel.getState('customer-search-query') || '');
       props.setLocalState('showCustomerDropdown', true);
     },
     getOpenState: () => props.getLocalState('showCustomerDropdown'),
     setOpenState: () => props.setLocalState('showCustomerDropdown', false),
     class: 'w-full relative',
-  }, [
-    ...filteredCustomers.map((customer) => {
-    const isWalkInOption = (customer.name || customer.full_name || '').trim().toLowerCase() === 'walk-in';
-    const contactPerson = customer.contact_person || '';
-    const phone = customer.phone || customer.contact_number || '';
-    const partnerChildren = [
-      Row({ class: 'flex items-center justify-between gap-2' }, [
-        Row({ class: 'font-semibold text-gray-900 flex items-center gap-2' }, [
-          isWalkInOption ? IonIcon({ name: 'walk-outline', class: 'text-base text-gray-500' }) : null,
-          customer.name || customer.full_name || 'Unknown'
-        ].filter(Boolean)),
-        isWalkInOption
-          ? Badge({ label: 'Walk-in', tone: 'default', class: 'text-xs px-2 py-0.5' })
-          : Badge({
-              label: capitalizeCustomerType(customer.customer_type),
-              tone: getCustomerTypeBadgeColor(customer.customer_type),
-              class: 'text-xs px-2 py-0.5',
-            }),
-      ]),
-      !isWalkInOption && Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, [
-        ...(contactPerson ? [
-          Row({ class: 'flex items-center gap-1' }, [
-            IonIcon({ name: 'person-outline', class: 'text-xs' }),
-            contactPerson,
-          ]),
-        ] : []),
-        ...(contactPerson && phone ? [Row({}, '•')] : []),
-        ...(phone ? [Row({}, phone)] : []),
-      ]),
-    ].filter(Boolean);
-    return DropdownSearchItem({
-      onSelect: () => handleCustomerSelect(customer),
-      key: customer.id,
-      class: 'py-3',
-    }, [
-      Row({ class: 'flex flex-col gap-1' }, partnerChildren),
-    ]);
-  }),
-  ]);
+  }, menuRows);
 }

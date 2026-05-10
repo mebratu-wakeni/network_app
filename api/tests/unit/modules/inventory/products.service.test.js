@@ -7,6 +7,9 @@ function makeRepository(overrides = {}) {
     getAllCategories: vi.fn().mockResolvedValue([{ id: 1, name: 'supplies' }]),
     getAllUnits: vi.fn().mockResolvedValue([{ id: 1, name: 'bottle' }]),
     getMaxProductCodeNumber: vi.fn().mockResolvedValue(7),
+    getProductNamesLowerSet: vi.fn().mockResolvedValue(new Set()),
+    bulkInsertCategories: vi.fn(async (rows) => rows.map((r, idx) => ({ id: 50 + idx, name: r.name }))),
+    bulkInsertUnits: vi.fn(async (rows) => rows.map((r, idx) => ({ id: 80 + idx, name: r.name }))),
     createCategory: vi.fn().mockResolvedValue({ id: 5, name: 'new-cat' }),
     createUnit: vi.fn().mockResolvedValue({ id: 8, name: 'new-unit' }),
     findByName: vi.fn().mockResolvedValue(null),
@@ -24,8 +27,7 @@ describe('ProductsService', () => {
   it('creates missing category/unit once and generates sequential product codes', async () => {
     const repository = makeRepository({
       getAllCategories: vi.fn().mockResolvedValue([]),
-      getAllUnits: vi.fn().mockResolvedValue([]),
-      findByName: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null)
+      getAllUnits: vi.fn().mockResolvedValue([])
     })
     const service = new ProductsService(repository)
 
@@ -36,8 +38,8 @@ describe('ProductsService', () => {
 
     expect(result.successful).toBe(2)
     expect(result.failed).toBe(0)
-    expect(repository.createCategory).toHaveBeenCalledTimes(1)
-    expect(repository.createUnit).toHaveBeenCalledTimes(1)
+    expect(repository.bulkInsertCategories).toHaveBeenCalledTimes(1)
+    expect(repository.bulkInsertUnits).toHaveBeenCalledTimes(1)
     expect(repository.bulkCreate).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ product_code: 'PRD0008' }),
@@ -48,10 +50,7 @@ describe('ProductsService', () => {
 
   it('returns partial failure summary for duplicates', async () => {
     const repository = makeRepository({
-      findByName: vi
-        .fn()
-        .mockResolvedValueOnce({ id: 1, name: 'Paracetamol' })
-        .mockResolvedValueOnce(null)
+      getProductNamesLowerSet: vi.fn().mockResolvedValue(new Set(['paracetamol']))
     })
     const service = new ProductsService(repository)
 

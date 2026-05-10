@@ -304,6 +304,60 @@ export class InventoriesRepository {
   }
 
   /**
+   * Max numeric suffix of PRD#### codes (used to allocate sequential codes during stock import).
+   */
+  async _getMaxPrdCodeNumber (trx = null) {
+    const db = trx || this.knex
+    const products = await db('products')
+      .select('product_code')
+      .whereNotNull('product_code')
+      .where('product_code', 'like', 'PRD%')
+      .orderBy('id', 'desc')
+      .limit(1000)
+    let maxNum = 0
+    for (const p of products) {
+      const code = p.product_code
+      if (code && code.startsWith('PRD')) {
+        const num = parseInt(code.substring(3), 10)
+        if (!isNaN(num) && num > maxNum) maxNum = num
+      }
+    }
+    return maxNum
+  }
+
+  /**
+   * Latest bin-card balance per product (single batched lookup for bulk import).
+   */
+  async getLatestBalancesForProducts (productIds, trx = null) {
+    const db = trx || this.knex
+    const map = new Map()
+    if (!productIds || productIds.length === 0) return map
+    const unique = [...new Set(productIds.filter((id) => id != null))]
+    const CHUNK = 100
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const chunk = unique.slice(i, i + CHUNK)
+      const latest = db
+        .select('product_id', db.raw('MAX(id) AS mid'))
+        .from('bin_cards')
+        .whereIn('product_id', chunk)
+        .groupBy('product_id')
+        .as('latest')
+
+      const rows = await db('bin_cards as b')
+        .join(latest, function () {
+          this.on('b.product_id', '=', 'latest.product_id')
+            .andOn('b.id', '=', 'latest.mid')
+        })
+        .select('b.product_id', 'b.balance')
+
+      for (const r of rows) {
+        map.set(r.product_id, parseInt(r.balance, 10) || 0)
+      }
+    }
+    return map
+  }
+
+  /**
    * Bulk import stock items (all-or-nothing: single DB transaction).
    * On any row DB/processing error, the whole import is rolled back.
    * Preflight (missing required fields) returns per-row failures without touching the DB.
@@ -341,15 +395,53 @@ export class InventoriesRepository {
       }
     }
 
-    const processOne = async (trx, item, i) => {
-      let product = null
-      if (item.product_code && String(item.product_code).trim()) {
-        product = await trx('products').where({ product_code: String(item.product_code).trim() }).first()
+    const QUERY_CHUNK = 80
+    const codes = [...new Set(stockItems.map((i) => String(i.product_code || '').trim()).filter(Boolean))]
+    const names = [...new Set(stockItems.map((i) => String(i.product_name || '').trim()).filter(Boolean))]
+
+    const productByCode = new Map()
+    const productByNameLower = new Map()
+
+    for (let i = 0; i < codes.length; i += QUERY_CHUNK) {
+      const chunk = codes.slice(i, i + QUERY_CHUNK)
+      const rows = await this.knex('products').whereIn('product_code', chunk).select('*')
+      for (const r of rows) productByCode.set(r.product_code, r)
+    }
+    for (let i = 0; i < names.length; i += QUERY_CHUNK) {
+      const chunk = names.slice(i, i + QUERY_CHUNK)
+      const lowered = chunk.map((n) => n.toLowerCase())
+      const rows = await this.knex('products').whereRaw(
+        `LOWER(TRIM(name)) IN (${lowered.map(() => '?').join(',')})`,
+        lowered
+      ).select('*')
+      for (const r of rows) {
+        const k = String(r.name || '').trim().toLowerCase()
+        if (!productByNameLower.has(k)) productByNameLower.set(k, r)
       }
+    }
+
+    const invCacheKey = (productId, batchNo, expiryDate, purchasePrice) => {
+      const b = batchNo == null ? '∅' : String(batchNo)
+      const e = expiryDate == null ? '∅' : String(expiryDate)
+      return `${productId}|${b}|${e}|${Number(purchasePrice)}`
+    }
+
+    const processOne = async (trx, item, i, ctx) => {
+      const {
+        productByCode: pByCode,
+        productByNameLower: pByName,
+        balanceByProduct,
+        invKeyCache,
+        allocProductCode,
+        allocInventoryCode
+      } = ctx
+
+      let product = null
+      const codeTrim = item.product_code && String(item.product_code).trim()
+      if (codeTrim) product = pByCode.get(codeTrim)
       if (!product && item.product_name) {
-        product = await trx('products')
-          .whereRaw('LOWER(name) = LOWER(?)', [item.product_name.trim()])
-          .first()
+        const nk = String(item.product_name).trim().toLowerCase()
+        product = pByName.get(nk)
       }
 
       if (!product) {
@@ -358,14 +450,14 @@ export class InventoriesRepository {
         if (categoryId == null || unitId == null) {
           throw new Error('Cannot auto-create product: no categories or units in database. Import products first or add a category and unit.')
         }
-        let productCode = (item.product_code && String(item.product_code).trim()) ? String(item.product_code).trim() : null
+        let productCode = codeTrim || null
         if (productCode) {
-          const existingByCode = await trx('products').where({ product_code: productCode }).first()
-          if (existingByCode) product = existingByCode
+          const hit = pByCode.get(productCode)
+          if (hit) product = hit
         }
         if (!product) {
-          if (!productCode) productCode = await this.getNextProductCode(trx)
-          const [created] = await trx('products')
+          if (!productCode) productCode = allocProductCode()
+          const createdRows = await trx('products')
             .insert({
               name: item.product_name.trim(),
               product_code: productCode,
@@ -376,22 +468,34 @@ export class InventoriesRepository {
               sync_status: 'pending'
             })
             .returning('*')
+          const created = Array.isArray(createdRows) ? createdRows[0] : createdRows
           product = created
+          pByCode.set(product.product_code, product)
+          pByName.set(String(product.name).trim().toLowerCase(), product)
+          balanceByProduct.set(product.id, 0)
         }
       }
 
-      const existing = await this.findExistingInventory(
-        product.id,
-        item.batch_number || null,
-        item.expiry_date || null,
-        parseFloat(item.unit_cost),
-        trx
-      )
+      const batchNo = item.batch_number || null
+      const expiryDate = item.expiry_date || null
+      const purchasePrice = parseFloat(item.unit_cost)
+
+      const ik = invCacheKey(product.id, batchNo, expiryDate, purchasePrice)
+      let existing = invKeyCache.has(ik) ? invKeyCache.get(ik) : null
+      if (!existing) {
+        existing = await this.findExistingInventory(
+          product.id,
+          batchNo,
+          expiryDate,
+          purchasePrice,
+          trx
+        )
+        if (existing) invKeyCache.set(ik, existing)
+      }
 
       let inventoryCode
       let inventoryId
       const quantityAdded = parseInt(item.quantity, 10)
-      const purchasePrice = parseFloat(item.unit_cost)
 
       if (existing) {
         inventoryCode = existing.inventory_code
@@ -404,14 +508,14 @@ export class InventoriesRepository {
             last_updated: trx.fn.now()
           })
       } else {
-        inventoryCode = await this.generateInventoryCode(product.product_code, trx)
+        inventoryCode = await allocInventoryCode(product.product_code)
 
-        const [inserted] = await trx('inventories')
+        const insertedRows = await trx('inventories')
           .insert({
             product_id: product.id,
             inventory_code: inventoryCode,
-            batch_no: item.batch_number || null,
-            expiry_date: item.expiry_date || null,
+            batch_no: batchNo,
+            expiry_date: expiryDate,
             purchase_date: purchaseDate,
             acquisition_type: options.acquisition_type || 'cash',
             purchase_price: purchasePrice,
@@ -422,18 +526,27 @@ export class InventoriesRepository {
             created_at: trx.fn.now(),
             last_updated: trx.fn.now()
           })
-          .returning('id')
+          .returning('*')
 
-        inventoryId = inserted.id || inserted
+        const insertedRaw = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows
+        const insertedRow = insertedRaw?.id != null ? insertedRaw : await trx('inventories').where({ id: insertedRaw }).first()
+        inventoryId = insertedRow.id
+        invKeyCache.set(ik, insertedRow)
       }
 
-      const openingBalance = await this.getLastProductBalance(product.id, trx)
+      let openingBalance
+      if (balanceByProduct.has(product.id)) {
+        openingBalance = balanceByProduct.get(product.id)
+      } else {
+        openingBalance = await this.getLastProductBalance(product.id, trx)
+        balanceByProduct.set(product.id, openingBalance)
+      }
 
-      await this.createBinCardTransaction({
+      const binCard = await this.createBinCardTransaction({
         productId: product.id,
         inventoryId,
-        batchNo: item.batch_number || null,
-        expiryDate: item.expiry_date || null,
+        batchNo,
+        expiryDate,
         transactionDate: purchaseDate,
         quantity: quantityAdded,
         unitCost: purchasePrice,
@@ -441,6 +554,8 @@ export class InventoriesRepository {
         reason,
         createdBy
       }, trx)
+
+      balanceByProduct.set(product.id, parseInt(binCard.balance, 10))
 
       if (isInitialStock) {
         await this.ledgerHelper.recordInitialStockImport({
@@ -466,10 +581,45 @@ export class InventoriesRepository {
 
     try {
       await this.knex.transaction(async (trx) => {
+        let nextPrdNum = await this._getMaxPrdCodeNumber(trx)
+        const allocProductCode = () => {
+          nextPrdNum++
+          return `PRD${String(nextPrdNum).padStart(4, '0')}`
+        }
+
+        const variationNext = new Map()
+        const allocInventoryCode = async (productCode) => {
+          const productCodeDigits = this.extractProductCodeDigits(productCode)
+          if (!productCodeDigits) {
+            throw new Error(`Invalid product code format: ${productCode}`)
+          }
+          if (!variationNext.has(productCode)) {
+            const max = await this.getMaxVariationNumber(productCode, trx)
+            variationNext.set(productCode, max + 1)
+          }
+          const v = variationNext.get(productCode)
+          variationNext.set(productCode, v + 1)
+          const variationStr = String(v).padStart(3, '0')
+          return `I${variationStr}${productCodeDigits}`
+        }
+
+        const knownIds = [...new Set([...productByCode.values(), ...productByNameLower.values()].map((p) => p.id))]
+        const balanceByProduct = await this.getLatestBalancesForProducts(knownIds, trx)
+        const invKeyCache = new Map()
+
+        const ctx = {
+          productByCode,
+          productByNameLower,
+          balanceByProduct,
+          invKeyCache,
+          allocProductCode,
+          allocInventoryCode
+        }
+
         for (let i = 0; i < stockItems.length; i++) {
           const item = stockItems[i]
           try {
-            await processOne(trx, item, i)
+            await processOne(trx, item, i, ctx)
           } catch (err) {
             const e = new Error(err.message || 'Unknown error during import')
             e.rowIndex = i
@@ -2021,17 +2171,14 @@ export class InventoriesRepository {
   }
 
   /**
-   * Process borrow returns - Main processing routine
-   * Accepts data from frontend with array of returning inventories {inventory_id, quantity}
-   * Loops through each return item and processes them using processBorrowReturn routine
-   * 
-   * @param {Object} returnData - Return data from frontend
-   * @param {number} returnData.borrowedInventoryId - ID of the borrowed inventory
-   * @param {Array} returnData.returnItems - Array of {inventory_id, quantity} or {returningInventoryId, quantityReturned}
-   * @param {string} returnData.returnedOn - Return date (YYYY-MM-DD)
-   * @param {string} [returnData.note] - Optional note
-   * @param {number} userId - User ID processing the return
-   * @returns {Object} Result of the operation
+   * Process borrow-from returns: one `borrow_from_returns` row and GL per line (AP + BV + 1300).
+   *
+   * @param {Object} returnData
+   * @param {number} returnData.borrowedInventoryId - Borrowed lot `inventories.id`
+   * @param {Array} returnData.returnItems - `{ inventory_id, quantity }` or `{ returningInventoryId, quantityReturned }`
+   * @param {string} returnData.returnedOn - YYYY-MM-DD
+   * @param {string} [returnData.note]
+   * @returns {Object} borrowReturnIds, isSettled, obligationUnitCost, totalQuantityReturned, processedReturns (per line)
    */
   async processBorrowFromReturn(returnData, userId = null) {
     const {
@@ -2061,14 +2208,7 @@ export class InventoriesRepository {
       throw new Error('No valid return items provided')
     }
 
-    // Use transaction to ensure all operations succeed or fail together
     return await this.knex.transaction(async (trx) => {
-      const processedReturns = []
-      const allGlEntries = []
-      let highestCost = 0
-      let initialBorrowedPrice = 0
-
-      // Get initial borrowed inventory price (before any returns)
       const borrowedInventory = await trx('inventories')
         .where('id', borrowed_inventory_id_value)
         .first()
@@ -2077,10 +2217,7 @@ export class InventoriesRepository {
         throw new Error('Borrowed inventory record not found')
       }
 
-      initialBorrowedPrice = parseFloat(borrowedInventory.purchase_price) || 0
-      highestCost = initialBorrowedPrice
-
-      // Loop through each return item and process using processBorrowReturn routine
+      const processedReturns = []
       for (const returnItem of normalizedReturnItems) {
         const result = await this.processBorrowReturn(trx, {
           borrowed_inventory_id: borrowed_inventory_id_value,
@@ -2090,46 +2227,34 @@ export class InventoriesRepository {
           note: note || null,
           userId: userId || null
         })
-
         processedReturns.push(result)
-
-        // Track highest cost (high-water mark)
-        if (result.newAdjustedPrice > highestCost) {
-          highestCost = result.newAdjustedPrice
-        }
-
-        // Collect GL entries (they're already posted by processBorrowReturn, but we track them)
-        if (result.glEntries && result.glEntries.entries) {
-          allGlEntries.push(...result.glEntries.entries)
-        }
       }
 
-      // Get final status after all returns
-      const borrowFromRecord = await trx('borrow_from_inventories')
+      const finalBorrow = await trx('borrow_from_inventories')
         .where('inventory_id', borrowed_inventory_id_value)
-        .whereIn('status', ['active', 'partially_returned', 'returned'])
         .orderBy('id', 'desc')
         .first()
 
-      const totalQuantityReturned = normalizedReturnItems.reduce((sum, item) => sum + item.quantity_returned, 0)
-      const isSettled = borrowFromRecord && totalQuantityReturned >= borrowFromRecord.quantity
+      const totalQuantityReturned = normalizedReturnItems.reduce(
+        (sum, item) => sum + item.quantity_returned,
+        0
+      )
 
       return {
         success: true,
         borrowReturnIds: processedReturns.map(r => r.borrowReturnId),
-        isSettled: isSettled || false,
-        oldAdjustedPrice: initialBorrowedPrice,
-        newAdjustedPrice: highestCost, // High-water mark (highest cost among all returns)
-        priceDifference: highestCost - initialBorrowedPrice,
-        totalQuantityReturned: totalQuantityReturned,
-        processedReturns: processedReturns // Individual return results
+        isSettled: finalBorrow?.status === 'returned',
+        obligationUnitCost: processedReturns[0]?.obligationUnitCost ?? null,
+        totalQuantityReturned,
+        processedReturns
       }
     })
   }
 
   /**
-   * Process one borrow-from return line item (bin card, status, GL).
-   * GL settlement (DR 3100 / CR 1300 for returned value) mirrors borrow-from creation (DR 1300 / CR 3100).
+   * Process one borrow-from return line: persist row, status, returning qty, bin card, GL (AP + BV + inventory).
+   * Settlement uses obligation cost C_b from `borrow_from_inventories.unit_cost`; physical out at returning lot `purchase_price`.
+   * Does not adjust borrowed inventory cost or COGS.
    */
   async processBorrowReturn(trx, borrowReturnData) {
     const {
@@ -2141,7 +2266,6 @@ export class InventoriesRepository {
       userId
     } = borrowReturnData
 
-    // Validate required fields
     if (!borrowed_inventory_id || !returning_inventory_id || !quantity_returned || !returned_on) {
       throw new Error('Missing required fields: borrowed_inventory_id, returning_inventory_id, quantity_returned, returned_on')
     }
@@ -2150,16 +2274,9 @@ export class InventoriesRepository {
       throw new Error('quantity_returned must be greater than 0')
     }
 
-    // Account codes constants
-    const ACC_INVENTORY = { code: '1300', name: 'Inventory' }
-    const ACC_COGS = { code: '6100', name: 'Cost of Goods Sold' }
-    const ACC_AP = { code: '3100', name: 'Accounts Payable' }
-
-    // Helper for financial rounding to 2 decimal places
     const fm = (num) => Math.round((num + Number.EPSILON) * 100) / 100
 
     try {
-      // 1. Validate the borrowed inventory exists
       const borrowedInventory = await trx('inventories')
         .where('id', borrowed_inventory_id)
         .first()
@@ -2168,7 +2285,6 @@ export class InventoriesRepository {
         throw new Error(`Borrowed inventory with ID ${borrowed_inventory_id} not found`)
       }
 
-      // 2. Validate the returning inventory exists and has sufficient quantity
       const returningInventory = await trx('inventories')
         .where('id', returning_inventory_id)
         .first()
@@ -2183,32 +2299,28 @@ export class InventoriesRepository {
         )
       }
 
-      // 3. Get all previous borrow returns for this borrowed inventory
       const borrowReturns = await trx('borrow_from_returns')
         .where('borrowed_inventory_id', borrowed_inventory_id)
         .orderBy('id', 'desc')
 
-      // 4. Find the original borrow_from_inventories record
-      // Try by inventory_id first (preferred), then fallback to product matching
       let originalBorrowRecord = await trx('borrow_from_inventories')
         .where('inventory_id', borrowed_inventory_id)
         .whereIn('status', ['active', 'partially_returned'])
         .orderBy('id', 'desc')
         .first()
 
-      // Fallback: match by product characteristics if inventory_id match fails
       if (!originalBorrowRecord) {
         originalBorrowRecord = await trx('borrow_from_inventories')
           .where('product_id', borrowedInventory.product_id)
           .where('unit_cost', borrowedInventory.purchase_price)
-          .where(function() {
+          .where(function () {
             if (borrowedInventory.batch_no) {
               this.where('batch_no', borrowedInventory.batch_no)
             } else {
               this.whereNull('batch_no')
             }
           })
-          .where(function() {
+          .where(function () {
             if (borrowedInventory.expiry_date) {
               this.where('expiry_date', borrowedInventory.expiry_date)
             } else {
@@ -2224,38 +2336,20 @@ export class InventoriesRepository {
         throw new Error('Borrow from inventory record not found for this inventory item')
       }
 
-      // 5. Get all sold items from the borrowed inventory
-      const salesTableExists = await trx.schema.hasTable('sales_order_items')
-      const soldBorrowedInventory = salesTableExists
-        ? await trx('sales_order_items')
-            .where('inventory_id', borrowed_inventory_id)
-            .select('*')
-        : []
-
-      // 6. Calculate totals
-      const lastReturnedAdjustedCost = parseFloat(borrowedInventory.purchase_price) || 0
+      const obligationUnitCost = parseFloat(originalBorrowRecord.unit_cost) || 0
       const totalBorrowedQuantity = parseInt(originalBorrowRecord.quantity, 10) || 0
 
       let totalReturnedQuantityBeforeReturn = 0
-      if (borrowReturns && borrowReturns.length > 0) {
+      if (borrowReturns?.length > 0) {
         totalReturnedQuantityBeforeReturn = borrowReturns.reduce(
           (acc, curr) => acc + (parseInt(curr.quantity_returned, 10) || 0),
           0
         )
       }
 
-      let totalSoldQuantityBeforeReturn = 0
-      if (soldBorrowedInventory && soldBorrowedInventory.length > 0) {
-        totalSoldQuantityBeforeReturn = soldBorrowedInventory.reduce(
-          (acc, curr) => acc + (parseInt(curr.quantity, 10) || 0),
-          0
-        )
-      }
-
       const quantityToReturn = parseInt(quantity_returned, 10)
-      const returningInventoryCost = parseFloat(returningInventory.purchase_price) || 0
+      const returningUnitCost = parseFloat(returningInventory.purchase_price) || 0
 
-      // Validate we're not returning more than borrowed
       const unreturnedQuantity = totalBorrowedQuantity - totalReturnedQuantityBeforeReturn
       if (quantityToReturn > unreturnedQuantity) {
         throw new Error(
@@ -2263,17 +2357,12 @@ export class InventoriesRepository {
         )
       }
 
-      // 7. Calculate cost difference and excess sold quantity
-      const costDifference = fm(returningInventoryCost - lastReturnedAdjustedCost)
-      const excessSoldQuantity = Math.max(totalSoldQuantityBeforeReturn, totalReturnedQuantityBeforeReturn) - totalReturnedQuantityBeforeReturn
-
-      // 8. Insert borrow return record
       const insertResult = await trx('borrow_from_returns')
         .insert({
           borrowed_inventory_id,
           returning_inventory_id,
-          estimated_price: returningInventoryCost,
-          actual_price: returningInventoryCost,
+          estimated_price: returningUnitCost,
+          actual_price: returningUnitCost,
           quantity_returned: quantityToReturn,
           returned_on: returned_on,
           note: note || null,
@@ -2287,61 +2376,44 @@ export class InventoriesRepository {
         throw new Error('Failed to create borrow_from_returns record')
       }
 
-      const borrowReturnId = insertResult[0]?.id || insertResult[0]
+      const borrowReturnId = insertResult[0]?.id ?? insertResult[0]
 
-      // 9. Update borrow_from_inventories status
       const totalReturnedAfter = totalReturnedQuantityBeforeReturn + quantityToReturn
-      const isSettled = totalReturnedAfter >= totalBorrowedQuantity
+      const isBorrowFullyReturned = totalReturnedAfter >= totalBorrowedQuantity
 
       await trx('borrow_from_inventories')
         .where('id', originalBorrowRecord.id)
         .update({
-          status: isSettled ? 'returned' : 'partially_returned',
+          status: isBorrowFullyReturned ? 'returned' : 'partially_returned',
           last_updated: trx.fn.now()
         })
 
-      // 10. Update borrowed inventory price to the returning cost (high-water mark logic)
-      // Only update if returning cost is higher than current cost
-      if (returningInventoryCost > lastReturnedAdjustedCost) {
-        await trx('inventories')
-          .where('id', borrowed_inventory_id)
-          .update({
-            purchase_price: returningInventoryCost,
-            last_updated: trx.fn.now()
-          })
-      }
-
-      // 11. Decrement quantity from returning inventory
       await trx('inventories')
         .where('id', returning_inventory_id)
-        .decrement('quantity', quantityToReturn)
         .update({
+          quantity: trx.raw('quantity - ?', [quantityToReturn]),
           last_updated: trx.fn.now()
         })
 
-      // 12. Create bin card entry for the return
-      const binRecord = await trx('bin_cards')
-        .where({ product_id: returningInventory.product_id })
-        .orderBy('id', 'desc')
-        .first()
-
-      const binBalance = binRecord ? (parseInt(binRecord.balance, 10) || 0) : 0
+      const openingBalance = await this.getLastProductBalance(returningInventory.product_id, trx)
+      const balanceAfter = openingBalance - quantityToReturn
 
       await trx('bin_cards')
         .insert({
           product_id: returningInventory.product_id,
           inventory_id: returning_inventory_id,
-          transaction_type: 'issued', // Outgoing transaction
+          transaction_type: 'issued',
           quantity_out: quantityToReturn,
           quantity_in: 0,
-          unit_cost: returningInventoryCost,
-          total_cost: fm(returningInventoryCost * quantityToReturn),
-          balance: binBalance - quantityToReturn,
+          unit_cost: returningUnitCost,
+          total_cost: fm(returningUnitCost * quantityToReturn),
+          balance: balanceAfter,
           batch_no: returningInventory.batch_no || null,
           expiry_date: returningInventory.expiry_date || null,
           transaction_date: returned_on,
           reference_id: borrowReturnId,
           reference_table: 'borrow_from_returns',
+          opening_balance: openingBalance,
           reason: 'Borrow Return - Return to Supplier',
           notes: note || null,
           created_by: userId || null,
@@ -2350,118 +2422,38 @@ export class InventoriesRepository {
           sync_status: 'pending'
         })
 
-      // 13. Prepare GL entries
-      const entries = []
-      const unreturnedQtyAfter = totalBorrowedQuantity - totalReturnedAfter
-
-      // A. Revalue the unreturned inventory (mark-to-market adjustment)
-      if (costDifference !== 0 && unreturnedQtyAfter > 0) {
-        if (costDifference > 0) {
-          // Cost increased: DR Inventory, CR Accounts Payable
-          entries.push({
-            account_code: ACC_INVENTORY.code,
-            debit: fm(costDifference * unreturnedQtyAfter),
-            credit: 0,
-            description: `Inventory revaluation for unreturned quantity (${unreturnedQtyAfter} units)`
-          })
-          entries.push({
-            account_code: ACC_AP.code,
-            debit: 0,
-            credit: fm(costDifference * unreturnedQtyAfter),
-            description: `Accounts Payable adjustment for inventory revaluation`
-          })
-        } else {
-          // Cost decreased: CR Inventory, DR Accounts Payable
-          entries.push({
-            account_code: ACC_INVENTORY.code,
-            debit: 0,
-            credit: fm(Math.abs(costDifference) * unreturnedQtyAfter),
-            description: `Inventory revaluation for unreturned quantity (${unreturnedQtyAfter} units)`
-          })
-          entries.push({
-            account_code: ACC_AP.code,
-            debit: fm(Math.abs(costDifference) * unreturnedQtyAfter),
-            credit: 0,
-            description: `Accounts Payable adjustment for inventory revaluation`
-          })
-        }
-      }
-
-      // B. Adjust COGS for excess sold quantity (if any)
-      if (excessSoldQuantity > 0 && costDifference !== 0) {
-        if (costDifference > 0) {
-          // Cost increased: DR COGS, CR Inventory
-          entries.push({
-            account_code: ACC_COGS.code,
-            debit: fm(costDifference * excessSoldQuantity),
-            credit: 0,
-            description: `COGS adjustment for excess sold quantity (${excessSoldQuantity} units)`
-          })
-          entries.push({
-            account_code: ACC_INVENTORY.code,
-            debit: 0,
-            credit: fm(costDifference * excessSoldQuantity),
-            description: `Inventory adjustment for excess sold quantity`
-          })
-        } else {
-          // Cost decreased: CR COGS, DR Inventory
-          entries.push({
-            account_code: ACC_COGS.code,
-            debit: 0,
-            credit: fm(Math.abs(costDifference) * excessSoldQuantity),
-            description: `COGS adjustment for excess sold quantity (${excessSoldQuantity} units)`
-          })
-          entries.push({
-            account_code: ACC_INVENTORY.code,
-            debit: fm(Math.abs(costDifference) * excessSoldQuantity),
-            credit: 0,
-            description: `Inventory adjustment for excess sold quantity`
-          })
-        }
-      }
-
-      // C. Record the return transaction (reduce Accounts Payable, reduce Inventory)
-      const returnValue = fm(returningInventoryCost * quantityToReturn)
-      if (returnValue > 0) {
-        entries.push({
-          account_code: ACC_AP.code,
-          debit: returnValue,
-          credit: 0,
-          description: `Accounts Payable reduction for returned quantity (${quantityToReturn} units)`
-        })
-        entries.push({
-          account_code: ACC_INVENTORY.code,
-          debit: 0,
-          credit: returnValue,
-          description: `Inventory reduction for returned quantity (${quantityToReturn} units)`
-        })
-      }
-
-      // 14. Post GL transaction if there are entries
       let glEntries = null
-      if (entries.length > 0) {
-        const referenceNo = `BR-${returned_on.replace(/-/g, '')}-${borrowReturnId}`
-        glEntries = await this.ledgerHelper.postGLTransaction({
-          transaction_date: returned_on,
-          reference_no: referenceNo,
-          reference_table: 'borrow_from_returns',
-          reference_id: borrowReturnId,
-          description: `Borrow return adjustments for inventory ${borrowed_inventory_id} on ${returned_on}${note ? ` - ${note}` : ''}`,
-          transaction_type: 'borrow_return',
-          entries: entries,
-          inventory_id: borrowed_inventory_id,
-          created_by: userId || null
-        }, trx)
+      const hasLedger = await trx.schema.hasTable('account_ledger')
+      if (hasLedger) {
+        const referenceNo = `BR-${String(returned_on).replace(/-/g, '')}-${borrowReturnId}`
+        glEntries = await this.ledgerHelper.recordBorrowReturnSettlement(
+          {
+            borrowReturnId,
+            borrowedInventoryId: borrowed_inventory_id,
+            obligationUnitCost,
+            returningUnitCost,
+            quantity: quantityToReturn,
+            transactionDate: returned_on,
+            referenceNumber: referenceNo,
+            memo: note ? `${note} — borrow return` : null,
+            createdBy: userId
+          },
+          trx
+        )
       }
+
+      const varianceLine = fm((returningUnitCost - obligationUnitCost) * quantityToReturn)
 
       return {
         success: true,
         borrowReturnId,
-        oldAdjustedPrice: lastReturnedAdjustedCost,
-        newAdjustedPrice: returningInventoryCost,
-        priceDifference: costDifference,
-        adjustments: entries.length,
-        glEntries: glEntries,
+        obligationUnitCost,
+        returningUnitCost,
+        quantityReturned: quantityToReturn,
+        settlementAmountAp: fm(obligationUnitCost * quantityToReturn),
+        inventoryAmount: fm(returningUnitCost * quantityToReturn),
+        varianceAmount: varianceLine,
+        glEntries,
         message: 'Borrow return processed successfully'
       }
     } catch (error) {

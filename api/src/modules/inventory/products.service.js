@@ -84,23 +84,59 @@ export class ProductsService {
     const categories = await this.repository.getAllCategories()
     const units = await this.repository.getAllUnits()
     
-    // Create maps for fast lookup
-    const categoryMap = new Map(categories.map(c => [c.name.toLowerCase(), c.id]))
-    const unitMap = new Map(units.map(u => [u.name.toLowerCase(), u.id]))
+    const categoryMap = new Map(categories.map((c) => [c.name.toLowerCase(), c.id]))
+    const unitMap = new Map(units.map((u) => [u.name.toLowerCase(), u.id]))
 
-    // Get current max product code to generate sequential codes
+    const uniqueCategoryNames = [
+      ...new Set(
+        products
+          .map((p) => (p.category && String(p.category).trim()) || '')
+          .filter(Boolean)
+      )
+    ]
+    const missingCategories = uniqueCategoryNames.filter((n) => !categoryMap.has(n.toLowerCase()))
+    if (missingCategories.length > 0) {
+      const createdCats = await this.repository.bulkInsertCategories(
+        missingCategories.map((name) => ({
+          name,
+          description: null,
+          sync_status: 'pending'
+        }))
+      )
+      for (const c of createdCats) {
+        categoryMap.set(String(c.name).toLowerCase(), c.id)
+      }
+    }
+
+    const uniqueUnitNames = [
+      ...new Set(products.map((p) => (p.unit && String(p.unit).trim()) || '').filter(Boolean))
+    ]
+    const missingUnits = uniqueUnitNames.filter((n) => !unitMap.has(n.toLowerCase()))
+    if (missingUnits.length > 0) {
+      const createdUnits = await this.repository.bulkInsertUnits(
+        missingUnits.map((name) => ({
+          name,
+          abbreviation: null,
+          sync_status: 'pending'
+        }))
+      )
+      for (const u of createdUnits) {
+        unitMap.set(String(u.name).toLowerCase(), u.id)
+      }
+    }
+
     let nextCodeNum = await this.repository.getMaxProductCodeNumber()
+    const existingNamesLower = await this.repository.getProductNamesLowerSet()
+    const seenNameLower = new Set()
 
     const results = []
     const productsToInsert = []
     const now = new Date()
 
-    // Process each product
     for (let index = 0; index < products.length; index++) {
       const product = products[index]
-      
+
       try {
-        // Validate required fields
         if (!product.name || !product.name.trim()) {
           results.push({
             index,
@@ -112,65 +148,33 @@ export class ProductsService {
           continue
         }
 
-        // Look up or create category ID
         const categoryName = product.category?.trim()
         let categoryId = null
         if (categoryName) {
-          let catId = categoryMap.get(categoryName.toLowerCase())
-          if (!catId) {
-            // Category doesn't exist, create it
-            const newCategory = await this.repository.createCategory({
-              name: categoryName,
-              description: null,
-              created_at: now,
-              last_updated: now,
-              sync_status: 'pending'
-            })
-            categoryId = newCategory.id
-            // Update the map for subsequent products in this batch
-            categoryMap.set(categoryName.toLowerCase(), categoryId)
-          } else {
-            categoryId = catId
-          }
+          categoryId = categoryMap.get(categoryName.toLowerCase()) ?? null
         }
 
-        // Look up or create unit ID
         const unitName = product.unit?.trim()
         let unitId = null
         if (unitName) {
-          let uId = unitMap.get(unitName.toLowerCase())
-          if (!uId) {
-            // Unit doesn't exist, create it
-            const newUnit = await this.repository.createUnit({
-              name: unitName,
-              abbreviation: null,
-              created_at: now,
-              last_updated: now,
-              sync_status: 'pending'
-            })
-            unitId = newUnit.id
-            // Update the map for subsequent products in this batch
-            unitMap.set(unitName.toLowerCase(), unitId)
-          } else {
-            unitId = uId
-          }
+          unitId = unitMap.get(unitName.toLowerCase()) ?? null
         }
 
-        // Check if product name already exists (by name only)
         const name = product.name.trim()
-        const existing = await this.repository.findByName(name)
-        
-        if (existing) {
+        const nameKey = name.toLowerCase()
+
+        if (existingNamesLower.has(nameKey) || seenNameLower.has(nameKey)) {
           results.push({
             index,
             success: false,
             issueKind: 'warning',
             error: `Product with name "${name}" already exists`,
             product: product,
-            existingProduct: existing
+            existingProduct: null
           })
           continue
         }
+        seenNameLower.add(nameKey)
 
         // Generate product_code in format "PRD####"
         nextCodeNum++

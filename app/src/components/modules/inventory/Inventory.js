@@ -34,7 +34,9 @@ export function InventoryUI() {
       'product-search-query',
       'product-filter',
       'product-stats',
-      'stock-list'
+      'stock-list',
+      'adjust-drawer-partner-options',
+      'adjust-drawer-partner-dd-loading',
     ]
   }, render)
 }

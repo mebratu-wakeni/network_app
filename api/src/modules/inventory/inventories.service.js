@@ -270,8 +270,7 @@ export class InventoriesService {
   }
 
   /**
-   * Process return of borrowed-from items with GL adjustments
-   * Implements "high-water mark" logic for price adjustments
+   * Process return of borrowed-from items (AP + Borrow Variance + inventory at returning lot cost).
    * @param {Object} returnData - Return data
    * @param {number} userId - User ID processing the return
    * @returns {Object} Result of the operation

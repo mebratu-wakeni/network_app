@@ -71,7 +71,16 @@ export function SalesUI(props = {}) {
   return StatefulRow({
     class: 'w-full h-full overflow-hidden',
     viewModel,
-    stateKeys: ['loading', 'sales-tab'],
+    stateKeys: [
+      'loading',
+      'sales-tab',
+      'customer-list',
+      'customer-search-query',
+      'customer-dropdown-loading',
+      'product-list',
+      'product-search-query',
+      'product-dropdown-loading',
+    ],
   }, render)
 }
 

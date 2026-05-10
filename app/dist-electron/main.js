@@ -11454,14 +11454,7 @@ var _eval = EvalError;
 var range = RangeError;
 var ref = ReferenceError;
 var syntax = SyntaxError;
-var type;
-var hasRequiredType;
-function requireType() {
-  if (hasRequiredType) return type;
-  hasRequiredType = 1;
-  type = TypeError;
-  return type;
-}
+var type = TypeError;
 var uri = URIError;
 var abs$1 = Math.abs;
 var floor$1 = Math.floor;
@@ -11707,7 +11700,7 @@ function requireCallBindApplyHelpers() {
   if (hasRequiredCallBindApplyHelpers) return callBindApplyHelpers;
   hasRequiredCallBindApplyHelpers = 1;
   var bind3 = functionBind;
-  var $TypeError2 = requireType();
+  var $TypeError2 = type;
   var $call2 = requireFunctionCall();
   var $actualApply = requireActualApply();
   callBindApplyHelpers = function callBindBasic(args) {
@@ -11780,7 +11773,7 @@ var $EvalError = _eval;
 var $RangeError = range;
 var $ReferenceError = ref;
 var $SyntaxError = syntax;
-var $TypeError$1 = requireType();
+var $TypeError$1 = type;
 var $URIError = uri;
 var abs = abs$1;
 var floor = floor$1;
@@ -12111,7 +12104,7 @@ var GetIntrinsic2 = getIntrinsic;
 var $defineProperty = GetIntrinsic2("%Object.defineProperty%", true);
 var hasToStringTag = requireShams()();
 var hasOwn$1 = hasown;
-var $TypeError = requireType();
+var $TypeError = type;
 var toStringTag$1 = hasToStringTag ? Symbol.toStringTag : null;
 var esSetTostringtag = function setToStringTag(object, value) {
   var overrideIfSet = arguments.length > 2 && !!arguments[2] && arguments[2].force;
@@ -18795,9 +18788,14 @@ class InventoryManager {
    * @param {string} token - Auth token
    * @param {string} customerType - Optional: 'supplier' (default for borrow-from), 'all' (for borrow-to), or any specific customer type
    */
-  async getPartners(token, customerType = "supplier") {
+  async getPartners(token, customerType = "supplier", options = {}) {
     try {
-      const url2 = customerType === "all" ? `${getApiUrl("/customers")}?limit=1000&offset=0` : `${getApiUrl("/customers")}?customer_type=${customerType}&limit=1000&offset=0`;
+      const limit = options.limit != null ? Number(options.limit) : 1e3;
+      const search = options.search != null ? String(options.search) : "";
+      const preferWalkIn = options.prefer_walk_in === true ? "&prefer_walk_in=1" : "";
+      const searchParam = search.trim() !== "" ? `&search=${encodeURIComponent(search.trim())}` : "";
+      const limitParam = `limit=${encodeURIComponent(String(limit))}`;
+      const url2 = customerType === "all" ? `${getApiUrl("/customers")}?${limitParam}&offset=0${searchParam}${preferWalkIn}` : `${getApiUrl("/customers")}?customer_type=${encodeURIComponent(customerType)}&${limitParam}&offset=0${searchParam}${preferWalkIn}`;
       const response = await fetch(url2, {
         method: "GET",
         headers: {
@@ -19745,8 +19743,8 @@ class InventoryManager {
 }
 const inventoryManager = new InventoryManager();
 function InventoryIpcHandlers() {
-  ipcMain.handle("inventory:get-partners", async (event, customerType = "supplier") => {
-    return await inventoryManager.getPartners(getToken(), customerType);
+  ipcMain.handle("inventory:get-partners", async (event, customerType = "supplier", options = {}) => {
+    return await inventoryManager.getPartners(getToken(), customerType, options);
   });
   ipcMain.handle("inventory:get-products", async (event, searchParams) => {
     return await inventoryManager.getProducts(searchParams, getToken());
@@ -19853,12 +19851,21 @@ class CustomersManager {
     try {
       const apiUrl = getApiUrl("/customers");
       const queryParams = new URLSearchParams({
-        limit: params.limit || 10,
-        offset: params.offset || 0,
-        search: params.search || "",
-        sortBy: params.sortBy || "id",
-        orderBy: params.orderBy || "desc"
+        limit: String((params == null ? void 0 : params.limit) ?? 10),
+        offset: String((params == null ? void 0 : params.offset) ?? 0),
+        search: (params == null ? void 0 : params.search) || "",
+        sortBy: (params == null ? void 0 : params.sortBy) || "id",
+        orderBy: (params == null ? void 0 : params.orderBy) || "desc"
       });
+      if ((params == null ? void 0 : params.customer_type) != null && String(params.customer_type).trim() !== "") {
+        queryParams.set("customer_type", String(params.customer_type).trim());
+      }
+      if ((params == null ? void 0 : params.customer_types) != null && String(params.customer_types).trim() !== "") {
+        queryParams.set("customer_types", String(params.customer_types).trim());
+      }
+      if ((params == null ? void 0 : params.prefer_walk_in) === true) {
+        queryParams.set("prefer_walk_in", "1");
+      }
       const response = await fetch(`${apiUrl}?${queryParams}`, {
         method: "GET",
         headers: {
@@ -19978,7 +19985,45 @@ class CustomersManager {
     }
   }
   /**
-   * Bulk import customers
+   * Bulk import customers from CSV (multipart; parse + partial success on API)
+   * @param {Uint8Array|ArrayBuffer|number[]} fileBuffer
+   */
+  async bulkImportCustomersUpload(fileBuffer, fileName, token) {
+    var _a;
+    try {
+      const form = new FormData$2();
+      form.append("file", Buffer.from(fileBuffer), fileName || "customers.csv");
+      const url2 = getApiUrl("/customers/bulk-import-upload");
+      const res = await axios.post(url2, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token}`
+        },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity
+      });
+      const data = res.data;
+      return {
+        success: data.ok !== false,
+        summary: data.summary || {},
+        results: data.results || []
+      };
+    } catch (error) {
+      if ((_a = error.response) == null ? void 0 : _a.data) {
+        const d = error.response.data;
+        return {
+          success: false,
+          error: d.error || d.message || error.message,
+          summary: d.summary,
+          results: d.results || []
+        };
+      }
+      console.error("[CustomersManager] bulkImportCustomersUpload error:", error);
+      throw error;
+    }
+  }
+  /**
+   * Bulk import customers (JSON body)
    */
   async bulkImportCustomers(customers, token) {
     try {
@@ -20061,6 +20106,9 @@ function CustomersIpcHandlers() {
   });
   ipcMain.handle("customers:delete-customer", async (event, customerId) => {
     return await customersManager.deleteCustomer(customerId, getToken());
+  });
+  ipcMain.handle("customers:bulk-import-customers-upload", async (event, { fileBuffer, fileName }) => {
+    return await customersManager.bulkImportCustomersUpload(fileBuffer, fileName, getToken());
   });
   ipcMain.handle("customers:bulk-import-customers", async (event, { customers }) => {
     return await customersManager.bulkImportCustomers(customers, getToken());

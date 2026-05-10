@@ -266,8 +266,7 @@ function CreateExpenseModalContent(viewModel, delegator, handleClose) {
     const vm = props.viewModel
     const form = vm.getState('expense-form') || {}
     const customerList = vm.getState('expense-customer-list') || []
-
-    const update = (key, value) => vm.updateExpenseForm({ [key]: value })
+    const expenseCustomerDdLoading = vm.getState('expense-customer-dropdown-loading') === true
 
   const showCustomerDropdown = form.show_customer_dropdown === true
   const customerDisplay = form.customer
@@ -283,6 +282,8 @@ function CreateExpenseModalContent(viewModel, delegator, handleClose) {
     return 0
   })
 
+    const update = (key, value) => vm.updateExpenseForm({ [key]: value })
+
     const gross = Number(form.amount) || 0
     const applyWithhold = form.apply_withhold === true
     const withholdPct = vm.getState('withhold-percentage')
@@ -290,8 +291,7 @@ function CreateExpenseModalContent(viewModel, delegator, handleClose) {
     const net = gross - withholdAmount
 
   const handleCustomerSearch = (value) => {
-    vm.updateExpenseForm({ customer_search: value })
-    vm.loadExpenseCustomers(value)
+    vm.updateExpenseCustomerSearch(value)
   }
 
   const handleCustomerSelect = (customer) => {
@@ -342,6 +342,47 @@ function CreateExpenseModalContent(viewModel, delegator, handleClose) {
     const labelClass = 'block text-sm font-medium text-gray-700 mb-1'
     const fieldClass = 'w-full'
 
+    const expenseCustomerMenuRows = []
+    if (expenseCustomerDdLoading) {
+      expenseCustomerMenuRows.push(Row({ key: 'exp-dd-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'))
+    } else if (sortedCustomerList.length === 0) {
+      expenseCustomerMenuRows.push(
+        Row(
+          { key: 'exp-dd-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+          (form.customer_search || '').trim() ? 'No customers match your search.' : 'Type to search customers.'
+        )
+      )
+    } else {
+      expenseCustomerMenuRows.push(
+        ...sortedCustomerList.map((customer) => {
+          const name = customer.name || customer.full_name || 'Unknown'
+          const isWalkIn = (customer.name || customer.full_name || '').trim().toLowerCase() === 'walk-in'
+          return DropdownSearchItem({
+            delegator,
+            onSelect: () => handleCustomerSelect(customer),
+            key: customer.id,
+            class: isWalkIn ? 'py-3 border-b border-gray-100' : 'py-3',
+          }, [
+            Row({ class: 'flex items-center justify-between gap-2' }, [
+              isWalkIn
+                ? Row({ class: 'flex items-center gap-2 font-semibold text-gray-900' }, [
+                    IonIcon({ name: 'walk-outline', class: 'text-lg' }),
+                    'Walk-in',
+                  ])
+                : Row({ class: 'font-semibold text-gray-900' }, name),
+              isWalkIn
+                ? Row({ class: 'text-xs text-gray-500' }, 'One-off / no customer record')
+                : Badge({
+                    label: capitalizeCustomerType(customer.customer_type),
+                    tone: getCustomerTypeBadgeColor(customer.customer_type),
+                    class: 'text-xs px-2 py-0.5',
+                  }),
+            ]),
+          ])
+        })
+      )
+    }
+
     return Row({ class: 'w-full max-w-2xl bg-white rounded-xl shadow-xl p-6' }, [
     Row({ class: 'text-lg font-semibold mb-4' }, 'Add Expense'),
     Row({ tagType: 'form', class: 'space-y-4', events: { submit: handleSubmit }, delegator }, [
@@ -361,34 +402,7 @@ function CreateExpenseModalContent(viewModel, delegator, handleClose) {
           getOpenState: () => (vm.getState('expense-form') || {}).show_customer_dropdown,
           setOpenState: () => vm.updateExpenseForm({ show_customer_dropdown: false }),
           class: 'w-full relative',
-        }, [
-          ...sortedCustomerList.map((customer) => {
-            const name = customer.name || customer.full_name || 'Unknown'
-            const isWalkIn = (customer.name || customer.full_name || '').trim().toLowerCase() === 'walk-in'
-            return DropdownSearchItem({
-              delegator,
-              onSelect: () => handleCustomerSelect(customer),
-              key: customer.id,
-              class: isWalkIn ? 'py-3 border-b border-gray-100' : 'py-3',
-            }, [
-              Row({ class: 'flex items-center justify-between gap-2' }, [
-                isWalkIn
-                  ? Row({ class: 'flex items-center gap-2 font-semibold text-gray-900' }, [
-                      IonIcon({ name: 'walk-outline', class: 'text-lg' }),
-                      'Walk-in',
-                    ])
-                  : Row({ class: 'font-semibold text-gray-900' }, name),
-                isWalkIn
-                  ? Row({ class: 'text-xs text-gray-500' }, 'One-off / no customer record')
-                  : Badge({
-                      label: capitalizeCustomerType(customer.customer_type),
-                      tone: getCustomerTypeBadgeColor(customer.customer_type),
-                      class: 'text-xs px-2 py-0.5',
-                    }),
-              ]),
-            ])
-          }),
-        ]),
+        }, expenseCustomerMenuRows),
       ]),
 
       // 2. Category + Invoice No.
@@ -550,6 +564,6 @@ function CreateExpenseModalContent(viewModel, delegator, handleClose) {
   return StatefulRow({
     class: 'w-full max-w-2xl',
     viewModel,
-    stateKeys: ['loading', 'expense-form', 'expense-customer-list', 'withhold-percentage'],
+    stateKeys: ['loading', 'expense-form', 'expense-customer-list', 'expense-customer-dropdown-loading', 'withhold-percentage'],
   }, render)
 }

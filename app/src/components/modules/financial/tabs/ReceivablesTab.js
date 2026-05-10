@@ -543,6 +543,7 @@ function detailRow(label, value) {
 function CreateLoanModalContent(vm, delegator, handleClose) {
   const form = vm.getState('loan-form') || {}
   const customerList = vm.getState('loan-customer-list') || []
+  const loanCustomerDdLoading = vm.getState('loan-customer-dropdown-loading') === true
   const showPartnerDropdown = form.show_partner_dropdown === true
   const partnerDisplay = form.partner ? (form.partner.name || form.partner.full_name || '') : 'Select partner...'
   const partnerSearchValue = showPartnerDropdown ? (form.partner_search || '') : partnerDisplay
@@ -550,6 +551,53 @@ function CreateLoanModalContent(vm, delegator, handleClose) {
     const n = (c.name || c.full_name || '').trim().toLowerCase()
     return n !== 'walk-in'
   })
+
+  const loanPartnerMenuRows = []
+  if (loanCustomerDdLoading) {
+    loanPartnerMenuRows.push(Row({ key: 'loan-dd-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'))
+  } else if (sortedCustomers.length === 0) {
+    loanPartnerMenuRows.push(
+      Row(
+        { key: 'loan-dd-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+        (form.partner_search || '').trim() ? 'No partners match your search.' : 'Type to search partners (retailer / both / other).'
+      )
+    )
+  } else {
+    loanPartnerMenuRows.push(
+      ...sortedCustomers.map((c) => {
+        const name = c.name || c.full_name || 'Unknown'
+        const partnerChildren = [
+          Row({ class: 'flex items-center justify-between gap-2' }, [
+            Row({ class: 'font-semibold text-gray-900' }, name),
+            Badge({
+              label: capitalizeCustomerType(c.customer_type),
+              tone: getCustomerTypeBadgeColor(c.customer_type),
+              class: 'text-xs px-2 py-0.5',
+            }),
+          ]),
+          Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, [
+            ...(c.contact_person
+              ? [Row({ class: 'flex items-center gap-1' }, [IonIcon({ name: 'person-outline', class: 'text-xs' }), c.contact_person])]
+              : []),
+            ...(c.contact_person ? [Row({}, '•')] : []),
+            Row({}, c.phone || c.contact_number || 'N/A'),
+          ]),
+        ]
+        return DropdownSearchItem(
+          {
+            ...(delegator ? { delegator } : {}),
+            onSelect: () => {
+              vm.selectLoanPartner(c)
+              vm.updateLoanForm({ show_partner_dropdown: false })
+            },
+            key: c.id,
+            class: 'py-3',
+          },
+          [Row({ class: 'flex flex-col gap-1' }, partnerChildren)]
+        )
+      })
+    )
+  }
 
   const handleSubmit = async (e) => {
     e?.preventDefault?.()
@@ -612,44 +660,15 @@ function CreateLoanModalContent(vm, delegator, handleClose) {
         open: showPartnerDropdown,
         value: partnerSearchValue,
         placeholder: 'Search partners...',
-        onInput: (v) => { vm.updateLoanForm({ partner_search: v }); vm.loadLoanCustomers(v) },
-        onFocus: () => { vm.loadLoanCustomers(form.partner_search || ''); vm.updateLoanForm({ show_partner_dropdown: true }) },
+        onInput: (v) => vm.updateLoanPartnerSearch(v),
+        onFocus: () => {
+          vm.loadLoanCustomers(form.partner_search || '')
+          vm.updateLoanForm({ show_partner_dropdown: true })
+        },
         getOpenState: () => (vm.getState('loan-form') || {}).show_partner_dropdown,
         setOpenState: () => vm.updateLoanForm({ show_partner_dropdown: false }),
         class: 'w-full relative'
-      }, [
-        ...sortedCustomers.map((c) => {
-          const name = c.name || c.full_name || 'Unknown'
-          const partnerChildren = [
-            Row({ class: 'flex items-center justify-between gap-2' }, [
-              Row({ class: 'font-semibold text-gray-900' }, name),
-              Badge({
-                label: capitalizeCustomerType(c.customer_type),
-                tone: getCustomerTypeBadgeColor(c.customer_type),
-                class: 'text-xs px-2 py-0.5'
-              })
-            ]),
-            Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, [
-              ...(c.contact_person ? [
-                Row({ class: 'flex items-center gap-1' }, [
-                  IonIcon({ name: 'person-outline', class: 'text-xs' }),
-                  c.contact_person
-                ])
-              ] : []),
-              ...(c.contact_person ? [Row({}, '•')] : []),
-              Row({}, c.phone || c.contact_number || 'N/A')
-            ])
-          ]
-          return DropdownSearchItem({
-            ...(delegator ? { delegator } : {}),
-            onSelect: () => { vm.selectLoanPartner(c); vm.updateLoanForm({ show_partner_dropdown: false }) },
-            key: c.id,
-            class: 'py-3'
-          }, [
-            Row({ class: 'flex flex-col gap-1' }, partnerChildren)
-          ])
-        })
-      ])
+      }, loanPartnerMenuRows)
     ]),
     Row({}, [
       Row({ tagType: 'label', class: labelClass }, 'Amount (Br)'),

@@ -15,9 +15,7 @@ export function ProductSection(props) {
   const searchQuery = props.getLocalState('productSearchQuery') || '';
   // const filteredProducts = products.filter(product => product.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredProducts = props.viewModel.getState('product-list') || [];
-
-  // const searchQuery = props.viewModel.getState('product-search-query') || '';
-  const loading = props.viewModel.getState('loading');
+  const productDropdownLoading = props.viewModel.getState('product-dropdown-loading') === true;
 
   props.ensureLocalStateKey('showProductDropdown', false);
   props.ensureLocalStateKey('productSearchQuery', '');
@@ -25,7 +23,7 @@ export function ProductSection(props) {
 
   const showProductDropdown = props.getLocalState('showProductDropdown');
   const productSearchQuery = props.getLocalState('productSearchQuery') || '';
-  const selectedProduct = props.viewModel.getState('selected-product');
+  const loading = props.viewModel.getState('loading');
 
   const quantity = 100;
   const unitPrice = 100;
@@ -50,8 +48,8 @@ export function ProductSection(props) {
   
   const searchInput = props.getLocalState('productSearchInput') || searchQuery;
 
-  const handleProductSearch = async (value) => {
-    await props.viewModel.getProducts(value);
+  const handleProductSearch = (value) => {
+    props.viewModel.updatePurchaseProductDropdownSearch(value);
     props.setLocalState('productSearchQuery', value);
   }
 
@@ -83,52 +81,57 @@ export function ProductSection(props) {
   // console.log('productSearchQuery', productSearchQuery);
 
   const SearchProduct = () => {
+    const menuRows = [];
+    if (productDropdownLoading) {
+      menuRows.push(Row({ key: 'pur-prod-dd-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'));
+    } else if (filteredProducts.length === 0) {
+      menuRows.push(
+        Row(
+          { key: 'pur-prod-dd-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+          productSearchQuery.trim() ? 'No products match your search.' : 'Type to search products by name or code.'
+        )
+      );
+    } else {
+      menuRows.push(
+        ...filteredProducts.map((product) => {
+          const productHeaderChildren = [Row({ class: 'font-semibold text-gray-900' }, product.name || 'Unknown Product')];
+          if (product.category) {
+            productHeaderChildren.push(
+              Row({ class: 'text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded' }, product.category)
+            );
+          }
+          const productCodeChildren = [Row({}, `Code: ${product.productCode || product.product_code || 'N/A'}`)];
+          if (product.unit) {
+            productCodeChildren.push(Row({}, `• ${product.unit}`));
+          }
+          const productChildren = [
+            Row({ class: 'flex items-center justify-between gap-2' }, productHeaderChildren),
+            Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, productCodeChildren),
+          ];
+          return DropdownSearchItem(
+            {
+              onSelect: () => handleProductSelect(product),
+              key: product.id,
+              class: 'py-3',
+            },
+            [Row({ class: 'flex flex-col gap-1' }, productChildren)]
+          );
+        })
+      );
+    }
     return DropdownSearch({
       open: showProductDropdown,
       value: productSearchQuery,
       placeholder: 'Search product...',
       onInput: handleProductSearch,
-      onFocus: async () => {
-        await props.viewModel.getProducts(searchQuery);
-        props.setLocalState('showProductDropdown', true)
+      onFocus: () => {
+        props.viewModel.loadPurchaseProductsForDropdown(productSearchQuery);
+        props.setLocalState('showProductDropdown', true);
       },
       getOpenState: () => props.getLocalState('showProductDropdown'),
       setOpenState: () => props.setLocalState('showProductDropdown', false),
       class: 'w-full relative',
-    }, filteredProducts.map(product => {
-      const productHeaderChildren = [
-        Row({ class: 'font-semibold text-gray-900' }, product.name || 'Unknown Product')
-      ];
-
-      if (product.category) {
-        productHeaderChildren.push(
-          Row({ class: 'text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded' }, product.category)
-        );
-      }
-
-      const productCodeChildren = [
-        Row({}, `Code: ${product.productCode || product.product_code || 'N/A'}`)
-      ];
-
-      if (product.unit) {
-        productCodeChildren.push(
-          Row({}, `• ${product.unit}`)
-        );
-      }
-
-      const productChildren = [
-        Row({ class: 'flex items-center justify-between gap-2' }, productHeaderChildren),
-        Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, productCodeChildren)
-      ];
-
-      return DropdownSearchItem({
-        onSelect: () => handleProductSelect(product),
-        key: product.id,
-        class: 'py-3'
-      }, [
-        Row({ class: 'flex flex-col gap-1' }, productChildren)
-      ]);
-    }))
+    }, menuRows);
   }
 
   return Row({ class: 'flex-5/9 flex flex-col min-h-0 overflow-hidden border border-gray-200 rounded-lg' }, [

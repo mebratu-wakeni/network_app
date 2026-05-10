@@ -1018,36 +1018,38 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
   const partnerSearchQuery = adjustStockForm.partnerSearchQuery || '';
   const showPartnerDropdown = adjustStockForm.showPartnerDropdown || false;
   
-  // Get partner list for "Borrow To" dropdown
-  // For borrow-to operations, we need all customers, not just suppliers
-  // The drawer opening already triggers loadPartners('all'), but we check here as a fallback
-  const partnerList = props.viewModel.getPartnerList() || [];
+  const partnerDdLoading = props.viewModel.getState('adjust-drawer-partner-dd-loading') === true;
+  // Partner list for "Borrow To" — server search (customers), not full in-memory list
+  const partnerList = props.viewModel.getState('adjust-drawer-partner-options') || [];
   const selectedPartner = partnerList.find(p => p.id === partnerId) || null;
   
-  // Check if we have all customer types (supplier, retailer, both, other)
-  // If not, reload with 'all' to ensure all customers are available for borrow-to
-  const hasAllCustomerTypes = partnerList.some(p => 
-    p.customer_type && ['retailer', 'both', 'other'].includes(p.customer_type)
-  );
-  
-  // Reload with 'all' if we don't have all customer types (fallback check)
-  // This ensures customers with type 'both', 'retailer', 'other' are available
-  if (!hasAllCustomerTypes && partnerList.length > 0) {
-    // List exists but doesn't have all types - reload with 'all'
-    props.viewModel.loadPartners('all');
-  } else if (partnerList.length === 0) {
-    // If no partners loaded at all, load all customers
-    props.viewModel.loadPartners('all');
+  const filteredPartners = partnerList.filter(partner => partner.type === 'partner');
+
+  const partnerDropdownChildren = [];
+  if (partnerDdLoading) {
+    partnerDropdownChildren.push(Row({ key: 'adj-p-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'));
+  } else if (filteredPartners.length === 0) {
+    partnerDropdownChildren.push(
+      Row(
+        { key: 'adj-p-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+        partnerSearchQuery.trim() ? 'No partners match your search.' : 'Type to search customers.'
+      )
+    );
+  } else {
+    partnerDropdownChildren.push(
+      ...filteredPartners.map((partner) =>
+        DropdownSearchItem({
+          onSelect: () => {
+            props.viewModel.updateAdjustStockForm('partnerId', partner.id);
+            props.viewModel.updateAdjustStockForm('showPartnerDropdown', false);
+            props.viewModel.updateAdjustStockForm('partnerSearchQuery', '');
+          },
+          key: partner.id,
+          delegator: props.delegator,
+        }, `${partner.name} (${partner.code || 'N/A'})`)
+      )
+    );
   }
-  
-  // Filter partners based on search query
-  const filteredPartners = partnerList.filter(partner => {
-    if (partner.type !== 'partner') return false;
-    if (!partnerSearchQuery) return true;
-    const query = partnerSearchQuery.toLowerCase();
-    return (partner.name || '').toLowerCase().includes(query) ||
-           (partner.code || '').toLowerCase().includes(query);
-  });
 
   // Current stock quantity
   const currentQuantity = stockItem.quantity || 0;
@@ -1235,6 +1237,8 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
               // Clear partner when reason changes away from "Borrow To"
               if (e.target.value !== 'Borrow To') {
                 props.viewModel.updateAdjustStockForm('partnerId', null);
+              } else {
+                props.viewModel.loadAdjustDrawerPartnersForDropdown(adjustStockForm.partnerSearchQuery || '');
               }
             },
             delegator: props.delegator
@@ -1254,8 +1258,12 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
             onInput: (query) => {
               props.viewModel.updateAdjustStockForm('partnerSearchQuery', query);
               props.viewModel.updateAdjustStockForm('showPartnerDropdown', true);
+              props.viewModel.scheduleAdjustDrawerPartnerSearch(query);
             },
-            onFocus: () => props.viewModel.updateAdjustStockForm('showPartnerDropdown', true),
+            onFocus: () => {
+              props.viewModel.updateAdjustStockForm('showPartnerDropdown', true);
+              props.viewModel.loadAdjustDrawerPartnersForDropdown(partnerSearchQuery || '');
+            },
             getOpenState: () => {
               const form = props.viewModel.getState('adjust-stock-form');
               return form ? (form.showPartnerDropdown || false) : false;
@@ -1263,17 +1271,7 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
             setOpenState: () => props.viewModel.updateAdjustStockForm('showPartnerDropdown', false),
             class: 'w-full relative',
             delegator: props.delegator
-          }, filteredPartners.length > 0 ? filteredPartners.map(partner => 
-            DropdownSearchItem({
-              onSelect: () => {
-                props.viewModel.updateAdjustStockForm('partnerId', partner.id);
-                props.viewModel.updateAdjustStockForm('showPartnerDropdown', false);
-                props.viewModel.updateAdjustStockForm('partnerSearchQuery', '');
-              },
-              key: partner.id,
-              delegator: props.delegator
-            }, `${partner.name} (${partner.code || 'N/A'})`)
-          ) : [])
+          }, partnerDropdownChildren)
         })] : []),
 
         formRow({
@@ -2434,10 +2432,9 @@ async function handleExportCSV(props) {
 }
 
 async function openBorrowFromModal(props) {
-  // Load data before opening modal to avoid infinite re-rendering
   await Promise.all([
-    props.viewModel.loadAllProducts(),
-    props.viewModel.loadPartners()
+    props.viewModel.loadBorrowFromProductsForDropdown(''),
+    props.viewModel.loadBorrowFromPartnersForDropdown(''),
   ]);
   Modal({}, (delegator, closeHandler) => BorrowFromModalContent(props.viewModel, delegator, closeHandler));
 }

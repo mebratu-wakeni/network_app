@@ -77,6 +77,21 @@ export class ProductsRepository {
   }
 
   /**
+   * Distinct normalized product names (trimmed lower) for bulk-import duplicate checks — one query, O(1) per row.
+   */
+  async getProductNamesLowerSet () {
+    const rows = await this.knex('products')
+      .whereNotNull('name')
+      .whereRaw("TRIM(name) <> ''")
+      .select(this.knex.raw('LOWER(TRIM(name)) AS k'))
+    const set = new Set()
+    for (const r of rows) {
+      if (r.k != null && String(r.k).length > 0) set.add(String(r.k))
+    }
+    return set
+  }
+
+  /**
    * Find product by unique details (name, description, category_id, unit_id)
    */
   async findByUniqueDetails(name, description, categoryId, unitId) {
@@ -257,6 +272,30 @@ export class ProductsRepository {
   }
 
   /**
+   * Bulk insert categories (chunked for SQLite variable limits + event-loop yield).
+   */
+  async bulkInsertCategories (rows) {
+    if (!Array.isArray(rows) || rows.length === 0) return []
+    const CHUNK = 75
+    const inserted = []
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const slice = rows.slice(i, i + CHUNK).map((r) => ({
+        name: r.name,
+        description: r.description ?? null,
+        sync_status: r.sync_status ?? 'pending',
+        created_at: r.created_at ?? this.knex.fn.now(),
+        last_updated: r.last_updated ?? this.knex.fn.now()
+      }))
+      const part = await this.knex('categories').insert(slice).returning(['id', 'name'])
+      inserted.push(...part)
+      if (i + CHUNK < rows.length) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+    }
+    return inserted
+  }
+
+  /**
    * Create a single unit
    */
   async createUnit(data) {
@@ -264,6 +303,30 @@ export class ProductsRepository {
       .insert(data)
       .returning(['id', 'name', 'abbreviation', 'created_at', 'last_updated'])
     return result[0] || result
+  }
+
+  /**
+   * Bulk insert units (chunked).
+   */
+  async bulkInsertUnits (rows) {
+    if (!Array.isArray(rows) || rows.length === 0) return []
+    const CHUNK = 75
+    const inserted = []
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const slice = rows.slice(i, i + CHUNK).map((r) => ({
+        name: r.name,
+        abbreviation: r.abbreviation ?? null,
+        sync_status: r.sync_status ?? 'pending',
+        created_at: r.created_at ?? this.knex.fn.now(),
+        last_updated: r.last_updated ?? this.knex.fn.now()
+      }))
+      const part = await this.knex('units').insert(slice).returning(['id', 'name'])
+      inserted.push(...part)
+      if (i + CHUNK < rows.length) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+    }
+    return inserted
   }
 
   /**
@@ -298,14 +361,23 @@ export class ProductsRepository {
   }
 
   /**
-   * Bulk create products
-   * Returns array of created products
+   * Bulk create products (chunked for SQLite SQLITE_MAX_VARIABLE_NUMBER).
    */
-  async bulkCreate(productsArray) {
-    if (productsArray.length === 0) return []
-    
-    return this.knex('products')
-      .insert(productsArray)
-      .returning(['id', 'product_code', 'name', 'description', 'category_id', 'unit_id', 'remark', 'created_at', 'last_updated'])
+  async bulkCreate (productsArray) {
+    if (!Array.isArray(productsArray) || productsArray.length === 0) return []
+
+    const CHUNK = 75
+    const insertedAll = []
+    for (let i = 0; i < productsArray.length; i += CHUNK) {
+      const slice = productsArray.slice(i, i + CHUNK)
+      const part = await this.knex('products')
+        .insert(slice)
+        .returning(['id', 'product_code', 'name', 'description', 'category_id', 'unit_id', 'remark', 'created_at', 'last_updated'])
+      insertedAll.push(...part)
+      if (i + CHUNK < productsArray.length) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+    }
+    return insertedAll
   }
 }

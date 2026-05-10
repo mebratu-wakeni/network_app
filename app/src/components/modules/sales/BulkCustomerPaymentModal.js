@@ -68,21 +68,14 @@ function formField(label, control, hint) {
  * @param {() => void} [options.onApplied]
  */
 export async function openBulkCustomerPaymentModal({ viewModel, onApplied }) {
-  let customers = [];
-  try {
-    customers = await viewModel.fetchPartnersForBulkCustomerPayment();
-  } catch (e) {
-    console.error('[BulkCustomerPaymentModal] load customers', e);
-  }
-
   const defaultDate = new Date().toISOString().split('T')[0];
 
   Modal({}, (delegator, handleClose) =>
-    bulkModalShell(viewModel, delegator, handleClose, customers, defaultDate, onApplied)
+    bulkModalShell(viewModel, delegator, handleClose, defaultDate, onApplied)
   );
 }
 
-function bulkModalShell(viewModel, delegator, handleClose, customers, defaultDate, onApplied) {
+function bulkModalShell(viewModel, delegator, handleClose, defaultDate, onApplied) {
   const render = (props) => {
     props.ensureLocalStateKey('bulk-search', '');
     props.ensureLocalStateKey('bulk-dd-open', false);
@@ -102,10 +95,12 @@ function bulkModalShell(viewModel, delegator, handleClose, customers, defaultDat
     props.ensureLocalStateKey('bulk-submitting', false);
     props.ensureLocalStateKey('bulk-manual', {});
 
-    const search = (props.getLocalState('bulk-search') || '').trim().toLowerCase();
+    const searchRaw = props.getLocalState('bulk-search') || '';
     const ddOpen = props.getLocalState('bulk-dd-open');
     const customerId = props.getLocalState('bulk-customer-id');
     const displayName = props.getLocalState('bulk-display-name') || '';
+    const bulkCustomerList = viewModel.getState('bulk-payment-customer-list') || [];
+    const bulkCustomerDdLoading = viewModel.getState('bulk-payment-customer-dropdown-loading') === true;
     const orders = props.getLocalState('bulk-orders') || [];
     const totalOutstanding = props.getLocalState('bulk-total-outstanding') || 0;
     const loadingOrders = props.getLocalState('bulk-loading-orders');
@@ -117,15 +112,8 @@ function bulkModalShell(viewModel, delegator, handleClose, customers, defaultDat
     const submitting = props.getLocalState('bulk-submitting');
     const manualMap = props.getLocalState('bulk-manual') || {};
 
-    const filteredCustomers = !search
-      ? customers
-      : customers.filter((c) => {
-          const name = (c.name || c.full_name || '').toLowerCase();
-          const phone = String(c.phone || c.contact_number || '');
-          return name.includes(search) || phone.includes(search);
-        });
-
     const paymentNum = parseFloat(amountStr);
+
     const previewLines =
       allocation !== 'manual' && orders.length > 0
         ? waterfillPreview(orders, paymentNum, allocation)
@@ -160,6 +148,38 @@ function bulkModalShell(viewModel, delegator, handleClose, customers, defaultDat
       props.setLocalState('bulk-dd-open', false);
       loadOutstanding(c.id);
     };
+
+    const bulkMenuRows = [];
+    if (bulkCustomerDdLoading) {
+      bulkMenuRows.push(
+        Row({ key: 'bulk-dd-loading', class: 'px-3 py-2 text-xs text-slate-500 italic' }, 'Searching…')
+      );
+    } else if (bulkCustomerList.length === 0) {
+      bulkMenuRows.push(
+        Row(
+          { key: 'bulk-dd-empty', class: 'px-3 py-2 text-xs text-slate-500' },
+          searchRaw.trim() ? 'No customers match your search.' : 'Type to search customers (retailer / both / other).'
+        )
+      );
+    } else {
+      bulkMenuRows.push(
+        ...bulkCustomerList.map((c) =>
+          DropdownSearchItem({
+            onSelect: () => selectCustomer(c),
+            delegator,
+            class: 'py-2.5',
+          }, [
+            Row({ class: 'font-medium text-slate-900' }, c.name || c.full_name || `Partner #${c.id}`),
+            c.phone || c.contact_person
+              ? Row(
+                  { class: 'text-xs text-slate-500' },
+                  [c.phone || '', c.contact_person ? ` · ${c.contact_person}` : ''].join('')
+                )
+              : null,
+          ].filter(Boolean))
+        )
+      );
+    }
 
     const clearCustomer = () => {
       props.setLocalState('bulk-customer-id', null);
@@ -267,9 +287,13 @@ function bulkModalShell(viewModel, delegator, handleClose, customers, defaultDat
         open: ddOpen,
         value: ddOpen ? props.getLocalState('bulk-search') || '' : displayName || 'Select customer…',
         placeholder: 'Search by name or phone…',
-        onInput: (v) => props.setLocalState('bulk-search', v),
+        onInput: (v) => {
+          props.setLocalState('bulk-search', v);
+          viewModel.updateBulkPaymentCustomerSearch(v);
+        },
         onFocus: () => {
           props.setLocalState('bulk-dd-open', true);
+          viewModel.loadBulkPaymentCustomers(String(props.getLocalState('bulk-search') || '').trim());
         },
         getOpenState: () => props.getLocalState('bulk-dd-open'),
         setOpenState: () => props.setLocalState('bulk-dd-open', false),
@@ -278,23 +302,7 @@ function bulkModalShell(viewModel, delegator, handleClose, customers, defaultDat
         inputClass: 'bg-white border border-slate-200 focus:border-indigo-500',
         menuClass:
           'z-[160] shadow-xl shadow-slate-900/15 border-slate-200/90 bg-white ring-1 ring-slate-900/5',
-      }, [
-        ...filteredCustomers.slice(0, 80).map((c) =>
-          DropdownSearchItem({
-            onSelect: () => selectCustomer(c),
-            delegator,
-            class: 'py-2.5',
-          }, [
-            Row({ class: 'font-medium text-slate-900' }, c.name || c.full_name || `Partner #${c.id}`),
-            c.phone || c.contact_person
-              ? Row(
-                  { class: 'text-xs text-slate-500' },
-                  [c.phone || '', c.contact_person ? ` · ${c.contact_person}` : ''].join('')
-                )
-              : null,
-          ].filter(Boolean))
-        ),
-      ]),
+      }, bulkMenuRows),
       customerId
         ? Row({ class: 'flex justify-end' }, [
             Button(
@@ -671,6 +679,7 @@ function bulkModalShell(viewModel, delegator, handleClose, customers, defaultDat
       class:
         'w-full max-w-5xl bg-white rounded-2xl shadow-2xl shadow-slate-900/12 ring-1 ring-slate-200/90 overflow-hidden flex flex-col max-h-[92vh]',
       viewModel,
+      stateKeys: ['bulk-payment-customer-list', 'bulk-payment-customer-dropdown-loading'],
     },
     render
   );

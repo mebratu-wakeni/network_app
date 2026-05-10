@@ -11,11 +11,14 @@
  * 3. Optionally run seeds to repopulate base data (users, roles, chart of accounts).
  *
  * Usage (from api/):
- *   node scripts/reset-db.js           # drop all + recreate schema (empty)
- *   node scripts/reset-db.js --seed    # same, then run seeds
- *
  *   npm run db:reset
  *   npm run db:reset:seed
+ *   npm run db:reset:seed -- --repo   # force api/data/pharmasuit_lan.db (CI / isolated dev only)
+ *
+ * Default DB path is the system app data location (same as the Electron app): see api/db/resolve-db-file.js.
+ * Override with DB_FILE in the environment or api/.env.
+ *
+ * Stop the desktop app (or any process using the DB) before reset to avoid SQLite locks.
  */
 import knex from 'knex';
 import { fileURLToPath } from 'url';
@@ -24,9 +27,18 @@ import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Load env so knexfile can read DB_* / DATABASE_URL
+// Load env before knexfile (api/.env first, then repo root)
 dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+const forceRepoDb = process.argv.includes('--repo');
+const repoDefaultDb = path.resolve(__dirname, '../data/pharmasuit_lan.db');
+
+if (forceRepoDb) {
+  process.env.DB_FILE = repoDefaultDb;
+  console.log('[reset-db] --repo: using api/data/pharmasuit_lan.db only (not system app data).');
+}
 
 const knexfilePath = path.resolve(__dirname, '../db/knexfile.js');
 const knexConfig = (await import(knexfilePath)).default;
@@ -36,25 +48,32 @@ const runSeed = process.argv.includes('--seed');
 
 async function main() {
   try {
+    const dbPath =
+      knexConfig?.connection?.filename ||
+      (typeof knexConfig?.connection === 'string' ? knexConfig.connection : null) ||
+      '(unknown)';
     console.log('Resetting database...');
+    console.log('  Database file:', path.resolve(String(dbPath)));
 
-    // Roll back all migrations (loop until none left; safety limit 100 batches)
+    // Roll back all migrations (loop per batch; knex returns [batchNo, names[]])
     let rolled;
     let rollbackCount = 0;
     let iterations = 0;
+    let migrationNames = [];
     const maxRollbacks = 100;
     do {
       rolled = await db.migrate.rollback();
-      if (rolled && rolled.length > 0) {
-        rollbackCount += rolled.length;
-        console.log('  Rolled back:', rolled.join(', '));
+      migrationNames = Array.isArray(rolled) && Array.isArray(rolled[1]) ? rolled[1] : [];
+      if (migrationNames.length > 0) {
+        rollbackCount += migrationNames.length;
+        console.log(`  Rolled back batch ${rolled[0]}:`, migrationNames.join(', '));
       }
       iterations++;
       if (iterations >= maxRollbacks) {
         console.warn('  Stopped after max rollback iterations.');
         break;
       }
-    } while (rolled && rolled.length > 0);
+    } while (migrationNames.length > 0);
 
     if (rollbackCount === 0) {
       console.log('  No migrations to roll back.');

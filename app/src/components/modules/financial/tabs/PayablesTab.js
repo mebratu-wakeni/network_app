@@ -468,10 +468,39 @@ function loanPayableDetailRow(label, value) {
 function CreateLoanPayableModalContent(vm, handleClose) {
   const form = vm.getState('loan-payable-form') || {}
   const customerList = vm.getState('loan-payable-customer-list') || []
+  const loanPayableDdLoading = vm.getState('loan-payable-partner-dropdown-loading') === true
   const showPartnerDropdown = form.show_partner_dropdown === true
   const partnerDisplay = form.partner ? (form.partner.name || form.partner.full_name || '') : 'Select partner...'
   const partnerSearchValue = showPartnerDropdown ? (form.partner_search || '') : partnerDisplay
   const sortedPartners = [...customerList].filter((c) => (c.name || c.full_name || '').trim().toLowerCase() !== 'walk-in')
+
+  const loanPayableMenuRows = []
+  if (loanPayableDdLoading) {
+    loanPayableMenuRows.push(Row({ key: 'lp-dd-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'))
+  } else if (sortedPartners.length === 0) {
+    loanPayableMenuRows.push(
+      Row(
+        { key: 'lp-dd-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+        (form.partner_search || '').trim() ? 'No partners match your search.' : 'Type to search suppliers and both-type partners.'
+      )
+    )
+  } else {
+    loanPayableMenuRows.push(
+      ...sortedPartners.map((c) =>
+        DropdownSearchItem(
+          {
+            onSelect: () => {
+              vm.selectLoanPayablePartner(c)
+              vm.updateLoanPayableForm({ show_partner_dropdown: false })
+            },
+            key: c.id,
+            class: 'py-3',
+          },
+          [Row({ class: 'font-semibold text-gray-900' }, c.name || c.full_name || 'Unknown')]
+        )
+      )
+    )
+  }
 
   const handleSubmit = async (e) => {
     e?.preventDefault?.()
@@ -499,12 +528,15 @@ function CreateLoanPayableModalContent(vm, handleClose) {
         open: showPartnerDropdown,
         value: partnerSearchValue,
         placeholder: 'Search partners...',
-        onInput: (v) => { vm.updateLoanPayableForm({ partner_search: v }); vm.loadLoanPayablePartners(v) },
-        onFocus: () => { vm.loadLoanPayablePartners(form.partner_search || ''); vm.updateLoanPayableForm({ show_partner_dropdown: true }) },
+        onInput: (v) => vm.updateLoanPayablePartnerSearch(v),
+        onFocus: () => {
+          vm.loadLoanPayablePartners(form.partner_search || '')
+          vm.updateLoanPayableForm({ show_partner_dropdown: true })
+        },
         getOpenState: () => !!(vm.getState('loan-payable-form') || {}).show_partner_dropdown,
         setOpenState: () => vm.updateLoanPayableForm({ show_partner_dropdown: false }),
         class: 'w-full relative'
-      }, sortedPartners.map((c) => DropdownSearchItem({ onSelect: () => { vm.selectLoanPayablePartner(c); vm.updateLoanPayableForm({ show_partner_dropdown: false }) }, key: c.id, class: 'py-3' }, [Row({ class: 'font-semibold text-gray-900' }, c.name || c.full_name || 'Unknown')])))
+      }, loanPayableMenuRows)
     ]),
     Row({}, [Row({ tagType: 'label', class: labelClass }, 'Amount (Br)'), Input({ type: 'number', min: '0.01', step: '0.01', class: fieldClass, value: form.amount || '', onChange: (e) => vm.updateLoanPayableForm({ amount: e.target.value }) })]),
     Row({ class: 'grid grid-cols-2 gap-4' }, [

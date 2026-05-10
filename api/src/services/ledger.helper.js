@@ -501,7 +501,8 @@ export class LedgerHelper {
   /**
    * Record ledger entry for borrow from (receiving borrowed stock from a partner/customer).
    * DR Inventory (1300), CR Accounts Payable (3100), same amounts — balanced entry.
-   * Mirrors `processBorrowReturn` settlement: return posts DR 3100 / CR 1300 for returned value.
+   * Borrow-from return settlement (see `recordBorrowReturnSettlement`): DR 3100 / CR 6400 at borrow unit cost,
+   * then DR 6400 / CR 1300 at returning lot cost.
    * @param {Object} params - Transaction parameters
    * @param {number} params.inventoryId - Inventory ID
    * @param {number} params.borrowFromId - Borrow from inventory record ID
@@ -535,13 +536,13 @@ export class LedgerHelper {
 
     const entries = [
       {
-        account_code: '1300', // Inventory — mirrors borrow_return settlement (CR 1300)
+        account_code: '1300', // Inventory
         debit: totalAmount,
         credit: 0,
         description: description
       },
       {
-        account_code: '3100', // Accounts Payable — mirrors borrow_return settlement (DR 3100)
+        account_code: '3100', // Accounts Payable
         debit: 0,
         credit: totalAmount,
         description: description
@@ -557,6 +558,74 @@ export class LedgerHelper {
       transaction_type: 'borrow_from',
       entries: entries,
       inventory_id: inventoryId,
+      created_by: createdBy
+    }, trx)
+  }
+
+  /**
+   * Borrow-from return: settle AP at obligation unit cost; remove stock at returning lot cost.
+   * DR Accounts Payable (3100), CR Borrow Variance (6400) — C_b × q
+   * DR Borrow Variance (6400), CR Inventory (1300) — c_r × q
+   */
+  async recordBorrowReturnSettlement (params, trx = null) {
+    const {
+      borrowReturnId,
+      borrowedInventoryId,
+      obligationUnitCost,
+      returningUnitCost,
+      quantity,
+      transactionDate,
+      referenceNumber = null,
+      memo = null,
+      createdBy = null
+    } = params
+
+    const fm = (num) => Math.round((num + Number.EPSILON) * 100) / 100
+    const q = Number(quantity)
+    const Cb = Number(obligationUnitCost)
+    const cr = Number(returningUnitCost)
+    const apAmount = fm(Cb * q)
+    const invAmount = fm(cr * q)
+
+    const ref = referenceNumber || `BR-RET-${borrowReturnId}`
+    const baseDesc = memo || `Borrow return ${q}u @ settle ${Cb} / returning lot ${cr}`
+
+    const entries = [
+      {
+        account_code: '3100',
+        debit: apAmount,
+        credit: 0,
+        description: `${baseDesc} — AP`
+      },
+      {
+        account_code: '6400',
+        debit: 0,
+        credit: apAmount,
+        description: `${baseDesc} — BV (settlement)`
+      },
+      {
+        account_code: '6400',
+        debit: invAmount,
+        credit: 0,
+        description: `${baseDesc} — BV (inventory)`
+      },
+      {
+        account_code: '1300',
+        debit: 0,
+        credit: invAmount,
+        description: `${baseDesc} — inventory out`
+      }
+    ]
+
+    return await this.postGLTransaction({
+      transaction_date: transactionDate,
+      reference_no: ref,
+      reference_table: 'borrow_from_returns',
+      reference_id: borrowReturnId,
+      description: baseDesc,
+      transaction_type: 'borrow_return',
+      entries,
+      inventory_id: borrowedInventoryId,
       created_by: createdBy
     }, trx)
   }

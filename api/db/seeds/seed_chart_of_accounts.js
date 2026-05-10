@@ -29,6 +29,7 @@ export const seed = async (knex) => {
     { account_code: '6100', account_name: 'Cost of Goods Sold', account_type: 'Expense', account_category: 'Expenses', parent_account_code: '6000', level: 2, is_active: true, description: 'Direct costs of goods sold' },
     { account_code: '6200', account_name: 'Operating Expenses', account_type: 'Expense', account_category: 'Expenses', parent_account_code: '6000', level: 2, is_active: true, description: 'General operating expenses' },
     { account_code: '6300', account_name: 'Depreciation Expense', account_type: 'Expense', account_category: 'Expenses', parent_account_code: '6000', level: 2, is_active: true, description: 'Depreciation of fixed assets' },
+    { account_code: '6400', account_name: 'Borrow Variance', account_type: 'Expense', account_category: 'Expenses', parent_account_code: '6000', level: 2, is_active: true, description: 'Borrow obligation vs returning lot cost on borrow-from returns' },
   ]
 
   // Separate level 1 (parent) and level 2 (child) accounts

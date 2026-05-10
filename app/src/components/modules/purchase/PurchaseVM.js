@@ -1,5 +1,6 @@
 const { ViewModel, SharedStateManager } = Liteframe;
 import { permissionChecker } from '../../utils/PermissionChecker';
+import { DROPDOWN_SEARCH_DEBOUNCE_MS, DROPDOWN_SEARCH_LIMIT } from '../../utils/dropdownSearchConfig';
 
 /** Normalize date to YYYY-MM-DD for API (handles ISO strings and Date objects from DB). */
 function normalizeOrderDate(value) {
@@ -26,6 +27,10 @@ const DEFAULT_CURRENT_ORDER = {
 export class PurchaseVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
     super(sharedStateManager);
+    this._supplierSearchSeq = 0;
+    this._purchaseProductSearchSeq = 0;
+    this.purchaseProductSearchTimeout = null;
+    this.supplierSearchTimeout = null;
     this.initializeState();
     this.loadUserPermissions();
     this.loadWithholdPercentage();
@@ -51,6 +56,8 @@ export class PurchaseVM extends ViewModel {
     this.setState('product-list', []);
     this.setState('product-search-query', '');
     this.setState('supplier-list', []);
+    this.setState('supplier-dropdown-loading', false);
+    this.setState('product-dropdown-loading', false);
     this.setState('selected-supplier', null);
     this.setState('withhold-percentage', null);
 
@@ -291,28 +298,40 @@ export class PurchaseVM extends ViewModel {
     });
   }
 
-  async getProducts(query) {
-    if (this.getState('loading')) return [];
-    this.updateState('loading', true);
+  async loadPurchaseProductsForDropdown(query = '') {
+    const gen = ++this._purchaseProductSearchSeq;
+    this.updateState('product-dropdown-loading', true);
     try {
       const result = await window.ipcRenderer.invoke('inventory:get-products', {
-        limit: 10,
+        limit: DROPDOWN_SEARCH_LIMIT,
         offset: 0,
-        search: query,
+        search: (query || '').trim(),
         sortBy: 'id',
-        orderBy: 'desc'
+        orderBy: 'desc',
       });
-      if(result.success) {
-        this.updateState('product-list', result.products);
-        return result.products || [];
+      if (gen !== this._purchaseProductSearchSeq) return [];
+      if (result.success) {
+        const products = result.products || [];
+        this.updateState('product-list', products);
+        return products;
       }
-
       throw new Error(result.error || 'failed to fetch products');
     } catch (error) {
-      console.error('Error fetching products: ', error)
+      if (gen === this._purchaseProductSearchSeq) {
+        console.error('Error fetching products: ', error);
+        this.updateState('product-list', []);
+      }
+      return [];
     } finally {
-      this.updateState('loading', false);
+      if (gen === this._purchaseProductSearchSeq) {
+        this.updateState('product-dropdown-loading', false);
+      }
     }
+  }
+
+  updatePurchaseProductDropdownSearch(query) {
+    clearTimeout(this.purchaseProductSearchTimeout);
+    this.purchaseProductSearchTimeout = setTimeout(() => this.loadPurchaseProductsForDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS);
   }
 
   async getSuppliers() {
@@ -386,15 +405,17 @@ export class PurchaseVM extends ViewModel {
     }
   }
 
-  async loadSuppliers(query) {
-    if (this.getState('loading')) return [];
-    this.updateState('loading', true);
+  async loadSuppliers(query = '') {
+    const gen = ++this._supplierSearchSeq;
+    this.updateState('supplier-dropdown-loading', true);
     this.updateState('error', null);
     try {
       const result = await window.ipcRenderer.invoke('purchase:get-suppliers', {
-        search: query,
-        limit: 10
+        search: (query || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
       });
+
+      if (gen !== this._supplierSearchSeq) return [];
 
       if (result.success) {
         this.updateState('supplier-list', result.suppliers || []);
@@ -402,11 +423,16 @@ export class PurchaseVM extends ViewModel {
       }
       throw new Error(result.error || 'Failed to load suppliers');
     } catch (error) {
-      console.error('[PurchaseVM] loadSuppliers error:', error);
-      this.updateState('error', { message: error.message || 'Failed to load suppliers' });
+      if (gen === this._supplierSearchSeq) {
+        console.error('[PurchaseVM] loadSuppliers error:', error);
+        this.updateState('error', { message: error.message || 'Failed to load suppliers' });
+        this.updateState('supplier-list', []);
+      }
       return [];
     } finally {
-      this.updateState('loading', false);
+      if (gen === this._supplierSearchSeq) {
+        this.updateState('supplier-dropdown-loading', false);
+      }
     }
   }
 
@@ -415,7 +441,7 @@ export class PurchaseVM extends ViewModel {
     clearTimeout(this.supplierSearchTimeout);
     this.supplierSearchTimeout = setTimeout(() => {
       this.loadSuppliers(query);
-    }, 500);
+    }, DROPDOWN_SEARCH_DEBOUNCE_MS);
   }
 
   selectSupplier(supplier) {

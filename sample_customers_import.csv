@@ -2,6 +2,6 @@ Name,Contact Person,Phone,Email,Address,License No,TIN No,Website,Fax,Country,Cu
 "Acme Supplies","John Doe","+251911000001","acme@example.com","Bole Rd, Addis Ababa","","","https://acme.example.com","","Ethiopia",supplier
 "Best Retail Co","Jane Smith","+251922000002","best@example.com","Kazanchis, Addis Ababa","","","","","Ethiopia",retailer
 "General Trading PLC","Abebe Kebede","+251933000003","","Mexico Sq, Addis Ababa","","123456789","","","Ethiopia",both
-"Local Shop","","+251944000004","shop@example.com","Piassa, Addis Ababa","","","","","Ethiopia",retailer
-"Office Supplies Inc","","","office@example.com","","","","","","",supplier
-"Walk-in Customer","","","","","","","","","",other
+"Local Shop","Shop Manager","+251944000004","shop@example.com","Piassa, Addis Ababa","","","","","Ethiopia",retailer
+"Office Supplies Inc","Procurement Lead","","office@example.com","","","","","","",supplier
+"Walk-in Customer","Counter","+25100000000","","","","","","","",other

@@ -28,7 +28,7 @@ export function CustomersUI() {
     ])
   } 
 
-  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading', 'customer-drawer-open', 'customer-drawer-type', 'selected-customer', 'customer-details-edit-mode', 'customer-form']}, render)
+  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading', 'customer-list', 'customer-total-count', 'customer-drawer-open', 'customer-drawer-type', 'selected-customer', 'customer-details-edit-mode', 'customer-form']}, render)
 }
 
 function CustomersContent(props) {

@@ -30,6 +30,7 @@ import { seed as seedChartOfAccounts } from '../db/seeds/seed_chart_of_accounts.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 dotenv.config()
+dotenv.config({ path: path.resolve(__dirname, '../.env') })
 dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
 const knexfilePath = path.resolve(__dirname, '../db/knexfile.js')

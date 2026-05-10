@@ -1,4 +1,5 @@
 const { ViewModel, SharedStateManager } = Liteframe
+import { DROPDOWN_SEARCH_DEBOUNCE_MS, DROPDOWN_SEARCH_LIMIT } from '../../utils/dropdownSearchConfig'
 
 /** Default expense form shape; paid_on is set to today when called. */
 function getDefaultExpenseForm() {
@@ -24,6 +25,12 @@ function getDefaultExpenseForm() {
 export class FinancialVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
     super(sharedStateManager)
+    this._expenseCustomerSearchSeq = 0
+    this._loanCustomerSearchSeq = 0
+    this._loanPayableSearchSeq = 0
+    this.expenseCustomerSearchTimeout = null
+    this.loanCustomerSearchTimeout = null
+    this.loanPayableSearchTimeout = null
     this.initializeState()
     this.loadExpenses() // Load default tab data on mount
   }
@@ -45,6 +52,7 @@ export class FinancialVM extends ViewModel {
     this.setState('expense-total', 0)
     this.setState('expense-form', getDefaultExpenseForm())
     this.setState('expense-customer-list', [])
+    this.setState('expense-customer-dropdown-loading', false)
     this.setState('expense-search', '')
     this.setState('expense-category-filter', '')
     this.setState('expense-table-config', { limit: 20, offset: 0, sortBy: 'paid_on', orderBy: 'desc' })
@@ -81,6 +89,7 @@ export class FinancialVM extends ViewModel {
     this.setState('loans-status-filter', '')
     this.setState('loan-form', { partner_id: null, partner: null, amount: '', lent_date: new Date().toISOString().split('T')[0], expected_return_date: '', notes: '' })
     this.setState('loan-customer-list', [])
+    this.setState('loan-customer-dropdown-loading', false)
     this.setState('create-loan-modal-open', false)
     this.setState('create-loan-submitting', false)
     this.setState('create-loan-cash-balance', null)
@@ -96,6 +105,7 @@ export class FinancialVM extends ViewModel {
     this.setState('loans-payable-status-filter', '')
     this.setState('loan-payable-form', { partner_id: null, partner: null, amount: '', borrowed_date: new Date().toISOString().split('T')[0], expected_repay_date: '', notes: '' })
     this.setState('loan-payable-customer-list', [])
+    this.setState('loan-payable-partner-dropdown-loading', false)
     this.setState('create-loan-payable-modal-open', false)
     this.setState('withhold-payables', { orders: [], total: 0, stats: { total_unsettled: 0, count_unsettled: 0, count_settled: 0 } })
     this.setState('withhold-payables-table-config', { limit: 20, offset: 0, sortBy: 'order_date', orderBy: 'desc' })
@@ -186,19 +196,38 @@ export class FinancialVM extends ViewModel {
   }
 
   async loadExpenseCustomers(search = '') {
+    const gen = ++this._expenseCustomerSearchSeq
+    this.updateState('expense-customer-dropdown-loading', true)
     try {
       const res = await window.ipcRenderer.invoke('customers:get-customers', {
-        search: search || '',
-        limit: 100,
-        offset: 0
+        search: (search || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        prefer_walk_in: true,
+        sortBy: 'id',
+        orderBy: 'desc',
       })
-
-      // IPC returns { success, customers, total } from electron; handle both shapes
+      if (gen !== this._expenseCustomerSearchSeq) return
       const list = Array.isArray(res?.customers) ? res.customers : (res?.data?.customers || [])
       this.updateState('expense-customer-list', list)
     } catch (e) {
-      this.updateState('expense-customer-list', [])
+      if (gen === this._expenseCustomerSearchSeq) {
+        this.updateState('expense-customer-list', [])
+      }
+    } finally {
+      if (gen === this._expenseCustomerSearchSeq) {
+        this.updateState('expense-customer-dropdown-loading', false)
+      }
     }
+  }
+
+  updateExpenseCustomerSearch(value) {
+    const form = this.getState('expense-form') || {}
+    this.updateState('expense-form', { ...form, customer_search: value ?? '' })
+    clearTimeout(this.expenseCustomerSearchTimeout)
+    this.expenseCustomerSearchTimeout = setTimeout(() => {
+      this.loadExpenseCustomers(String(value ?? '').trim())
+    }, DROPDOWN_SEARCH_DEBOUNCE_MS)
   }
 
 
@@ -342,17 +371,39 @@ export class FinancialVM extends ViewModel {
   }
 
   async loadLoanCustomers(search = '') {
+    const gen = ++this._loanCustomerSearchSeq
+    this.updateState('loan-customer-dropdown-loading', true)
     try {
       const res = await window.ipcRenderer.invoke('customers:get-customers', {
-        search: search || '',
-        limit: 100,
-        offset: 0
+        search: (search || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        customer_types: 'retailer,both,other',
+        prefer_walk_in: false,
+        sortBy: 'id',
+        orderBy: 'desc',
       })
+      if (gen !== this._loanCustomerSearchSeq) return
       const list = Array.isArray(res?.customers) ? res.customers : (res?.data?.customers || [])
       this.updateState('loan-customer-list', list)
     } catch (e) {
-      this.updateState('loan-customer-list', [])
+      if (gen === this._loanCustomerSearchSeq) {
+        this.updateState('loan-customer-list', [])
+      }
+    } finally {
+      if (gen === this._loanCustomerSearchSeq) {
+        this.updateState('loan-customer-dropdown-loading', false)
+      }
     }
+  }
+
+  updateLoanPartnerSearch(value) {
+    const form = this.getState('loan-form') || {}
+    this.updateState('loan-form', { ...form, partner_search: value ?? '' })
+    clearTimeout(this.loanCustomerSearchTimeout)
+    this.loanCustomerSearchTimeout = setTimeout(() => {
+      this.loadLoanCustomers(String(value ?? '').trim())
+    }, DROPDOWN_SEARCH_DEBOUNCE_MS)
   }
 
   updateLoanForm(updates) {
@@ -760,13 +811,39 @@ export class FinancialVM extends ViewModel {
   }
 
   async loadLoanPayablePartners(search = '') {
+    const gen = ++this._loanPayableSearchSeq
+    this.updateState('loan-payable-partner-dropdown-loading', true)
     try {
-      const res = await window.ipcRenderer.invoke('customers:get-customers', { search: search || '', limit: 100, offset: 0 })
+      const res = await window.ipcRenderer.invoke('customers:get-customers', {
+        search: (search || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        customer_types: 'supplier,both',
+        prefer_walk_in: false,
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._loanPayableSearchSeq) return
       const list = Array.isArray(res?.customers) ? res.customers : (res?.data?.customers || [])
       this.updateState('loan-payable-customer-list', list)
     } catch {
-      this.updateState('loan-payable-customer-list', [])
+      if (gen === this._loanPayableSearchSeq) {
+        this.updateState('loan-payable-customer-list', [])
+      }
+    } finally {
+      if (gen === this._loanPayableSearchSeq) {
+        this.updateState('loan-payable-partner-dropdown-loading', false)
+      }
     }
+  }
+
+  updateLoanPayablePartnerSearch(value) {
+    const form = this.getState('loan-payable-form') || {}
+    this.updateState('loan-payable-form', { ...form, partner_search: value ?? '' })
+    clearTimeout(this.loanPayableSearchTimeout)
+    this.loanPayableSearchTimeout = setTimeout(() => {
+      this.loadLoanPayablePartners(String(value ?? '').trim())
+    }, DROPDOWN_SEARCH_DEBOUNCE_MS)
   }
 
   updateLoanPayableForm(updates) {

@@ -86,12 +86,17 @@ class InventoryManager {
    * @param {string} token - Auth token
    * @param {string} customerType - Optional: 'supplier' (default for borrow-from), 'all' (for borrow-to), or any specific customer type
    */
-  async getPartners(token, customerType = 'supplier') {
+  async getPartners(token, customerType = 'supplier', options = {}) {
     try {
+      const limit = options.limit != null ? Number(options.limit) : 1000
+      const search = options.search != null ? String(options.search) : ''
+      const preferWalkIn = options.prefer_walk_in === true ? '&prefer_walk_in=1' : ''
+      const searchParam = search.trim() !== '' ? `&search=${encodeURIComponent(search.trim())}` : ''
+      const limitParam = `limit=${encodeURIComponent(String(limit))}`
       // For borrow-to operations, we need all customers, not just suppliers
-      const url = customerType === 'all' 
-        ? `${getApiUrl('/customers')}?limit=1000&offset=0`
-        : `${getApiUrl('/customers')}?customer_type=${customerType}&limit=1000&offset=0`;
+      const url = customerType === 'all'
+        ? `${getApiUrl('/customers')}?${limitParam}&offset=0${searchParam}${preferWalkIn}`
+        : `${getApiUrl('/customers')}?customer_type=${encodeURIComponent(customerType)}&${limitParam}&offset=0${searchParam}${preferWalkIn}`;
       const response = await fetch(url, {
         method: 'GET',
         headers: {

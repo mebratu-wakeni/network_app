@@ -34,8 +34,10 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     props.ensureLocalStateKey('submitting', false);
     
     const loading = props.viewModel.getState('loading');
-    const productList = props.viewModel.getProductList() || [];
-    const partnerList = props.viewModel.getPartnerList() || [];
+    const productDdLoading = props.viewModel.getState('borrow-from-product-dd-loading') === true;
+    const partnerDdLoading = props.viewModel.getState('borrow-from-partner-dd-loading') === true;
+    const productList = props.viewModel.getState('borrow-from-dropdown-products') || [];
+    const partnerList = props.viewModel.getState('borrow-from-dropdown-partners') || [];
 
     // Data should already be loaded before modal opens (in button click handler)
     // Just read from state - no loading calls here to avoid infinite re-rendering
@@ -53,23 +55,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     const expiryDate = props.getLocalState('expiry-date');
     const submitting = props.getLocalState('submitting');
     
-    // Filter products based on search query
-    const filteredProducts = productList.filter(product => {
-      if (!productSearchQuery) return true;
-      const query = productSearchQuery.toLowerCase();
-      return (product.name || '').toLowerCase().includes(query) ||
-             (product.productCode || '').toLowerCase().includes(query);
-    });
-    
-    // Filter partners based on search query
-    // Partners are already filtered by customer_type=supplier from the API
-    const filteredPartners = partnerList.filter(partner => {
-      if (!partnerSearchQuery) return true;
-      const query = partnerSearchQuery.toLowerCase();
-      return (partner.name || '').toLowerCase().includes(query) ||
-             (partner.code || '').toLowerCase().includes(query);
-    });
-    
+    // Server-filtered lists (borrow-from modal)
     // Check if product and partner are selected
     const productSelected = selectedProduct !== null;
     const partnerSelected = selectedPartner !== null;
@@ -77,6 +63,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     const handleProductSearch = (query) => {
       props.setLocalState('product-search-query', query);
       props.setLocalState('show-product-dropdown', true);
+      props.viewModel.updateBorrowFromProductSearch(query);
     };
     
     const handleProductSelect = (product) => {
@@ -91,6 +78,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     const handlePartnerSearch = (query) => {
       props.setLocalState('partner-search-query', query);
       props.setLocalState('show-partner-dropdown', true);
+      props.viewModel.updateBorrowFromPartnerSearch(query);
     };
     
     const handlePartnerSelect = (partner) => {
@@ -186,6 +174,97 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         props.setLocalState('submitting', false);
       }
     };
+
+    const partnerMenuRows = [];
+    if (partnerDdLoading) {
+      partnerMenuRows.push(Row({ key: 'bf-p-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'));
+    } else if (partnerList.length === 0) {
+      partnerMenuRows.push(
+        Row(
+          { key: 'bf-p-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+          partnerSearchQuery.trim() ? 'No partners match your search.' : 'Type to search suppliers.'
+        )
+      );
+    } else {
+      partnerMenuRows.push(
+        ...partnerList.map((partner) => {
+          const capitalizeCustomerType = (type) => {
+            if (!type) return 'Supplier';
+            return type.charAt(0).toUpperCase() + type.slice(1);
+          };
+          const getCustomerTypeBadgeColor = (type) => {
+            if (type === 'supplier') return 'info';
+            if (type === 'retailer') return 'success';
+            if (type === 'both') return 'warning';
+            return 'default';
+          };
+          const partnerChildren = [
+            Row({ class: 'flex items-center justify-between gap-2' }, [
+              Row({ class: 'font-semibold text-gray-900' }, partner.name || 'Unknown'),
+              Badge({
+                label: capitalizeCustomerType(partner.customer_type),
+                tone: getCustomerTypeBadgeColor(partner.customer_type),
+                class: 'text-xs px-2 py-0.5',
+              }),
+            ]),
+            Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, [
+              ...(partner.contact_person
+                ? [Row({ class: 'flex items-center gap-1' }, [IonIcon({ name: 'person-outline', class: 'text-xs' }), partner.contact_person])]
+                : []),
+              ...(partner.contact_person ? [Row({}, '•')] : []),
+              Row({}, partner.code || 'N/A'),
+            ]),
+          ];
+          return DropdownSearchItem(
+            {
+              onSelect: () => handlePartnerSelect(partner),
+              key: partner.id,
+              delegator,
+              class: 'py-3',
+            },
+            [Row({ class: 'flex flex-col gap-1' }, partnerChildren)]
+          );
+        })
+      );
+    }
+
+    const productMenuRows = [];
+    if (productDdLoading) {
+      productMenuRows.push(Row({ key: 'bf-pr-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'));
+    } else if (productList.length === 0) {
+      productMenuRows.push(
+        Row(
+          { key: 'bf-pr-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+          productSearchQuery.trim() ? 'No products match your search.' : 'Type to search products.'
+        )
+      );
+    } else {
+      productMenuRows.push(
+        ...productList.map((product) => {
+          const productHeaderChildren = [Row({ class: 'font-semibold text-gray-900' }, product.name || 'Unknown Product')];
+          if (product.category) {
+            productHeaderChildren.push(Row({ class: 'text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded' }, product.category));
+          }
+          const productCodeChildren = [Row({}, `Code: ${product.productCode || product.product_code || 'N/A'}`)];
+          if (product.unit) {
+            productCodeChildren.push(Row({}, `• ${product.unit}`));
+          }
+          const productChildren = [
+            Row({ class: 'flex items-center justify-between gap-2' }, productHeaderChildren),
+            Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, productCodeChildren),
+          ];
+          return DropdownSearchItem(
+            {
+              onSelect: () => handleProductSelect(product),
+              key: product.id,
+              delegator,
+              class: 'py-3',
+            },
+            [Row({ class: 'flex flex-col gap-1' }, productChildren)]
+          );
+        })
+      );
+    }
     
     return Row({ class: 'flex flex-col h-full' }, [
       Card({ class: 'w-full max-w-[1400px] mx-auto my-8 flex flex-col max-h-[95vh] overflow-hidden' }, [
@@ -211,56 +290,15 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                   value: partnerSearchQuery || (selectedPartner ? selectedPartner.name : ''),
                   placeholder: selectedPartner ? selectedPartner.name : 'Search or select partner/customer...',
                   onInput: handlePartnerSearch,
-                  onFocus: () => props.setLocalState('show-partner-dropdown', true),
+                  onFocus: () => {
+                    props.setLocalState('show-partner-dropdown', true);
+                    props.viewModel.loadBorrowFromPartnersForDropdown(partnerSearchQuery || '');
+                  },
                   getOpenState: () => props.getLocalState('show-partner-dropdown'),
                   setOpenState: () => props.setLocalState('show-partner-dropdown', false),
                   class: 'w-full relative',
                   delegator,
-                }, filteredPartners.map(partner => {
-                  // Helper to capitalize customer type
-                  const capitalizeCustomerType = (type) => {
-                    if (!type) return 'Supplier';
-                    return type.charAt(0).toUpperCase() + type.slice(1);
-                  };
-                  
-                  // Get badge color based on customer type
-                  const getCustomerTypeBadgeColor = (type) => {
-                    if (type === 'supplier') return 'info';
-                    if (type === 'retailer') return 'success';
-                    if (type === 'both') return 'warning';
-                    return 'default';
-                  };
-                  
-                  const partnerChildren = [
-                    Row({ class: 'flex items-center justify-between gap-2' }, [
-                      Row({ class: 'font-semibold text-gray-900' }, partner.name || 'Unknown'),
-                      Badge({
-                        label: capitalizeCustomerType(partner.customer_type),
-                        tone: getCustomerTypeBadgeColor(partner.customer_type),
-                        class: 'text-xs px-2 py-0.5'
-                      })
-                    ]),
-                    Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, [
-                      ...(partner.contact_person ? [
-                        Row({ class: 'flex items-center gap-1' }, [
-                          IonIcon({ name: 'person-outline', class: 'text-xs' }),
-                          partner.contact_person
-                        ])
-                      ] : []),
-                      ...(partner.contact_person ? [Row({}, '•')] : []),
-                      Row({}, partner.code || 'N/A')
-                    ])
-                  ];
-                  
-                  return DropdownSearchItem({
-                    onSelect: () => handlePartnerSelect(partner),
-                    key: partner.id,
-                    delegator,
-                    class: 'py-3'
-                  }, [
-                    Row({ class: 'flex flex-col gap-1' }, partnerChildren)
-                  ]);
-                }))
+                }, partnerMenuRows)
               ]),
               
               // Product Selection
@@ -271,46 +309,15 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                   value: productSearchQuery || (selectedProduct ? selectedProduct.name : ''),
                   placeholder: selectedProduct ? selectedProduct.name : 'Search or select product...',
                   onInput: handleProductSearch,
-                  onFocus: () => props.setLocalState('show-product-dropdown', true),
+                  onFocus: () => {
+                    props.setLocalState('show-product-dropdown', true);
+                    props.viewModel.loadBorrowFromProductsForDropdown(productSearchQuery || '');
+                  },
                   getOpenState: () => props.getLocalState('show-product-dropdown'),
                   setOpenState: () => props.setLocalState('show-product-dropdown', false),
                   class: 'w-full relative',
                   delegator,
-                }, filteredProducts.map(product => {
-                  const productHeaderChildren = [
-                    Row({ class: 'font-semibold text-gray-900' }, product.name || 'Unknown Product')
-                  ];
-                  
-                  if (product.category) {
-                    productHeaderChildren.push(
-                      Row({ class: 'text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded' }, product.category)
-                    );
-                  }
-                  
-                  const productCodeChildren = [
-                    Row({}, `Code: ${product.productCode || product.product_code || 'N/A'}`)
-                  ];
-                  
-                  if (product.unit) {
-                    productCodeChildren.push(
-                      Row({}, `• ${product.unit}`)
-                    );
-                  }
-                  
-                  const productChildren = [
-                    Row({ class: 'flex items-center justify-between gap-2' }, productHeaderChildren),
-                    Row({ class: 'flex items-center gap-2 text-xs text-gray-500' }, productCodeChildren)
-                  ];
-                  
-                  return DropdownSearchItem({
-                    onSelect: () => handleProductSelect(product),
-                    key: product.id,
-                    delegator,
-                    class: 'py-3'
-                  }, [
-                    Row({ class: 'flex flex-col gap-1' }, productChildren)
-                  ]);
-                }))
+                }, productMenuRows)
               ])
             ]),
             
@@ -418,7 +425,13 @@ const ModalContent = (viewModel, delegator, handleClose) => {
   };
   
   return StatefulRow({
-    stateKeys: ['loading', 'product-list', 'partner-list', 'product-total-count'],
+    stateKeys: [
+      'loading',
+      'borrow-from-dropdown-products',
+      'borrow-from-dropdown-partners',
+      'borrow-from-product-dd-loading',
+      'borrow-from-partner-dd-loading',
+    ],
     viewModel
   }, render);
 };

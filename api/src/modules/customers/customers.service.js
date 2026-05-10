@@ -2,6 +2,22 @@
  * Service: Business logic layer for customers
  * Orchestrates use cases and coordinates between repository and business rules
  */
+
+const BULK_IMPORT_CUSTOMER_TYPES = new Set(['supplier', 'retailer', 'both', 'other'])
+
+/** Fast sanity check for bulk import (no zod). Invalid → store null, do not fail row. */
+function normalizeOptionalEmail (raw) {
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  if (s.length > 254) return null
+  const at = s.indexOf('@')
+  if (at <= 0 || at === s.length - 1) return null
+  const domain = s.slice(at + 1)
+  if (!domain.includes('.') || /\s/.test(s)) return null
+  return s
+}
+
 export class CustomersService {
   constructor(repository) {
     this.repository = repository
@@ -199,110 +215,157 @@ export class CustomersService {
   }
 
   /**
-   * Bulk import customers
-   * @param {Array} customers - Array of customer objects
-   * @returns {Object} Summary with { total, successful, failed, results }
+   * Bulk import customers — partial success: insert valid rows; skip invalid, duplicate contact person (DB or same file).
+   * Requires **name**, **contact_person**, and **customer_type** per row. Duplicate = same contact_person as existing row (case-insensitive) or earlier row in file.
+   * @param {Array} customers - Rows; optional `_csvRowNumber` from CSV pipeline (stripped before insert)
+   * @returns {Object} { total, successful, failed, results } — each result has csvRowNumber
    */
-  async bulkImport(customers) {
+  async bulkImport (customers) {
     if (!Array.isArray(customers) || customers.length === 0) {
       throw new Error('Customers array is required and must not be empty')
     }
 
-    const results = []
-    const customersToInsert = []
-    const now = new Date()
+    const failureResults = []
+    const pendingInserts = []
+    const seenContactLower = new Set()
+    const existingDbContactLower = await this.repository.getContactPersonKeysLowerSet()
 
-    // Process each customer
     for (let index = 0; index < customers.length; index++) {
-      const customer = customers[index]
-      
-      try {
-        // Validate required fields
-        if (!customer.name || !customer.name.trim()) {
-          results.push({
-            index,
-            success: false,
-            error: 'Customer name is required',
-            customer: customer
-          })
-          continue
-        }
+      const raw = customers[index]
+      const csvRowNumber = raw._csvRowNumber != null ? raw._csvRowNumber : index + 1
+      const { _csvRowNumber, ...customer } = raw
 
-        // Check for duplicate name
-        const existing = await this.repository.findByName(customer.name.trim())
-        if (existing) {
-          results.push({
-            index,
-            success: false,
-            error: `Customer with name "${customer.name}" already exists`,
-            customer: customer
-          })
-          continue
-        }
-
-        // Normalize email: empty string becomes null
-        const email = customer.email && customer.email.trim() ? customer.email.trim() : null
-
-        // Prepare customer data
-        const customerData = {
-          name: customer.name.trim(),
-          contact_person: customer.contact_person?.trim() || null,
-          phone: customer.phone?.trim() || null,
-          email: email,
-          address: customer.address?.trim() || null,
-          license_no: customer.license_no?.trim() || null,
-          tin_no: customer.tin_no?.trim() || null,
-          website: customer.website?.trim() || null,
-          fax: customer.fax?.trim() || null,
-          country: customer.country?.trim() || null,
-          customer_type: customer.customer_type || 'supplier',
-          created_at: now,
-          last_updated: now
-        }
-
-        customersToInsert.push(customerData)
-        results.push({
+      if (!customer.name || !String(customer.name).trim()) {
+        failureResults.push({
           index,
-          success: true,
-          customer: customerData
-        })
-      } catch (error) {
-        results.push({
-          index,
+          csvRowNumber,
           success: false,
-          error: error.message || 'Failed to process customer',
-          customer: customer
+          error: 'Customer name is required',
+          validationFailed: true
         })
+        continue
       }
+      if (!customer.contact_person || !String(customer.contact_person).trim()) {
+        failureResults.push({
+          index,
+          csvRowNumber,
+          success: false,
+          error: 'Contact person is required',
+          validationFailed: true
+        })
+        continue
+      }
+
+      const name = String(customer.name).trim()
+      const cp = String(customer.contact_person).trim()
+      const cpKey = cp.toLowerCase()
+
+      const emailCandidate = normalizeOptionalEmail(customer.email)
+
+      const typeRaw =
+        customer.customer_type == null ? '' : String(customer.customer_type).trim().toLowerCase()
+      if (!typeRaw) {
+        failureResults.push({
+          index,
+          csvRowNumber,
+          success: false,
+          error: 'Customer type is required',
+          validationFailed: true
+        })
+        continue
+      }
+      if (!BULK_IMPORT_CUSTOMER_TYPES.has(typeRaw)) {
+        failureResults.push({
+          index,
+          csvRowNumber,
+          success: false,
+          error: 'Invalid customer type (use supplier, retailer, both, or other)',
+          validationFailed: true
+        })
+        continue
+      }
+      const typeNorm = typeRaw
+
+      if (seenContactLower.has(cpKey)) {
+        failureResults.push({
+          index,
+          csvRowNumber,
+          success: false,
+          error: 'Skipped — duplicate contact person in this import file',
+          skipped: true
+        })
+        continue
+      }
+
+      if (existingDbContactLower.has(cpKey)) {
+        failureResults.push({
+          index,
+          csvRowNumber,
+          success: false,
+          error: 'Skipped — contact person already exists',
+          skipped: true
+        })
+        continue
+      }
+
+      seenContactLower.add(cpKey)
+
+      const customerData = {
+        name,
+        contact_person: cp,
+        phone: customer.phone != null && String(customer.phone).trim() !== '' ? String(customer.phone).trim() : null,
+        email: emailCandidate,
+        address: customer.address != null && String(customer.address).trim() !== '' ? String(customer.address).trim() : null,
+        license_no:
+          customer.license_no != null && String(customer.license_no).trim() !== ''
+            ? String(customer.license_no).trim()
+            : null,
+        tin_no:
+          customer.tin_no != null && String(customer.tin_no).trim() !== '' ? String(customer.tin_no).trim() : null,
+        website:
+          customer.website != null && String(customer.website).trim() !== '' ? String(customer.website).trim() : null,
+        fax: customer.fax != null && String(customer.fax).trim() !== '' ? String(customer.fax).trim() : null,
+        country:
+          customer.country != null && String(customer.country).trim() !== '' ? String(customer.country).trim() : null,
+        customer_type: typeNorm
+      }
+
+      pendingInserts.push({ index, csvRowNumber, customerData })
     }
 
-    // Bulk insert successful customers
-    let inserted = []
-    if (customersToInsert.length > 0) {
+    const successResults = []
+    if (pendingInserts.length > 0) {
       try {
-        inserted = await this.repository.bulkCreate(customersToInsert)
+        const inserted = await this.repository.bulkCreate(
+          pendingInserts.map((p) => p.customerData)
+        )
+        inserted.forEach((insertedRow, k) => {
+          const p = pendingInserts[k]
+          successResults.push({
+            index: p.index,
+            csvRowNumber: p.csvRowNumber,
+            success: true,
+            customer: insertedRow
+          })
+        })
       } catch (error) {
-        // If bulk insert fails, mark all as failed
-        customersToInsert.forEach((_, idx) => {
-          const result = results.find(r => r.success && r.index === idx)
-          if (result) {
-            result.success = false
-            result.error = error.message || 'Failed to insert customer'
-          }
+        pendingInserts.forEach((p) => {
+          successResults.push({
+            index: p.index,
+            csvRowNumber: p.csvRowNumber,
+            success: false,
+            error: error.message || 'Failed to insert customer'
+          })
         })
       }
     }
 
-    // Update results with inserted IDs
-    inserted.forEach((insertedCustomer, idx) => {
-      const result = results.find(r => r.success && r.customer?.name === insertedCustomer.name)
-      if (result) {
-        result.customer = insertedCustomer
-      }
-    })
+    const results = [...failureResults, ...successResults].sort(
+      (a, b) => (a.csvRowNumber ?? 0) - (b.csvRowNumber ?? 0)
+    )
 
-    const successful = results.filter(r => r.success).length
-    const failed = results.filter(r => !r.success).length
+    const successful = results.filter((r) => r.success).length
+    const failed = results.filter((r) => !r.success).length
 
     return {
       total: customers.length,
@@ -312,3 +375,4 @@ export class CustomersService {
     }
   }
 }
+

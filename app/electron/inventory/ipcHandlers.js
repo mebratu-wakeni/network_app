@@ -7,8 +7,8 @@ const inventoryManager = new InventoryManager();
 export function InventoryIpcHandlers() {
   
   // Partners IPC Handlers
-  ipcMain.handle('inventory:get-partners', async (event, customerType = 'supplier') => {
-    return await inventoryManager.getPartners(getToken(), customerType);
+  ipcMain.handle('inventory:get-partners', async (event, customerType = 'supplier', options = {}) => {
+    return await inventoryManager.getPartners(getToken(), customerType, options);
   });
 
   // Products IPC Handlers

@@ -1,4 +1,6 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import axios from 'axios';
+import FormData from 'form-data';
 
 /**
  * CustomersManager - Handles all API communication for customer management
@@ -17,12 +19,21 @@ class CustomersManager {
     try {
       const apiUrl = getApiUrl('/customers');
       const queryParams = new URLSearchParams({
-        limit: params.limit || 10,
-        offset: params.offset || 0,
-        search: params.search || '',
-        sortBy: params.sortBy || 'id',
-        orderBy: params.orderBy || 'desc'
+        limit: String(params?.limit ?? 10),
+        offset: String(params?.offset ?? 0),
+        search: params?.search || '',
+        sortBy: params?.sortBy || 'id',
+        orderBy: params?.orderBy || 'desc'
       });
+      if (params?.customer_type != null && String(params.customer_type).trim() !== '') {
+        queryParams.set('customer_type', String(params.customer_type).trim())
+      }
+      if (params?.customer_types != null && String(params.customer_types).trim() !== '') {
+        queryParams.set('customer_types', String(params.customer_types).trim())
+      }
+      if (params?.prefer_walk_in === true) {
+        queryParams.set('prefer_walk_in', '1')
+      }
 
       const response = await fetch(`${apiUrl}?${queryParams}`, {
         method: 'GET',
@@ -156,7 +167,45 @@ class CustomersManager {
   }
 
   /**
-   * Bulk import customers
+   * Bulk import customers from CSV (multipart; parse + partial success on API)
+   * @param {Uint8Array|ArrayBuffer|number[]} fileBuffer
+   */
+  async bulkImportCustomersUpload(fileBuffer, fileName, token) {
+    try {
+      const form = new FormData();
+      form.append('file', Buffer.from(fileBuffer), fileName || 'customers.csv');
+      const url = getApiUrl('/customers/bulk-import-upload');
+      const res = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token}`
+        },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity
+      });
+      const data = res.data;
+      return {
+        success: data.ok !== false,
+        summary: data.summary || {},
+        results: data.results || []
+      };
+    } catch (error) {
+      if (error.response?.data) {
+        const d = error.response.data;
+        return {
+          success: false,
+          error: d.error || d.message || error.message,
+          summary: d.summary,
+          results: d.results || []
+        };
+      }
+      console.error('[CustomersManager] bulkImportCustomersUpload error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk import customers (JSON body)
    */
   async bulkImportCustomers(customers, token) {
     try {

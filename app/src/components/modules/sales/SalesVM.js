@@ -1,5 +1,6 @@
 const { ViewModel, SharedStateManager } = Liteframe;
 import { permissionChecker } from '../../utils/PermissionChecker';
+import { DROPDOWN_SEARCH_DEBOUNCE_MS, DROPDOWN_SEARCH_LIMIT } from '../../utils/dropdownSearchConfig';
 
 /** Normalize date to YYYY-MM-DD for API (handles ISO strings and Date objects from DB). */
 function normalizeSaleDate(value) {
@@ -54,6 +55,12 @@ const DEFAULT_CURRENT_SALE = {
 export class SalesVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
     super(sharedStateManager);
+    this._customerSearchSeq = 0
+    this.customerSearchTimeout = null
+    this._productSearchSeq = 0
+    this.productSearchTimeout = null
+    this._bulkPaymentCustomerSearchSeq = 0
+    this.bulkPaymentCustomerSearchTimeout = null
     this.initializeState();
     this.loadUserPermissions();
     this.loadWithholdPercentage();
@@ -76,7 +83,11 @@ export class SalesVM extends ViewModel {
 
     this.setState('product-list', []); // inventory/stock items for sale (name, code, sellingPrice, batch, expiry)
     this.setState('product-search-query', '');
+    this.setState('product-dropdown-loading', false);
     this.setState('customer-list', []);
+    this.setState('customer-dropdown-loading', false);
+    this.setState('bulk-payment-customer-list', []);
+    this.setState('bulk-payment-customer-dropdown-loading', false);
     this.setState('withhold-percentage', null);
     this.setState('customer-search-query', '');
 
@@ -158,7 +169,8 @@ export class SalesVM extends ViewModel {
     if (this.isWalkInCustomer(currentSale.customer)) return true
     const customers = this.getState('customer-list') || []
     const matched = customers.find((c) => c.id === currentSale.customer_id)
-    return this.isWalkInCustomer(matched)
+    if (matched) return this.isWalkInCustomer(matched)
+    return this.isWalkInCustomer(currentSale.customer)
   }
 
   /** Set sales payment form defaults (e.g. when opening Record Payment). Updates form and sets loading false at end. */
@@ -423,47 +435,133 @@ export class SalesVM extends ViewModel {
     }
   }
 
-  async loadCustomers(query) {
-    if (this.getState('loading')) return [];
-    this.updateState('loading', true);
-    this.updateState('error', null);
+  async loadCustomers(query = '') {
+    const gen = ++this._customerSearchSeq
+    this.updateState('customer-dropdown-loading', true)
+    this.updateState('error', null)
     try {
-      // Use same API as Purchase: inventory partners with types 'retailer' and 'both'
-      const [retailersResult, bothResult, otherResult] = await Promise.all([
-        window.ipcRenderer.invoke('inventory:get-partners', 'retailer'),
-        window.ipcRenderer.invoke('inventory:get-partners', 'both'),
-        window.ipcRenderer.invoke('inventory:get-partners', 'other'),
-      ]);
-      const retailers = Array.isArray(retailersResult) ? retailersResult : [];
-      const both = Array.isArray(bothResult) ? bothResult : [];
-      const others = Array.isArray(otherResult) ? otherResult : [];
-      const merged = [...retailers];
-      const seenIds = new Set(merged.map((c) => c.id));
-      both.forEach((c) => {
-        if (!seenIds.has(c.id)) {
-          merged.push(c);
-          seenIds.add(c.id);
-        }
-      });
-      const walkIn = others.find((c) => this.isWalkInCustomer(c));
-      const finalCustomers = walkIn
-        ? [walkIn, ...merged.filter((c) => c.id !== walkIn.id)]
-        : merged;
-      this.updateState('customer-list', finalCustomers);
-      return finalCustomers;
+      const result = await window.ipcRenderer.invoke('customers:get-customers', {
+        search: (query || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        customer_types: 'retailer,both,other',
+        prefer_walk_in: true,
+        sortBy: 'id',
+        orderBy: 'desc'
+      })
+
+      if (gen !== this._customerSearchSeq) return []
+
+      if (result?.success && Array.isArray(result.customers)) {
+        const partners = result.customers.map((customer) => ({
+          id: customer.id,
+          name: customer.name,
+          code: `CUST${String(customer.id).padStart(4, '0')}`,
+          type: 'partner',
+          contact_person: customer.contact_person || null,
+          customer_type: customer.customer_type || 'supplier',
+          phone: customer.phone || null,
+          email: customer.email || null
+        }))
+        this.updateState('customer-list', partners)
+        return partners
+      }
+
+      throw new Error(result?.error || 'Failed to load customers')
     } catch (error) {
-      console.error('[SalesVM] loadCustomers error:', error);
-      this.updateState('error', { message: error.message || 'Failed to load customers' });
-      return [];
+      if (gen === this._customerSearchSeq) {
+        console.error('[SalesVM] loadCustomers error:', error)
+        this.updateState('error', { message: error.message || 'Failed to load customers' })
+      }
+      return []
     } finally {
-      this.updateState('loading', false);
+      if (gen === this._customerSearchSeq) {
+        this.updateState('customer-dropdown-loading', false)
+      }
     }
   }
 
   updateCustomerSearch(query) {
-    this.updateState('customer-search-query', query);
-    clearTimeout(this.customerSearchTimeout);
-    this.customerSearchTimeout = setTimeout(() => this.loadCustomers(query), 500);
+    this.updateState('customer-search-query', query)
+    clearTimeout(this.customerSearchTimeout)
+    this.customerSearchTimeout = setTimeout(() => this.loadCustomers(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
+  async loadProductsForSaleDropdown(query = '') {
+    const gen = ++this._productSearchSeq
+    this.updateState('product-dropdown-loading', true)
+    try {
+      const result = await window.ipcRenderer.invoke('inventory:get-stock', {
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        search: (query || '').trim(),
+        filter: 'all',
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._productSearchSeq) return []
+      if (result && result.success && Array.isArray(result.stock)) {
+        this.updateState('product-list', result.stock)
+        return result.stock
+      }
+      throw new Error(result?.error || 'Failed to fetch inventory for sale')
+    } catch (error) {
+      if (gen === this._productSearchSeq) {
+        console.error('Error fetching inventory for sale:', error)
+      }
+      if (gen === this._productSearchSeq) {
+        this.updateState('product-list', [])
+      }
+      return []
+    } finally {
+      if (gen === this._productSearchSeq) {
+        this.updateState('product-dropdown-loading', false)
+      }
+    }
+  }
+
+  updateProductDropdownSearch(query) {
+    this.updateState('product-search-query', query)
+    clearTimeout(this.productSearchTimeout)
+    this.productSearchTimeout = setTimeout(() => this.loadProductsForSaleDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
+  async loadBulkPaymentCustomers(query = '') {
+    const gen = ++this._bulkPaymentCustomerSearchSeq
+    this.updateState('bulk-payment-customer-dropdown-loading', true)
+    try {
+      const result = await window.ipcRenderer.invoke('customers:get-customers', {
+        search: (query || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        customer_types: 'retailer,both,other',
+        prefer_walk_in: true,
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._bulkPaymentCustomerSearchSeq) return []
+      if (result?.success && Array.isArray(result.customers)) {
+        const list = result.customers.filter((c) => !this.isWalkInCustomer(c))
+        this.updateState('bulk-payment-customer-list', list)
+        return list
+      }
+      throw new Error(result?.error || 'Failed to load customers')
+    } catch (e) {
+      if (gen === this._bulkPaymentCustomerSearchSeq) {
+        console.error('[SalesVM] loadBulkPaymentCustomers error:', e)
+        this.updateState('bulk-payment-customer-list', [])
+      }
+      return []
+    } finally {
+      if (gen === this._bulkPaymentCustomerSearchSeq) {
+        this.updateState('bulk-payment-customer-dropdown-loading', false)
+      }
+    }
+  }
+
+  updateBulkPaymentCustomerSearch(query) {
+    clearTimeout(this.bulkPaymentCustomerSearchTimeout)
+    this.bulkPaymentCustomerSearchTimeout = setTimeout(() => this.loadBulkPaymentCustomers(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
   }
 
   selectCustomer(customer) {
@@ -514,31 +612,6 @@ export class SalesVM extends ViewModel {
       console.error('[SalesVM] loadWithholdPercentage error:', e);
     }
     return null;
-  }
-
-  async getProducts(query) {
-    if (this.getState('loading')) return [];
-    this.updateState('loading', true);
-    try {
-      const result = await window.ipcRenderer.invoke('inventory:get-stock', {
-        limit: 30,
-        offset: 0,
-        search: query || '',
-        filter: 'all',
-        sortBy: 'id',
-        orderBy: 'desc',
-      });
-      if (result && result.success && Array.isArray(result.stock)) {
-        this.updateState('product-list', result.stock);
-        return result.stock;
-      }
-      throw new Error(result?.error || 'Failed to fetch inventory for sale');
-    } catch (error) {
-      console.error('Error fetching inventory for sale:', error);
-      return [];
-    } finally {
-      this.updateState('loading', false);
-    }
   }
 
   getCustomerList() {

@@ -72,7 +72,7 @@ export function PurchaseUI(props = {}) {
   return StatefulRow({ 
     class: 'w-full h-full overflow-hidden', 
     viewModel, 
-    stateKeys: ['loading', 'purchase-tab'] 
+    stateKeys: ['loading', 'purchase-tab', 'supplier-list', 'supplier-search-query', 'supplier-dropdown-loading', 'product-list', 'product-dropdown-loading'] 
   }, render)
 }
 

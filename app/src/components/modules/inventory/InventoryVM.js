@@ -1,6 +1,7 @@
 const { ViewModel, SharedStateManager } = Liteframe;
 import { permissionChecker } from '../../utils/PermissionChecker';
 import { toApiDdMmYyyyFromUiDate } from '../../utils/DateUtils';
+import { DROPDOWN_SEARCH_DEBOUNCE_MS, DROPDOWN_SEARCH_LIMIT } from '../../utils/dropdownSearchConfig';
 
 function mapStockDataDatesForApi(stockData) {
   const out = { ...stockData };
@@ -50,6 +51,12 @@ export class InventoryVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
     super(sharedStateManager);
     this._productLoadSeq = 0;
+    this._borrowProductSearchSeq = 0;
+    this._borrowPartnerSearchSeq = 0;
+    this._adjustDrawerPartnerSearchSeq = 0;
+    this.borrowProductSearchTimeout = null;
+    this.borrowPartnerSearchTimeout = null;
+    this.adjustDrawerPartnerSearchTimeout = null;
     this.initializeState();
     // Load user permissions on initialization
     this.loadUserPermissions();
@@ -102,6 +109,12 @@ export class InventoryVM extends ViewModel {
 
     // Partners State
     this.setState('partner-list', []);
+    this.setState('borrow-from-dropdown-products', []);
+    this.setState('borrow-from-dropdown-partners', []);
+    this.setState('borrow-from-product-dd-loading', false);
+    this.setState('borrow-from-partner-dd-loading', false);
+    this.setState('adjust-drawer-partner-options', []);
+    this.setState('adjust-drawer-partner-dd-loading', false);
 
     // Categories and Units State
     this.setState('category-list', []);
@@ -239,6 +252,108 @@ export class InventoryVM extends ViewModel {
       this.updateState('partner-list', []);
       return [];
     }
+  }
+
+  async loadBorrowFromProductsForDropdown(query = '') {
+    const gen = ++this._borrowProductSearchSeq
+    this.updateState('borrow-from-product-dd-loading', true)
+    try {
+      const result = await window.ipcRenderer.invoke('inventory:get-products', {
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        search: (query || '').trim(),
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._borrowProductSearchSeq) return
+      if (result.success) {
+        this.updateState('borrow-from-dropdown-products', result.products || [])
+      } else {
+        throw new Error(result.error || 'Failed to load products')
+      }
+    } catch (e) {
+      if (gen === this._borrowProductSearchSeq) {
+        this.updateState('borrow-from-dropdown-products', [])
+      }
+    } finally {
+      if (gen === this._borrowProductSearchSeq) {
+        this.updateState('borrow-from-product-dd-loading', false)
+      }
+    }
+  }
+
+  updateBorrowFromProductSearch(query) {
+    clearTimeout(this.borrowProductSearchTimeout)
+    this.borrowProductSearchTimeout = setTimeout(() => this.loadBorrowFromProductsForDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
+  async loadBorrowFromPartnersForDropdown(query = '') {
+    const gen = ++this._borrowPartnerSearchSeq
+    this.updateState('borrow-from-partner-dd-loading', true)
+    try {
+      const result = await window.ipcRenderer.invoke('purchase:get-suppliers', {
+        search: (query || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+      })
+      if (gen !== this._borrowPartnerSearchSeq) return
+      if (result.success) {
+        this.updateState('borrow-from-dropdown-partners', result.suppliers || [])
+      } else {
+        throw new Error(result.error || 'Failed to load suppliers')
+      }
+    } catch (e) {
+      if (gen === this._borrowPartnerSearchSeq) {
+        this.updateState('borrow-from-dropdown-partners', [])
+      }
+    } finally {
+      if (gen === this._borrowPartnerSearchSeq) {
+        this.updateState('borrow-from-partner-dd-loading', false)
+      }
+    }
+  }
+
+  updateBorrowFromPartnerSearch(query) {
+    clearTimeout(this.borrowPartnerSearchTimeout)
+    this.borrowPartnerSearchTimeout = setTimeout(() => this.loadBorrowFromPartnersForDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
+  async loadAdjustDrawerPartnersForDropdown(search = '') {
+    const gen = ++this._adjustDrawerPartnerSearchSeq
+    this.updateState('adjust-drawer-partner-dd-loading', true)
+    try {
+      const res = await window.ipcRenderer.invoke('customers:get-customers', {
+        search: (search || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._adjustDrawerPartnerSearchSeq) return
+      const raw = Array.isArray(res?.customers) ? res.customers : (res?.data?.customers || [])
+      const mapped = raw.map((c) => ({
+        id: c.id,
+        name: c.name || c.full_name || '',
+        code: c.code || `CUST${String(c.id).padStart(4, '0')}`,
+        type: 'partner',
+        customer_type: c.customer_type,
+        contact_person: c.contact_person || null,
+        phone: c.phone || null,
+      }))
+      this.updateState('adjust-drawer-partner-options', mapped)
+    } catch {
+      if (gen === this._adjustDrawerPartnerSearchSeq) {
+        this.updateState('adjust-drawer-partner-options', [])
+      }
+    } finally {
+      if (gen === this._adjustDrawerPartnerSearchSeq) {
+        this.updateState('adjust-drawer-partner-dd-loading', false)
+      }
+    }
+  }
+
+  scheduleAdjustDrawerPartnerSearch(query) {
+    clearTimeout(this.adjustDrawerPartnerSearchTimeout)
+    this.adjustDrawerPartnerSearchTimeout = setTimeout(() => this.loadAdjustDrawerPartnersForDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
   }
 
   // ==================== Products Methods ====================
@@ -1444,7 +1559,7 @@ export class InventoryVM extends ViewModel {
       });
       // Load all customers for adjust stock drawer (needed for borrow-to operations)
       // This ensures customers with type 'both', 'retailer', 'other' are available
-      this.loadPartners('all');
+      this.loadAdjustDrawerPartnersForDropdown('');
     } else if (drawerType === 'transfer' && stockItem) {
       this.updateState('transfer-stock-form', {
         quantity: 0,

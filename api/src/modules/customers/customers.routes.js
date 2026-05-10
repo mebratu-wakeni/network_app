@@ -5,6 +5,7 @@
 import { Router } from 'express'
 import knex from '../../db/knex.js'
 import { authenticate, requireRules } from '../../middleware/auth.js'
+import { uploadCsvFile } from '../../middleware/uploadCsv.js'
 import { CustomersRepository } from './customers.repository.js'
 import { CustomersService } from './customers.service.js'
 import { CustomersController } from './customers.controller.js'
@@ -57,12 +58,20 @@ router.post(
   controller.create
 )
 
-// Bulk import customers - requires CanImportCustomers rule
+// Bulk import customers (JSON body) - requires CanImportCustomers rule
 router.post(
   '/bulk-import',
   requireRules(['CanImportCustomers']),
   validate(bulkImportCustomersSchema),
   controller.bulkImport
+)
+
+// Bulk import customers (multipart CSV) — same rules; server parses file
+router.post(
+  '/bulk-import-upload',
+  requireRules(['CanImportCustomers']),
+  uploadCsvFile,
+  controller.bulkImportUpload
 )
 
 // Update a customer - requires CanEditCustomer rule
