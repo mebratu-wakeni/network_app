@@ -41,47 +41,33 @@ function SaleItemsSection(props) {
   const selectAll = props.getLocalState('selectedItemIds').isAllSelected;
   const selectedItemIds = props.getLocalState('selectedItemIds').itemIds || [];
 
-  const handleSelectAll = () => { 
-    // const itemIds = props.viewModel.getState('current-sale').items.map(
-    //   item => ({ id: item.product_id, selected: !props.getLocalState('selectedItemIds').isAllSelected })
-    // );
-    // props.setLocalState('selectedItemIds', {
-    //   isAllSelected: !props.getLocalState('selectedItemIds').isAllSelected,
-    //   itemIds,
-    // });
-    const currentSales = props.viewModel.getState('current_sale');
-    const updatedCurrentSalesItems = currentSales.items.map((item) => {
-      return {
-        ...item,
-        selected: true
-      }
-    });
+  const handleSelectAll = () => {
+    const existingState = props.getLocalState('selectedItemIds');
+    const isSelecting = !existingState.isAllSelected;
+    const itemIds = (props.viewModel.getState('current-sale').items || []).map(
+      item => ({ id: item.product_id, selected: isSelecting })
+    );
 
-    props.viewModel.updateState('current_sale', {...currentSales, items: updatedCurrentSalesItems});
+    props.setLocalState('selectedItemIds', {
+      isAllSelected: isSelecting,
+      itemIds,
+    });
   }
 
-  const handleItemSelect = (id, idx) => {
-    // const existingState = props.getLocalState('selectedItemIds');
-    // const allItems = props.viewModel.getState('current-sale').items || [];
+  const handleItemSelect = (id) => {
+    const existingState = props.getLocalState('selectedItemIds');
+    const allItems = props.viewModel.getState('current-sale').items || [];
 
-    // // If selectAll is true, we need to initialize all items first, then toggle the clicked one
-    // if (existingState.isAllSelected) {
-    //   const allItemIds = allItems.map(item => ({
-    //     id: item.product_id,
-    //     selected: item.product_id !== id // All selected except the one clicked
-    //   }));
-    //   props.setLocalState('selectedItemIds', {
-    //     isAllSelected: false,
-    //     itemIds: allItemIds
-    //   });
-    //   return;
-
-    const currentSale = props.viewModel.getState('current-sale');
-
-    currentSale.items[idx].selected = !currentSale.items[idx].selected;
-
-    props.viewModel.updateState('current-sale',)
-
+    if (existingState.isAllSelected) {
+      const allItemIds = allItems.map(item => ({
+        id: item.product_id,
+        selected: item.product_id !== id,
+      }));
+      props.setLocalState('selectedItemIds', {
+        isAllSelected: false,
+        itemIds: allItemIds,
+      });
+      return;
     }
 
     // Normal toggle logic when selectAll is false
