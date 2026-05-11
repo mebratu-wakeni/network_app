@@ -5,13 +5,17 @@ dist
 .idea
 coverage
 postgres-data
+db-data/
 
-
+# App icon for electron-builder (exception)
 node_modules/
 dist/
 build/
-# App icon for electron-builder (exception)
 !app/build/
+
+# Electron build output
+app/dist-electron/
+app/release/
 
 # Logs
 logs
@@ -27,6 +31,21 @@ dist
 dist-ssr
 *.local
 
+# Environment files
+.env
+.env.*
+!.env.example
+api/.env
+api/.env.*
+!api/.env.example
+
+# Local databases and runtime uploads
+api/data/
+api/uploads/
+*.db
+*.db-shm
+*.db-wal
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -37,7 +56,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-db-data/
-
-
-

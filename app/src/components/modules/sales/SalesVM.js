@@ -266,6 +266,7 @@ export class SalesVM extends ViewModel {
       unit_price: selectedProductDetails.unit_price,
       batch_number: p.batchNumber || p.batch_number || null,
       expiry_date: p.expiryDate || p.expiry_date || null,
+      selected: false
     };
     const currentSale = this.getState('current-sale') || {};
     const items = [...(currentSale.items || []), item];
