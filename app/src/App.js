@@ -473,7 +473,7 @@ function SetupLayout(props, options = {}) {
       mode === 'server' ? Row({}, `Current local subscription: ${knownLicense?.subscription_type || '-'}`) : null,
       mode === 'server' ? Row({}, `Current local duration: ${formatDuration(knownLicense)}`) : null,
       mode === 'server' ? Row({ class: 'text-xs text-gray-500 mt-2' }, 'On Finish, the app validates license and installation keys online. If the service is unreachable, setup shows a clear retry message.') : null,
-      mode === 'client' ? Row({ class: 'text-xs text-gray-500 mt-2' }, 'After finish, you will enter a connection screen where you can set and validate server URL before login.') : null
+      mode === 'client' ? Row({ class: 'text-xs text-gray-500 mt-2' }, 'After finish, the app will look for the Masatech Server on this LAN. Manual URL entry remains available as a fallback.') : null
     ])
   }
 
@@ -520,11 +520,13 @@ function ClientConnectionLayout(props) {
   const vmConnected = setupConfig?.clientConnected === true
   props.ensureLocalStateKey('client-connect-url', savedUrl)
   props.ensureLocalStateKey('client-connect-loading', false)
+  props.ensureLocalStateKey('client-discover-loading', false)
   props.ensureLocalStateKey('client-connect-error', vmError)
   props.ensureLocalStateKey('client-connect-message', vmMessage)
 
   const urlValue = props.getLocalState('client-connect-url')
   const loading = !!props.getLocalState('client-connect-loading')
+  const discovering = !!props.getLocalState('client-discover-loading')
   const error = props.getLocalState('client-connect-error')
   const message = props.getLocalState('client-connect-message')
 
@@ -558,6 +560,24 @@ function ClientConnectionLayout(props) {
     }
   }
 
+  const findServer = async () => {
+    props.setLocalState('client-connect-error', '')
+    props.setLocalState('client-connect-message', '')
+    props.setLocalState('client-discover-loading', true)
+    try {
+      const result = await props.viewModel.discoverClientServer()
+      if (!result?.success) {
+        props.setLocalState('client-connect-error', result?.error || 'No Masatech server found on this network.')
+        return
+      }
+      const discoveredUrl = result.server?.serverUrl || ''
+      props.setLocalState('client-connect-url', discoveredUrl)
+      props.setLocalState('client-connect-message', `Found Masatech Server on ${discoveredUrl}`)
+    } finally {
+      props.setLocalState('client-discover-loading', false)
+    }
+  }
+
   const onCancel = async () => {
     try {
       await window.ipcRenderer.invoke('app:quit')
@@ -581,6 +601,7 @@ function ClientConnectionLayout(props) {
             placeholder: 'e.g. http://192.168.1.20:4000'
           })
         ]),
+        Row({ class: 'text-xs text-gray-500' }, 'Use Find Server to discover the single Masatech Server on this LAN. Manual URL entry remains available as a fallback.'),
         Row({ class: `text-sm ${vmConnected ? 'text-green-700' : 'text-gray-600'}` }, vmConnected
           ? `Status: Connected${savedUrl ? ` (${savedUrl})` : ''}`
           : 'Status: Not connected'),
@@ -591,17 +612,22 @@ function ClientConnectionLayout(props) {
         Button({
           variant: 'outline',
           onClick: onCancel,
-          disabled: loading
+          disabled: loading || discovering
         }, 'Cancel'),
         Button({
           variant: 'outline',
+          onClick: findServer,
+          disabled: loading || discovering
+        }, discovering ? 'Finding...' : 'Find Server'),
+        Button({
+          variant: 'outline',
           onClick: testConnection,
-          disabled: loading
+          disabled: loading || discovering
         }, loading ? 'Testing...' : 'Test Connection'),
         Button({
           variant: 'primary',
           onClick: connect,
-          disabled: loading
+          disabled: loading || discovering
         }, loading ? 'Connecting...' : 'Connect')
       ])
     ])

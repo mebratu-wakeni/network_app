@@ -53,6 +53,8 @@ export default function ServerManagerUI() {
 
     const isRunning = !!devServerStatus?.running
     const primaryLanUrl = connectionInfo?.lanUrls?.[0] || null
+    const discovery = connectionInfo?.discovery || null
+    const discoveryUrl = discovery?.serverUrl || primaryLanUrl
     const license = licenseStatus?.license || null
     const licenseType = license?.subscription_type || '-'
     const licenseStatusLabel = licenseStatus?.valid ? 'Active' : (licenseStatus?.reason || 'Unavailable')
@@ -94,13 +96,18 @@ export default function ServerManagerUI() {
         mode === 'server' && Row({ class: 'space-y-2 text-sm' }, [
           Row({}, `Port: ${connectionInfo?.port || '-'}`),
           Row({ class: 'flex items-center gap-2' }, [
-            Row({}, `Primary LAN URL: ${primaryLanUrl || 'No LAN IP detected'}`),
-            primaryLanUrl ? Row({
+            Row({}, `Masatech Server URL: ${discoveryUrl || 'No LAN IP detected'}`),
+            discoveryUrl ? Row({
               tagType: 'button',
               class: 'px-2 py-1 text-xs border rounded hover:bg-gray-50',
-              events: { click: async () => copyText(primaryLanUrl) }
+              events: { click: async () => copyText(discoveryUrl) }
             }, 'Copy') : null
           ]),
+          Row({ class: discovery?.advertising ? 'text-xs text-green-700' : 'text-xs text-amber-700' },
+            discovery?.advertising
+              ? `Discovery: broadcasting as Masatech Server (${discovery.machineName || 'this machine'})`
+              : 'Discovery: not broadcasting. Start the server to allow clients to find it automatically.'
+          ),
           Row({ class: 'flex items-center gap-2' }, [
             Row({}, `Local URL: ${connectionInfo?.localhostUrl || '-'}`),
             connectionInfo?.localhostUrl ? Row({

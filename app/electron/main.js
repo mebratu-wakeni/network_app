@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
+import dgram from 'node:dgram'
 import ServerManager from './services/serviceManager'
 import UsersManager from './users/users.js'
 
@@ -73,6 +74,12 @@ let latestBootMessage = null
 
 const APP_NAME = 'PharmaSuitLAN'
 const DB_FILE_NAME = 'pharmasuit_lan.db'
+const DISCOVERY_PORT = 47832
+const DISCOVERY_SERVICE = 'masatech-server'
+const DISCOVERY_QUERY = 'MASATECH_DISCOVERY_QUERY_V1'
+const DISCOVERY_RESPONSE = 'MASATECH_DISCOVERY_RESPONSE_V1'
+let discoverySocket = null
+let discoveryServerInfo = null
 
 // Ensure userData path is consistent between dev and packaged builds.
 app.setName(APP_NAME)
@@ -402,6 +409,199 @@ function getLanIPv4Addresses() {
     .map((i) => i.address)
     .filter(isValidIPv4)
   return [...new Set(ips)]
+}
+
+function ipv4ToInt(ip) {
+  return ip.split('.').reduce((acc, octet) => ((acc << 8) + Number(octet)) >>> 0, 0)
+}
+
+function intToIPv4(value) {
+  return [24, 16, 8, 0].map((shift) => (value >>> shift) & 255).join('.')
+}
+
+function getLanBroadcastAddresses() {
+  const interfaces = os.networkInterfaces()
+  const broadcasts = new Set(['255.255.255.255'])
+  for (const entries of Object.values(interfaces)) {
+    for (const iface of entries || []) {
+      const isIPv4 = iface?.family === 'IPv4' || iface?.family === 4
+      if (!iface || iface.internal || !isIPv4 || !iface.address || !iface.netmask) continue
+      if (!isValidIPv4(iface.address) || !isValidIPv4(iface.netmask)) continue
+      const address = ipv4ToInt(iface.address)
+      const netmask = ipv4ToInt(iface.netmask)
+      broadcasts.add(intToIPv4((address | (~netmask >>> 0)) >>> 0))
+    }
+  }
+  return [...broadcasts]
+}
+
+function getDiscoveryServerInfo(port) {
+  const lanIps = getLanIPv4Addresses()
+  const primaryIp = lanIps[0] || '127.0.0.1'
+  const serverUrl = `http://${primaryIp}:${port}`
+  return {
+    service: DISCOVERY_SERVICE,
+    serverId: getDeviceFingerprint(),
+    machineName: os.hostname(),
+    port,
+    serverUrl,
+    apiBaseUrl: `${serverUrl}/api`,
+    lanIps,
+    appName: APP_NAME,
+    version: 1
+  }
+}
+
+function sendDiscoveryResponse(socket, remote) {
+  if (!discoveryServerInfo) return
+  const payload = Buffer.from(JSON.stringify({
+    type: DISCOVERY_RESPONSE,
+    ...discoveryServerInfo,
+    timestamp: Date.now()
+  }))
+  socket.send(payload, 0, payload.length, remote.port, remote.address)
+}
+
+function stopDiscoveryResponder() {
+  if (!discoverySocket) return
+  try {
+    discoverySocket.close()
+  } catch (_) {}
+  discoverySocket = null
+  discoveryServerInfo = null
+}
+
+function startDiscoveryResponder(port) {
+  stopDiscoveryResponder()
+  discoveryServerInfo = getDiscoveryServerInfo(port)
+  const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true })
+  discoverySocket = socket
+
+  socket.on('message', (message, remote) => {
+    let parsed = null
+    try {
+      parsed = JSON.parse(String(message))
+    } catch (_) {
+      return
+    }
+    if (parsed?.type !== DISCOVERY_QUERY || parsed?.service !== DISCOVERY_SERVICE) return
+    if (parsed?.clientId && parsed.clientId === discoveryServerInfo.serverId) return
+    sendDiscoveryResponse(socket, remote)
+  })
+
+  socket.on('error', (error) => {
+    console.error('[discovery] responder error:', error)
+    stopDiscoveryResponder()
+  })
+
+  socket.bind(DISCOVERY_PORT, '0.0.0.0', () => {
+    try {
+      socket.setBroadcast(true)
+    } catch (_) {}
+    console.log('[discovery] advertising', discoveryServerInfo.serverUrl, 'on UDP', DISCOVERY_PORT)
+  })
+}
+
+function normalizeDiscoveryServer(raw) {
+  if (!raw || raw.type !== DISCOVERY_RESPONSE || raw.service !== DISCOVERY_SERVICE) return null
+  const serverUrl = normalizeServerUrl(raw.serverUrl || '')
+  if (!serverUrl) return null
+  return {
+    serverId: String(raw.serverId || ''),
+    machineName: String(raw.machineName || 'Unknown server'),
+    port: Number(raw.port || 4000),
+    serverUrl,
+    apiBaseUrl: `${serverUrl}/api`,
+    lanIps: Array.isArray(raw.lanIps) ? raw.lanIps.filter(Boolean) : [],
+    appName: raw.appName || APP_NAME,
+    lastSeenAt: Date.now()
+  }
+}
+
+async function discoverMasatechServers(timeoutMs = 1400) {
+  return await new Promise((resolve) => {
+    const socket = dgram.createSocket('udp4')
+    const clientId = getDeviceFingerprint()
+    const seen = new Map()
+    let settled = false
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      try {
+        socket.close()
+      } catch (_) {}
+      const servers = Array.from(seen.values())
+      if (servers.length === 0) {
+        resolve({ success: false, error: 'No Masatech server found on this network.', servers: [] })
+        return
+      }
+      if (servers.length > 1) {
+        resolve({
+          success: false,
+          code: 'DUPLICATE_SERVERS',
+          error: 'Multiple Masatech servers were found on this network. Stop all but one server and try again.',
+          servers
+        })
+        return
+      }
+      resolve({ success: true, server: servers[0], servers })
+    }
+
+    socket.on('message', (message) => {
+      let parsed = null
+      try {
+        parsed = JSON.parse(String(message))
+      } catch (_) {
+        return
+      }
+      const server = normalizeDiscoveryServer(parsed)
+      if (!server || !server.serverId) return
+      seen.set(server.serverId, server)
+    })
+
+    socket.on('error', (error) => {
+      if (settled) return
+      settled = true
+      try {
+        socket.close()
+      } catch (_) {}
+      resolve({ success: false, error: error.message || 'Unable to scan for Masatech server.', servers: [] })
+    })
+
+    socket.bind(0, '0.0.0.0', () => {
+      try {
+        socket.setBroadcast(true)
+      } catch (_) {}
+      const payload = Buffer.from(JSON.stringify({
+        type: DISCOVERY_QUERY,
+        service: DISCOVERY_SERVICE,
+        clientId,
+        timestamp: Date.now()
+      }))
+      for (const broadcastAddress of getLanBroadcastAddresses()) {
+        socket.send(payload, 0, payload.length, DISCOVERY_PORT, broadcastAddress)
+      }
+    })
+
+    setTimeout(finish, timeoutMs)
+  })
+}
+
+async function ensureSingleMasatechServer() {
+  const discovery = await discoverMasatechServers(900)
+  if (!discovery?.success) {
+    return discovery?.code === 'DUPLICATE_SERVERS' ? discovery : { success: true }
+  }
+  const ownId = getDeviceFingerprint()
+  const otherServers = (discovery.servers || []).filter((server) => server.serverId && server.serverId !== ownId)
+  if (otherServers.length === 0) return { success: true }
+  return {
+    success: false,
+    code: 'DUPLICATE_SERVERS',
+    error: 'Another Masatech server is already running on this network. Stop it before starting this server.',
+    servers: otherServers
+  }
 }
 
 function normalizeLicenseActivationFailure(errorMessage, apiCode = null) {
@@ -768,10 +968,15 @@ ipcMain.handle('server:start', async (event, mode = 'docker') => {
   }
   const port = Number(cfg?.server?.port || process.env.PORT || 4000)
   const dbFile = cfg?.server?.dbFile || process.env.DB_FILE
-  return await serverManager.startServer({ port, dbFile, mode })
+  const duplicateCheck = await ensureSingleMasatechServer()
+  if (!duplicateCheck?.success) return duplicateCheck
+  const result = await serverManager.startServer({ port, dbFile, mode })
+  if (result?.success) startDiscoveryResponder(port)
+  return result
 })
 
 ipcMain.handle('server:stop', async (event, mode = 'docker') => {
+  stopDiscoveryResponder()
   return await serverManager.stopServer()
 })
 
@@ -801,6 +1006,7 @@ ipcMain.handle('server:connection-info', async () => {
   const port = Number(cfg?.server?.port || process.env.PORT || 4000)
   const localhostUrl = `http://localhost:${port}`
   const lanUrls = getLanIPv4Addresses().map((ip) => `http://${ip}:${port}`)
+  const discoveryInfo = discoveryServerInfo || getDiscoveryServerInfo(port)
   return {
     success: true,
     mode,
@@ -808,6 +1014,15 @@ ipcMain.handle('server:connection-info', async () => {
     localhostUrl,
     apiRoot: `${localhostUrl}/api`,
     lanUrls,
+    discovery: {
+      service: DISCOVERY_SERVICE,
+      serverName: 'Masatech Server',
+      serverId: discoveryInfo.serverId,
+      machineName: discoveryInfo.machineName,
+      serverUrl: discoveryInfo.serverUrl,
+      apiBaseUrl: discoveryInfo.apiBaseUrl,
+      advertising: !!discoverySocket
+    },
     publicUrl: null,
     tunnelActive: false
   }
@@ -881,6 +1096,14 @@ ipcMain.handle('startup:select-mode', async (_event, payload) => {
       console.log('[startup] starting server port=', port, 'dbFile=', dbFile)
 
       publishBootProgress('start-api', 'Starting local API server...', 30)
+      const duplicateCheck = await ensureSingleMasatechServer()
+      if (!duplicateCheck?.success) {
+        return {
+          success: false,
+          code: duplicateCheck?.code || 'DUPLICATE_SERVERS',
+          error: duplicateCheck?.error || 'Another Masatech server is already running on this network.'
+        }
+      }
       const serverStart = await serverManager.startServer({ port, dbFile })
       console.log('[startup] serverStart=', serverStart?.success, serverStart?.error || '')
       if (!serverStart?.success) {
@@ -902,6 +1125,7 @@ ipcMain.handle('startup:select-mode', async (_event, payload) => {
           error: 'Server process started but the API did not respond in time. Check server logs for errors.'
         }
       }
+      startDiscoveryResponder(port)
 
       // Apply config BEFORE resolveLicenseState so license manager fetches from the
       // local API we just started, not a stale client-mode URL from a previous run.
@@ -916,6 +1140,7 @@ ipcMain.handle('startup:select-mode', async (_event, payload) => {
   } else {
     publishBootProgress('client-connect', 'Connecting in client mode...', 50)
     await serverManager.stopServer()
+    stopDiscoveryResponder()
     effectiveConfig = { ...effectiveConfig, licenseRequired: false, licenseStatus: null }
   }
 
@@ -927,6 +1152,7 @@ ipcMain.handle('startup:select-mode', async (_event, payload) => {
 })
 
 ipcMain.handle('app:quit', async () => {
+  stopDiscoveryResponder()
   app.quit()
   return { success: true }
 })
@@ -961,6 +1187,14 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
       }
     }
     applyRuntimeConfig(config)
+    const duplicateCheck = await ensureSingleMasatechServer()
+    if (!duplicateCheck?.success) {
+      return {
+        success: false,
+        code: duplicateCheck?.code || 'DUPLICATE_SERVERS',
+        error: duplicateCheck?.error || 'Another Masatech server is already running on this network.'
+      }
+    }
     const serverStart = await serverManager.startServer({ port, dbFile })
     if (!serverStart?.success) {
       return {
@@ -977,6 +1211,7 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
         error: 'Server started but API is not ready yet. Please retry in a moment.'
       }
     }
+    startDiscoveryResponder(port)
 
     const currentStatus = await licenseManager.getStatus(deviceFingerprint)
     if (!currentStatus?.valid) {
@@ -1035,11 +1270,16 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
   saveRuntimeConfig(config)
   applyRuntimeConfig(config)
   await serverManager.stopServer()
+  stopDiscoveryResponder()
   return { success: true, config }
 })
 
 ipcMain.handle('client:test-server-url', async (_event, payload) => {
   return await validateClientServerUrl(payload?.serverUrl)
+})
+
+ipcMain.handle('client:discover-server', async () => {
+  return await discoverMasatechServers()
 })
 
 ipcMain.handle('client:connect', async (_event, payload) => {

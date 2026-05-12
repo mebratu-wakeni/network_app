@@ -315,7 +315,26 @@ class NavigationVM extends ViewModel {
   async enrichClientConnectionState(config) {
     if (!config || config?.mode !== 'client') return config
     const currentUrl = String(config?.client?.serverUrl || '').trim()
-    if (!currentUrl) return config
+    if (!currentUrl) {
+      const discovery = await this.discoverClientServer()
+      if (discovery?.success && discovery?.server?.serverUrl) {
+        const connect = await window.ipcRenderer.invoke('client:connect', { serverUrl: discovery.server.serverUrl })
+        if (connect?.success && connect?.config) {
+          return {
+            ...connect.config,
+            clientConnected: true,
+            clientConnectionError: null,
+            clientConnectionMessage: `Connected to Masatech Server at ${discovery.server.serverUrl}`
+          }
+        }
+      }
+      return {
+        ...config,
+        clientConnected: false,
+        clientConnectionError: discovery?.error || null,
+        clientConnectionMessage: null
+      }
+    }
 
     const probe = await window.ipcRenderer.invoke('client:test-server-url', { serverUrl: currentUrl })
     if (probe?.success) {
@@ -328,15 +347,32 @@ class NavigationVM extends ViewModel {
         clientConnectionMessage: `Connected to ${probe.serverUrl}`
       }
     }
+
+    const discovery = await this.discoverClientServer()
+    if (discovery?.success && discovery?.server?.serverUrl) {
+      const connect = await window.ipcRenderer.invoke('client:connect', { serverUrl: discovery.server.serverUrl })
+      if (connect?.success && connect?.config) {
+        return {
+          ...connect.config,
+          clientConnected: true,
+          clientConnectionError: null,
+          clientConnectionMessage: `Reconnected to Masatech Server at ${discovery.server.serverUrl}`
+        }
+      }
+    }
+
     return {
       ...config,
       clientConnected: false,
-      clientConnectionError: probe?.error || 'Unable to connect to configured server URL.',
+      clientConnectionError: discovery?.error || probe?.error || 'Unable to connect to configured server URL.',
       clientConnectionMessage: null
     }
   }
 
   normalizeSetupError(errorMessage, details = null, code = null) {
+    if (code === 'DUPLICATE_SERVERS') {
+      return 'Another Masatech Server is already running on this network. Stop the other server before starting this one.'
+    }
     if (code === 'INVALID_INSTALLATION_KEY') {
       return 'Installation key is invalid. Please verify and try again.'
     }
@@ -483,6 +519,31 @@ class NavigationVM extends ViewModel {
       if (config?.apiBaseUrl) localStorage.setItem('apiBaseUrl', config.apiBaseUrl)
     } catch (_) {}
     return { success: true }
+  }
+
+  async discoverClientServer() {
+    try {
+      const discovery = await window.ipcRenderer.invoke('client:discover-server')
+      if (!discovery?.success) {
+        return {
+          success: false,
+          code: discovery?.code || null,
+          error: discovery?.error || 'No Masatech server found on this network.',
+          servers: discovery?.servers || []
+        }
+      }
+      return {
+        success: true,
+        server: discovery.server,
+        servers: discovery.servers || []
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error?.message || 'Unable to scan for Masatech server.',
+        servers: []
+      }
+    }
   }
 
 }
