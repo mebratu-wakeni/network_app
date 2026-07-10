@@ -1,0 +1,43 @@
+name: Deploy to cPanel
+
+on:
+  push:
+    branches:
+      - cloud-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Deploy via SSH rsync
+      uses: easingthemes/ssh-deploy@main
+      with:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        ARGS: "-rlgoDzvO --delete"
+        SOURCE: "api/" 
+        REMOTE_HOST: ${{ secrets.SERVER_HOST }}
+        REMOTE_USER: mltplcpi
+        TARGET: "/home/mltplcpi/network-desktop-app/api" 
+        EXCLUDE: "/node_modules/, /tests/, *.sqlite"
+
+    - name: Install Dependencies, Run Migrations, and Restart
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: mltplcpi
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          # 1. Enter the virtual environment and move to your app directory
+          source /home/mltplcpi/nodevenv/network-desktop-app/api/20/bin/activate && cd /home/mltplcpi/network-desktop-app/api
+          
+          # 2. Run production commands
+          npm install --production
+          npm run migrate
+          
+          # 3. Create/update the restart file so cPanel picks up the new code
+          mkdir -p tmp
+          touch tmp/restart.txt
