@@ -46,6 +46,10 @@ api/uploads/
 *.db-shm
 *.db-wal
 
+# macOS resource fork / metadata files (created when zipping on macOS)
+._*
+__MACOSX/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
