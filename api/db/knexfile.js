@@ -4,17 +4,15 @@ import { fileURLToPath } from 'url'
 import fs from 'fs'
 import { resolveDbFilePath } from './resolve-db-file.js'
 
-// Resolve paths relative to this file
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-dotenv.config()
+// Cloud target: Just pull the production .env file
 dotenv.config({ path: path.resolve(__dirname, '../.env') })
-dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
-/** System app data (macOS / Windows / Linux), same root Electron uses — not api/data/. */
 const dbFile = resolveDbFilePath()
 
+// Automatically creates the /db directory if it doesn't exist yet on the server
 fs.mkdirSync(path.dirname(dbFile), { recursive: true })
 
 const config = {
