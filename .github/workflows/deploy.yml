@@ -21,6 +21,7 @@ jobs:
         SOURCE: "api/" 
         REMOTE_HOST: ${{ secrets.SERVER_HOST }}
         REMOTE_USER: mltplcpi
+        PORT: 7822 # <-- A2 Hosting's custom SSH port
         TARGET: "/home/mltplcpi/network-desktop-app/api" 
         EXCLUDE: "/node_modules/, /tests/, *.sqlite"
 
@@ -30,14 +31,10 @@ jobs:
         host: ${{ secrets.SERVER_HOST }}
         username: mltplcpi
         key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: 7822 # <-- A2 Hosting's custom SSH port here too
         script: |
-          # 1. Enter the virtual environment and move to your app directory
           source /home/mltplcpi/nodevenv/network-desktop-app/api/20/bin/activate && cd /home/mltplcpi/network-desktop-app/api
-          
-          # 2. Run production commands
           npm install --production
           npm run migrate
-          
-          # 3. Create/update the restart file so cPanel picks up the new code
           mkdir -p tmp
           touch tmp/restart.txt
