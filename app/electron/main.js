@@ -275,7 +275,11 @@ function getDeviceFingerprint() {
 function normalizeServerUrl(url) {
   if (!url) return null
   const trimmed = String(url).trim().replace(/\/+$/, '')
-  if (!/^https?:\/\//i.test(trimmed)) return `http://${trimmed}`
+  if (!/^https?:\/\//i.test(trimmed)) {
+    // Default localhost/LAN IPs to http, everything else to https
+    const isLocal = /^(localhost|127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(trimmed)
+    return isLocal ? `http://${trimmed}` : `https://${trimmed}`
+  }
   return trimmed
 }
 

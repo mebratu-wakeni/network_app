@@ -202,17 +202,27 @@ class ServerManager {
     }
   }
 
-  async checkApiHealth(apiRoot = 'http://localhost:4000', timeoutMs = 5000) {
+  async checkApiHealth(apiRoot = 'http://localhost:4000', timeoutMs = 15000) {
     const url = `${String(apiRoot || '').replace(/\/+$/, '')}/health`
+    console.log('[health-check] probing', url)
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const res = await fetch(url, { signal: controller.signal })
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (compatible; PharmaSuit/1.0)'
+        }
+      })
       clearTimeout(timeoutId)
       const data = await res.json()
+      console.log('[health-check] response', res.status, data)
       return { success: true, healthy: data.ok === true }
     } catch (error) {
       clearTimeout(timeoutId)
+      console.error('[health-check] failed', url, error.message, error.cause?.message || '')
       return { success: false, healthy: false, error: error.message }
     }
   }

@@ -13,8 +13,9 @@ export function createApp() {
 
   // Strict production origins allowed to speak to your API
   const allowedOrigins = [
-    'app://local',          // Matches your packaged Electron app environment
-    'https://mltplc.com'    // Matches your production domain framework
+    'app://local',                    // Packaged Electron app
+    'https://pharmasuit.mltplc.com',  // API subdomain
+    'https://mltplc.com'              // Main domain (kept for compatibility)
   ]
 
   // Inject any additional cloud origins defined inside cPanel's env dashboard
