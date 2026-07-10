@@ -13,25 +13,26 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Deploy via SSH rsync
-      uses: easingthemes/ssh-deploy@main
+    - name: Sync files via SFTP
+      uses: SamKirkland/FTP-Deploy-Action@v4.3.5
       with:
-        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        ARGS: "-rlgoDzvO --delete"
-        SOURCE: "api/" 
-        REMOTE_HOST: ${{ secrets.SERVER_HOST }}
-        REMOTE_USER: mltplcpi
-        PORT: 7822 # <-- A2 Hosting's custom SSH port
-        TARGET: "/home/mltplcpi/network-desktop-app/api" 
-        EXCLUDE: "/node_modules/, /tests/, *.sqlite"
+        server: ${{ secrets.SERVER_HOST }}
+        username: mltplcpi
+        password: ${{ secrets.SERVER_PASSWORD }}
+        server-dir: "network-desktop-app/api/" # Target path on your cPanel
+        local-dir: "api/" # Local folder to sync
+        exclude: |
+          **/.git*
+          **/node_modules/**
+          **/*.sqlite
 
-    - name: Install Dependencies, Run Migrations, and Restart
+    - name: Execute Server Commands
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: mltplcpi
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: 7822 # <-- A2 Hosting's custom SSH port here too
+        password: ${{ secrets.SERVER_PASSWORD }}
+        port: 7822 # Keeps the A2 port configuration fallback
         script: |
           source /home/mltplcpi/nodevenv/network-desktop-app/api/20/bin/activate && cd /home/mltplcpi/network-desktop-app/api
           npm install --production
