@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import { apiFetch } from '../config/apiFetch.js';
 import FormData from 'form-data';
 import fs from 'fs/promises';
 import path from 'path';
@@ -48,7 +49,7 @@ class UsersManager {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method: options.method || 'GET',
       headers,
       body: body

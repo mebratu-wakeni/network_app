@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import { apiFetch } from '../config/apiFetch.js';
 import axios from 'axios';
 import FormData from 'form-data';
 
@@ -97,7 +98,7 @@ class InventoryManager {
       const url = customerType === 'all'
         ? `${getApiUrl('/customers')}?${limitParam}&offset=0${searchParam}${preferWalkIn}`
         : `${getApiUrl('/customers')}?customer_type=${encodeURIComponent(customerType)}&${limitParam}&offset=0${searchParam}${preferWalkIn}`;
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -203,7 +204,7 @@ class InventoryManager {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method: options.method || 'GET',
       headers,
       body: body
@@ -504,7 +505,7 @@ class InventoryManager {
       
       const url = `${getApiUrl('/products/export')}?${params.toString()}`;
       
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -544,7 +545,7 @@ class InventoryManager {
       
       const url = `${getApiUrl('/inventories/export')}?${params.toString()}`;
       
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -1124,7 +1125,7 @@ class InventoryManager {
       const queryString = queryParams.toString();
       const url = `/bin-cards/product/${productId}/export${queryString ? `?${queryString}` : ''}`;
 
-      const response = await fetch(getApiUrl(url), {
+      const response = await apiFetch(getApiUrl(url), {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

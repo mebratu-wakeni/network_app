@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js'
+import { apiFetch } from '../config/apiFetch.js'
 
 /**
  * ReportsManager - API communication for financial reports
@@ -12,7 +13,7 @@ class ReportsManager {
     }
     if (token) headers['Authorization'] = `Bearer ${token}`
 
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method: options.method || 'GET',
       headers,
       body: options.body

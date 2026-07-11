@@ -3,6 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { app } from 'electron'
+import { apiFetch } from '../config/apiFetch.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -208,13 +209,8 @@ class ServerManager {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const res = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (compatible; PharmaSuit/1.0)'
-        }
+      const res = await apiFetch(url, {
+        signal: controller.signal
       })
       clearTimeout(timeoutId)
       const data = await res.json()

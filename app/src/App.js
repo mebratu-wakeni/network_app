@@ -28,6 +28,15 @@ export function App() {
     const setupDone = !!setupConfig?.setupCompleted && setupConfig?.mode === startupMode
     const licenseRequired = startupMode === 'server' && setupConfig?.licenseRequired === true
     const clientNeedsConnection = startupMode === 'client' && setupConfig?.clientConnected !== true
+
+    // Cloud build: skip mode-selection and auto-start as client.
+    // VITE_CLOUD_MODE is baked in at build time via `.env.cloud` + `vite build --mode cloud`.
+    const isCloudBuild = typeof import.meta !== 'undefined' && import.meta.env?.VITE_CLOUD_MODE === 'true'
+    const alreadySelecting = !!props.viewModel.getState('startup-selected-mode')
+    if (isCloudBuild && !startupMode && !alreadySelecting && !setupLoading) {
+      props.viewModel.chooseStartupMode('client')
+    }
+
     if (setupLoading) {
       return Row({ class: 'h-[100dvh] w-full flex flex-col items-center justify-center gap-4 bg-gray-50', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
         Row({ tagType: 'div', class: 'text-xl font-bold text-indigo-700' }, 'PharmaSuit'),
@@ -43,10 +52,13 @@ export function App() {
     const auth = props.viewModel.getState('auth') || { isAuthenticated: false };
     if (!auth.isAuthenticated) return LoginLayout(props);
 
+    const serverDown = !!props.viewModel.getState('server-down')
+    if (serverDown) return ServerDownOverlay(props)
+
     return MainLayout(props, main, router);
   };
 
-  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'startup-error', 'startup-error-details-open', 'startup-progress', 'startup-progress-percent', 'startup-selected-mode', 'startup-loading-expanded', 'auth'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'startup-error', 'startup-error-details-open', 'startup-progress', 'startup-progress-percent', 'startup-selected-mode', 'startup-loading-expanded', 'auth', 'server-down'], viewModel: navigationVM }, render);
   
 }
 
@@ -512,13 +524,20 @@ function SetupLayout(props, options = {}) {
   ])
 }
 
+const CLOUD_DEFAULT_URL = 'https://mltplc.com'
+
 function ClientConnectionLayout(props) {
+  const isCloudBuild = typeof import.meta !== 'undefined' && import.meta.env?.VITE_CLOUD_MODE === 'true'
+
   const setupConfig = props.viewModel.getState('setup-config') || {}
   const savedUrl = String(setupConfig?.client?.serverUrl || '').trim()
   const vmError = String(setupConfig?.clientConnectionError || '').trim()
   const vmMessage = String(setupConfig?.clientConnectionMessage || '').trim()
   const vmConnected = setupConfig?.clientConnected === true
-  props.ensureLocalStateKey('client-connect-url', savedUrl)
+
+  // Cloud builds: pre-fill with the known server URL if nothing is saved yet.
+  const defaultUrl = isCloudBuild ? (savedUrl || CLOUD_DEFAULT_URL) : savedUrl
+  props.ensureLocalStateKey('client-connect-url', defaultUrl)
   props.ensureLocalStateKey('client-connect-loading', false)
   props.ensureLocalStateKey('client-discover-loading', false)
   props.ensureLocalStateKey('client-connect-error', vmError)
@@ -529,22 +548,6 @@ function ClientConnectionLayout(props) {
   const discovering = !!props.getLocalState('client-discover-loading')
   const error = props.getLocalState('client-connect-error')
   const message = props.getLocalState('client-connect-message')
-
-  const testConnection = async () => {
-    props.setLocalState('client-connect-error', '')
-    props.setLocalState('client-connect-message', '')
-    props.setLocalState('client-connect-loading', true)
-    try {
-      const result = await props.viewModel.testClientServerUrl(urlValue)
-      if (!result?.success) {
-        props.setLocalState('client-connect-error', result?.error || 'Unable to connect to server.')
-        return
-      }
-      props.setLocalState('client-connect-message', `Connection check passed for ${result.serverUrl}`)
-    } finally {
-      props.setLocalState('client-connect-loading', false)
-    }
-  }
 
   const connect = async () => {
     props.setLocalState('client-connect-error', '')
@@ -572,7 +575,7 @@ function ClientConnectionLayout(props) {
       }
       const discoveredUrl = result.server?.serverUrl || ''
       props.setLocalState('client-connect-url', discoveredUrl)
-      props.setLocalState('client-connect-message', `Found Masatech Server on ${discoveredUrl}`)
+      props.setLocalState('client-connect-message', `Found server at ${discoveredUrl}`)
     } finally {
       props.setLocalState('client-discover-loading', false)
     }
@@ -581,16 +584,19 @@ function ClientConnectionLayout(props) {
   const onCancel = async () => {
     try {
       await window.ipcRenderer.invoke('app:quit')
-    } catch (_) {
-      // no-op fallback if quit IPC is unavailable
-    }
+    } catch (_) {}
   }
+
+  const placeholder = isCloudBuild ? 'e.g. https://your-server.com' : 'e.g. http://192.168.1.20:4000'
+  const hint = isCloudBuild
+    ? 'Enter the cloud server URL and click Connect to sign in.'
+    : 'Use Auto-Discover to find the Masatech server on this LAN, or enter the URL manually.'
 
   return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
       Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
         Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Connect to Server'),
-        Row({ class: 'text-sm text-gray-600' }, 'Client mode works like a browser: choose a server URL, verify connection, then continue to login.')
+        Row({ class: 'text-sm text-gray-600' }, hint)
       ]),
       Row({ class: 'px-8 py-6 flex flex-col gap-3' }, [
         Row({}, [
@@ -598,13 +604,12 @@ function ClientConnectionLayout(props) {
           Input({
             value: urlValue,
             onChange: (e) => props.setLocalState('client-connect-url', e.target.value),
-            placeholder: 'e.g. http://192.168.1.20:4000'
+            placeholder
           })
         ]),
-        Row({ class: 'text-xs text-gray-500' }, 'Use Find Server to discover the single Masatech Server on this LAN. Manual URL entry remains available as a fallback.'),
-        Row({ class: `text-sm ${vmConnected ? 'text-green-700' : 'text-gray-600'}` }, vmConnected
-          ? `Status: Connected${savedUrl ? ` (${savedUrl})` : ''}`
-          : 'Status: Not connected'),
+        vmConnected
+          ? Row({ class: 'text-sm text-green-700' }, `Connected to ${savedUrl}`)
+          : null,
         message ? Row({ class: 'text-sm text-green-700' }, message) : null,
         error ? Row({ class: 'text-sm text-red-600' }, error) : null
       ]),
@@ -614,22 +619,46 @@ function ClientConnectionLayout(props) {
           onClick: onCancel,
           disabled: loading || discovering
         }, 'Cancel'),
-        Button({
+        !isCloudBuild ? Button({
           variant: 'outline',
           onClick: findServer,
           disabled: loading || discovering
-        }, discovering ? 'Finding...' : 'Find Server'),
-        Button({
-          variant: 'outline',
-          onClick: testConnection,
-          disabled: loading || discovering
-        }, loading ? 'Testing...' : 'Test Connection'),
+        }, discovering ? 'Discovering...' : 'Auto-Discover') : null,
         Button({
           variant: 'primary',
           onClick: connect,
           disabled: loading || discovering
         }, loading ? 'Connecting...' : 'Connect')
       ])
+    ])
+  ])
+}
+
+function ServerDownOverlay(props) {
+  const setupConfig = props.viewModel.getState('setup-config') || {}
+  const serverUrl = setupConfig?.client?.serverUrl || setupConfig?.apiBaseUrl || ''
+
+  const handleRetry = async () => {
+    await props.viewModel.retryServerConnection()
+  }
+
+  return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-900/80 backdrop-blur-sm p-4' }, [
+    Row({ class: 'w-full max-w-sm bg-white rounded-2xl shadow-2xl flex flex-col items-center gap-5 px-8 py-10 text-center' }, [
+      Row({ tagType: 'div', class: 'text-5xl' }, [
+        Row({ tagType: 'ion-icon', attributes: { name: 'cloud-offline-outline' }, class: 'text-red-400' })
+      ]),
+      Row({ tagType: 'h2', class: 'text-xl font-bold text-gray-800' }, 'Server Unavailable'),
+      Row({ class: 'text-sm text-gray-500 leading-relaxed' }, 'The connection to the server was lost. This may be a temporary network issue or the server is restarting.'),
+      serverUrl ? Row({ class: 'text-xs text-gray-400 font-mono bg-gray-50 rounded px-3 py-1 w-full truncate' }, serverUrl) : null,
+      Row({ class: 'flex items-center gap-2 text-sm text-indigo-600' }, [
+        BootSpinner({ class: 'h-4 w-4 text-indigo-500 shrink-0' }),
+        Row({}, 'Retrying automatically every 15 seconds...')
+      ]),
+      Button({
+        variant: 'primary',
+        onClick: handleRetry,
+        class: 'w-full'
+      }, 'Retry Now')
     ])
   ])
 }

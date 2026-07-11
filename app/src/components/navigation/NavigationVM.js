@@ -50,6 +50,7 @@ class NavigationVM extends ViewModel {
     this.setState('startup-selected-mode', null);
     this.setState('startup-loading-expanded', false);
     this.setState('startup-error-details-open', false);
+    this.setState('server-down', false);
 
     this._devAutoLoginDone = false
 
@@ -60,7 +61,7 @@ class NavigationVM extends ViewModel {
       loading: false,
       error: null,
       token: null,
-      loginForm: import.meta.env.DEV
+      loginForm: import.meta.env.DEV && import.meta.env.VITE_CLOUD_MODE !== 'true'
         ? { username: DEV_LOGIN_USERNAME, password: DEV_LOGIN_PASSWORD }
         : { username: '', password: '' }
     })
@@ -75,7 +76,40 @@ class NavigationVM extends ViewModel {
         const percent = Number(message.percent)
         if (!Number.isNaN(percent)) this.updateState('startup-progress-percent', percent)
       })
+
+      // Sent by main process whenever any API call returns HTTP 401.
+      // Token has expired or been invalidated — log out and return to login screen.
+      window.ipcRenderer.on('session:expired', () => {
+        const auth = this.getState('auth') || {}
+        if (!auth.isAuthenticated) return // already logged out, ignore
+        this.logout()
+        const currentAuth = this.getState('auth') || {}
+        this.updateState('auth', {
+          ...currentAuth,
+          error: 'Your session has expired. Please sign in again.'
+        })
+      })
+
+      // Sent by main process when a network-level fetch error occurs (server unreachable).
+      window.ipcRenderer.on('server:down', () => {
+        this.updateState('server-down', true)
+      })
+
+      // Sent by main process when recovery polling confirms the server is back up.
+      window.ipcRenderer.on('server:up', () => {
+        this.updateState('server-down', false)
+      })
     }
+  }
+
+  // Called by the renderer's "Retry Now" button on the server-down overlay.
+  async retryServerConnection() {
+    try {
+      const result = await window.ipcRenderer.invoke('server:retry-health')
+      if (result?.healthy) {
+        this.updateState('server-down', false)
+      }
+    } catch (_) {}
   }
 
   // Update the login form fields
@@ -93,9 +127,11 @@ class NavigationVM extends ViewModel {
 
   /**
    * Dev only: submit login once per visit to the login screen (after refresh or logout).
+   * Disabled for cloud builds so the login screen behaves as it will in production.
    */
   async maybeDevAutoLogin () {
     if (!import.meta.env.DEV) return
+    if (import.meta.env.VITE_CLOUD_MODE === 'true') return
     if (this._devAutoLoginDone) return
     const auth = this.getState('auth') || {}
     if (auth.isAuthenticated) return
@@ -152,7 +188,7 @@ class NavigationVM extends ViewModel {
       token: null,
       loading: false,
       error: null,
-      loginForm: import.meta.env.DEV
+      loginForm: import.meta.env.DEV && import.meta.env.VITE_CLOUD_MODE !== 'true'
         ? { username: DEV_LOGIN_USERNAME, password: DEV_LOGIN_PASSWORD }
         : { username: '', password: '' }
     })

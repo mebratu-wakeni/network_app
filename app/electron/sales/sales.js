@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js'
+import { apiFetch } from '../config/apiFetch.js'
 
 /**
  * SalesManager - API communication for sales module.
@@ -10,7 +11,7 @@ class SalesManager {
     const headers = { 'Content-Type': 'application/json', ...options.headers }
     if (token) headers['Authorization'] = `Bearer ${token}`
 
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method: options.method || 'GET',
       headers,
       body: options.body
@@ -196,7 +197,7 @@ class SalesManager {
     try {
       const url = getApiUrl('/sales/orders/export')
       
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',

@@ -1,0 +1,56 @@
+// Cloud build configuration for PharmaSuit (cloud-client mode)
+// ─────────────────────────────────────────────────────────────────────────────
+// KEY DIFFERENCES from electron-builder.json5 (LAN build):
+//   • No extraResources  — the bundled API server (~50 MB) is NOT included;
+//     the app connects to the cloud server at https://mltplc.com instead.
+//   • productName / appId — distinct identifiers so LAN and cloud builds can
+//     coexist on the same machine without conflicting.
+//   • output directory   — release-cloud/ keeps installers separate from LAN builds.
+//   • artifact names     — clearly labelled "Cloud" so distributors don't mix them up.
+// ─────────────────────────────────────────────────────────────────────────────
+// @see https://www.electron.build/configuration/configuration
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.masatech.pharmasuit",
+  "asar": true,
+  "productName": "PharmaSuit",
+  "directories": {
+    "output": "release-cloud/${version}",
+    "buildResources": "build"
+  },
+  "icon": "build/icon.png",
+  "files": [
+    "dist",
+    "dist-electron"
+  ],
+  // No extraResources — the cloud build ships without the bundled API server.
+  "mac": {
+    "target": [
+      "dmg"
+    ],
+    "artifactName": "${productName}-Cloud-Mac-${version}-Installer.${ext}"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "${productName}-Cloud-Windows-${version}-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false
+  },
+  "linux": {
+    "target": [
+      "AppImage"
+    ],
+    "artifactName": "${productName}-Cloud-Linux-${version}.${ext}"
+  }
+}

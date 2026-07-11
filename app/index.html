@@ -5,6 +5,29 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MaSaTech Software Solution</title>
+    <!--
+      Content Security Policy
+      ─────────────────────────────────────────────────────────────────────────
+      script-src  : 'self' + app: (Electron custom protocol for packaged build)
+                    'unsafe-eval' required by Vite's module bundler in dev mode
+      style-src   : 'unsafe-inline' required by Tailwind's runtime class injection
+      img-src     : https: allows product/avatar images served from the cloud API
+                    data:/blob: for canvas exports and local thumbnail previews
+      connect-src : ws/wss localhost — Vite HMR websocket in dev
+                    http localhost — dev API server health checks
+                    All actual cloud API calls go through Electron IPC (not fetch)
+                    so no cloud domain is needed here.
+      ─────────────────────────────────────────────────────────────────────────
+    -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self' app:;
+      script-src  'self' app: 'unsafe-eval';
+      style-src   'self' app: 'unsafe-inline';
+      img-src     'self' app: data: blob: https:;
+      connect-src 'self' app: ws://localhost:* wss://localhost:* http://localhost:*;
+      font-src    'self' app: data:;
+      object-src  'none';
+    ">
   </head>
   <body>
     <div id="app">

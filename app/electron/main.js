@@ -23,6 +23,7 @@ import { ReportsIpcHandlers } from './reports/ipcHandlers.js'
 import LicenseManager from './license/license.js'
 import { LicenseIpcHandlers } from './license/ipcHandlers.js'
 import { setToken } from './config/authManager.js'
+import { setOnSessionExpired, setOnServerDown } from './config/apiFetch.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -71,6 +72,10 @@ const usersManager = new UsersManager()
 const licenseManager = new LicenseManager()
 let runtimeConfig = null
 let latestBootMessage = null
+
+// Injected at build time by vite.config.js from VITE_CLOUD_MODE in .env.cloud.
+// When true, all LAN-specific features (UDP discovery, local server) are disabled.
+const IS_CLOUD_BUILD = process.env.IS_CLOUD_BUILD === 'true'
 
 const APP_NAME = 'PharmaSuitLAN'
 const DB_FILE_NAME = 'pharmasuit_lan.db'
@@ -476,6 +481,7 @@ function stopDiscoveryResponder() {
 }
 
 function startDiscoveryResponder(port) {
+  if (IS_CLOUD_BUILD) return // LAN discovery disabled in cloud builds
   stopDiscoveryResponder()
   discoveryServerInfo = getDiscoveryServerInfo(port)
   const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true })
@@ -523,6 +529,9 @@ function normalizeDiscoveryServer(raw) {
 }
 
 async function discoverMasatechServers(timeoutMs = 1400) {
+  if (IS_CLOUD_BUILD) {
+    return { success: false, error: 'LAN discovery is not available in cloud mode.', servers: [] }
+  }
   return await new Promise((resolve) => {
     const socket = dgram.createSocket('udp4')
     const clientId = getDeviceFingerprint()
@@ -593,6 +602,7 @@ async function discoverMasatechServers(timeoutMs = 1400) {
 }
 
 async function ensureSingleMasatechServer() {
+  if (IS_CLOUD_BUILD) return { success: true } // no LAN conflict check needed
   const discovery = await discoverMasatechServers(900)
   if (!discovery?.success) {
     return discovery?.code === 'DUPLICATE_SERVERS' ? discovery : { success: true }
@@ -869,6 +879,39 @@ function registerRendererProtocol() {
   })
 }
 
+// ── Server-down recovery polling ─────────────────────────────────────────────
+// When apiFetch detects a network-level failure it calls setOnServerDown().
+// We then poll the health endpoint every SERVER_DOWN_POLL_MS until the server
+// responds, then send 'server:up' to the renderer.
+const SERVER_DOWN_POLL_MS = 15_000
+let _serverDownPollTimer = null
+
+function startServerRecoveryPolling() {
+  if (_serverDownPollTimer) return // already polling — don't stack
+  _serverDownPollTimer = setInterval(async () => {
+    try {
+      const apiRoot = getApiRootForHealth()
+      if (!apiRoot) return
+      const health = await serverManager.checkApiHealth(apiRoot, 10_000)
+      if (health?.success && health?.healthy) {
+        clearInterval(_serverDownPollTimer)
+        _serverDownPollTimer = null
+        if (win && !win.isDestroyed()) {
+          try { win.webContents.send('server:up') } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }, SERVER_DOWN_POLL_MS)
+}
+
+function stopServerRecoveryPolling() {
+  if (_serverDownPollTimer) {
+    clearInterval(_serverDownPollTimer)
+    _serverDownPollTimer = null
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function publishBootProgress(step, label, percent) {
   const payload = {
     type: 'boot-progress',
@@ -932,6 +975,24 @@ function createMainWindow() {
       preload: path.join(__dirname, 'preload.mjs'),
     },
   })
+  // Wire up the 401 session-expired notifier so any API call returning 401
+  // (expired/invalid token) sends an event to the renderer to show login.
+  setOnSessionExpired(() => {
+    if (win && !win.isDestroyed()) {
+      try { win.webContents.send('session:expired') } catch (_) {}
+    }
+  })
+
+  // Wire up the network-failure notifier: any fetch() throw (connection refused,
+  // timeout, DNS error) triggers the server-down overlay in the renderer and
+  // starts background polling until the server is reachable again.
+  setOnServerDown(() => {
+    if (win && !win.isDestroyed()) {
+      try { win.webContents.send('server:down') } catch (_) {}
+    }
+    startServerRecoveryPolling()
+  })
+
   loadRenderer(win)
 }
 
@@ -990,6 +1051,19 @@ ipcMain.handle('server:status', async () => {
 
 ipcMain.handle('server:health', async () => {
   return await serverManager.checkApiHealth(getApiRootForHealth())
+})
+
+// Immediate health re-check requested by the renderer's "Retry Now" button.
+// If healthy, also clears the background polling timer and notifies the renderer.
+ipcMain.handle('server:retry-health', async () => {
+  const health = await serverManager.checkApiHealth(getApiRootForHealth(), 10_000)
+  if (health?.success && health?.healthy) {
+    stopServerRecoveryPolling()
+    if (win && !win.isDestroyed()) {
+      try { win.webContents.send('server:up') } catch (_) {}
+    }
+  }
+  return health
 })
 
 ipcMain.handle('server:connection-info', async () => {
@@ -1283,6 +1357,9 @@ ipcMain.handle('client:test-server-url', async (_event, payload) => {
 })
 
 ipcMain.handle('client:discover-server', async () => {
+  if (IS_CLOUD_BUILD) {
+    return { success: false, error: 'Auto-Discover is not available in cloud mode.' }
+  }
   return await discoverMasatechServers()
 })
 

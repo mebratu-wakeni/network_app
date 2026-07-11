@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js'
+import { apiFetch } from '../config/apiFetch.js'
 
 const LICENSE_REQUEST_TIMEOUT_MS = 15000
 
@@ -8,7 +9,7 @@ class LicenseManager {
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) }
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), options.timeout ?? LICENSE_REQUEST_TIMEOUT_MS)
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method: options.method || 'GET',
       headers,
       body: options.body,

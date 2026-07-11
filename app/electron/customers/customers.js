@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import { apiFetch } from '../config/apiFetch.js';
 import axios from 'axios';
 import FormData from 'form-data';
 
@@ -35,7 +36,7 @@ class CustomersManager {
         queryParams.set('prefer_walk_in', '1')
       }
 
-      const response = await fetch(`${apiUrl}?${queryParams}`, {
+      const response = await apiFetch(`${apiUrl}?${queryParams}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -71,7 +72,7 @@ class CustomersManager {
   async createCustomer(customerData, token) {
     try {
       const apiUrl = getApiUrl('/customers');
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(apiUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -106,7 +107,7 @@ class CustomersManager {
     try {
       const apiUrl = getApiUrl(`/customers/${customerId}`);
 
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(apiUrl, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -141,7 +142,7 @@ class CustomersManager {
   async deleteCustomer(customerId, token) {
     try {
       const apiUrl = getApiUrl(`/customers/${customerId}`);
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(apiUrl, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -210,7 +211,7 @@ class CustomersManager {
   async bulkImportCustomers(customers, token) {
     try {
       const apiUrl = getApiUrl('/customers/bulk-import');
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(apiUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -253,7 +254,7 @@ class CustomersManager {
         orderBy: params.orderBy || 'desc'
       });
 
-      const response = await fetch(`${apiUrl}?${queryParams}`, {
+      const response = await apiFetch(`${apiUrl}?${queryParams}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,

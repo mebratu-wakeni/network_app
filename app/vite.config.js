@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import path from 'node:path'
 import fs from 'node:fs'
 import electron from 'vite-plugin-electron/simple';
@@ -36,6 +36,7 @@ const USED_ICONS = new Set([
   'chevron-up-outline',
   'close-circle-outline',
   'close-outline',
+  'cloud-offline-outline',
   'cloud-upload-outline',
   'create-outline',
   'cube',
@@ -179,24 +180,35 @@ function getFolderSize(dir) {
 }
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [
-    tailwindcss(),
-    ioniconsOptimizer(),
-    electron({
-      main: {
-        entry: 'electron/main.js',
-        vite: {
-          build: {},
+export default defineConfig(({ mode }) => {
+  // Load .env / .env.cloud etc. so IS_CLOUD_BUILD can be injected into both
+  // the renderer bundle AND the Electron main-process bundle at build time.
+  const env = loadEnv(mode, process.cwd(), '')
+  const isCloudBuild = env.VITE_CLOUD_MODE === 'true'
+
+  return {
+    plugins: [
+      tailwindcss(),
+      ioniconsOptimizer(),
+      electron({
+        main: {
+          entry: 'electron/main.js',
+          vite: {
+            build: {},
+            define: {
+              // Injected as a Node.js process.env so main.js can read it at runtime.
+              'process.env.IS_CLOUD_BUILD': JSON.stringify(isCloudBuild ? 'true' : 'false'),
+            },
+          },
         },
-      },
-      preload: {
-        input: path.join(__dirname, 'electron/preload.js'),
-      },
-      renderer: process.env.NODE_ENV === 'test'
-        ? undefined
-        : {},
-    }),
-  ],
-  publicDir: 'public',
+        preload: {
+          input: path.join(__dirname, 'electron/preload.js'),
+        },
+        renderer: process.env.NODE_ENV === 'test'
+          ? undefined
+          : {},
+      }),
+    ],
+    publicDir: 'public',
+  }
 })
