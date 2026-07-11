@@ -221,8 +221,8 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           ]),
           IconButton({ onClick: handleClose, size: 'medium', delegator }, [
             IonIcon({ name: 'close-outline', class: 'text-xl' })
-          ])
-        ]),
+        ])
+      ]),
         CardBody({ class: 'flex-1 overflow-y-auto p-6' }, [
           phase === 'pick' && pickBody,
           phase === 'uploading' &&
@@ -232,12 +232,12 @@ const ModalContent = (viewModel, delegator, handleClose) => {
             ]),
           phase === 'done' && doneBody
         ]),
-        CardFooter({ class: 'flex justify-end gap-3 px-6 py-4 border-t border-gray-200' }, [
+      CardFooter({ class: 'flex justify-end gap-3 px-6 py-4 border-t border-gray-200' }, [
           phase === 'pick' &&
             Button({ variant: 'secondary', onClick: handleClose, delegator }, 'Cancel'),
           phase === 'pick' &&
             Button({
-              variant: 'primary',
+          variant: 'primary',
               delegator,
               disabled: !selectedFile,
               onClick: handleConfirm
@@ -245,23 +245,23 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           phase === 'done' &&
             Button(
               {
-                variant: 'primary',
+          variant: 'primary',
                 delegator,
-                onClick: () => {
+          onClick: () => {
                   props.setLocalState('phase', 'pick');
                   props.setLocalState('selectedFile', null);
                   props.setLocalState('uploadResponse', null);
-                  handleClose();
+            handleClose();
                 }
-              },
+          },
               'Done'
             )
-        ])
+      ])
       ]
     );
   };
-
-  return StatefulRow({
+  
+  return StatefulRow({ 
     class: 'fixed inset-0 flex w-full items-center justify-center p-4 box-border',
     viewModel,
     delegator,

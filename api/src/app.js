@@ -24,10 +24,17 @@ export function createApp() {
     allowedOrigins.push(...origins)
   }
 
+  const isDev = process.env.NODE_ENV !== 'production'
+
   const corsOptions = {
     origin: function (origin, callback) {
-      // Allow internal/embedded engine requests with missing headers (like Electron initial lookups)
+      // Allow requests with no Origin header (IPC fetch from main process, curl, health checks)
       if (!origin) return callback(null, true)
+
+      // In development allow any localhost/127.0.0.1 origin (Vite dev server, browser testing)
+      if (isDev && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        return callback(null, true)
+      }
 
       // Match incoming production clients securely
       if (allowedOrigins.includes(origin)) {

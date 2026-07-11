@@ -2,6 +2,8 @@
  * Service: Business logic for sales orders.
  * createOrder builds sales_orders + sales_order_items payload and delegates to repository.
  */
+import { assertFiscalYearOpen } from '../../services/fiscal-year.guard.js'
+
 export class SalesService {
   constructor(repository) {
     this.repository = repository
@@ -75,9 +77,13 @@ export class SalesService {
     // Enforced: non-null withhold_ref ⇒ withhold_confirmation true; promise-only ⇒ both null/false.
     const withholdConfirmed = Boolean(resolvedWithholdRef)
 
+    // Enforce fiscal year: block if no open year covers the order date
+    const fy = await assertFiscalYearOpen(this.repository.knex, order_date)
+
     const orderPayload = {
       customer_id: customer_id ?? null,
       order_date,
+      fiscal_year: fy.fiscal_year,
       invoice_no: invoice_no ?? null,
       withhold_ref: resolvedWithholdRef,
       remark: finalRemark,

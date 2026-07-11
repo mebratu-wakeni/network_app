@@ -50,6 +50,14 @@ export class FiscalYearsRepository {
   }
 
   /**
+   * Return ANY open fiscal year (used to enforce the single-open-year rule).
+   * Returns null if all years are closed or no years exist.
+   */
+  async getAnyOpen() {
+    return this.knex('fiscal_years').where('status', 'open').first()
+  }
+
+  /**
    * Check if any fiscal year overlaps with the given date range.
    * Overlap: existing.start <= new.end AND existing.end >= new.start
    */

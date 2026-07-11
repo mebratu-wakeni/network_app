@@ -162,6 +162,10 @@ function FiscalYearTab(props) {
     end_date: defaultEnd
   }
 
+  // Option A: only one open fiscal year at a time — derive from the list
+  const openFy = fiscalYears.find((fy) => fy.status === 'open') || null
+  const hasOpenYear = !!openFy
+
   const handleCreateYear = async () => {
     const year = Number(createForm.fiscal_year)
     const start = String(createForm.start_date || '').trim()
@@ -321,9 +325,6 @@ function FiscalYearTab(props) {
       Row({ class: 'flex flex-col flex-1 min-h-0' }, [
         Row({ class: 'flex flex-col gap-3 mb-3' }, [
           Row({ class: 'text-sm font-semibold text-gray-700 uppercase tracking-wide' }, 'All fiscal years'),
-          fiscalYears.length > 0 && Row({ class: 'text-xs text-gray-500 p-3 rounded border border-gray-200 bg-gray-50/50' }, [
-            'Test closing: add deposits/sales with dates in a past FY (e.g. 2024), then Close that FY from Actions.'
-          ]),
           Row({ class: 'flex flex-wrap items-end gap-3 p-4 rounded-lg border border-gray-200 bg-gray-50/50' }, [
             Row({ class: 'flex flex-col gap-1' }, [
               Row({ tagType: 'label', attributes: { for: 'create-fy-year' }, class: 'text-xs font-medium text-gray-600' }, 'Year'),
@@ -367,10 +368,16 @@ function FiscalYearTab(props) {
             ]),
             Button({
               variant: 'primary',
-              disabled: !!creating || !!loading,
+              disabled: !!creating || !!loading || hasOpenYear,
               onClick: handleCreateYear
             }, creating ? 'Creating...' : 'Create')
-          ])
+          ]),
+          hasOpenYear
+            ? Row({ class: 'text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 flex items-center gap-2' }, [
+                Row({ tagType: 'ion-icon', attributes: { name: 'warning-outline' }, class: 'text-base flex-shrink-0' }),
+                `Close fiscal year ${openFy.fiscal_year} before creating a new one.`
+              ])
+            : null
         ]),
         loading
           ? Row({ class: 'flex items-center justify-center py-12' }, [Spinner({ class: 'w-8 h-8' })])

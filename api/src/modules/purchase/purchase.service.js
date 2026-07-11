@@ -3,6 +3,8 @@
  * Orchestrates use cases and coordinates between repository and business rules.
  * Optional customersRepository and productsRepository enable name resolution for import-from-spreadsheet.
  */
+import { assertFiscalYearOpen } from '../../services/fiscal-year.guard.js'
+
 export class PurchaseService {
   constructor(repository, options = {}) {
     this.repository = repository
@@ -149,10 +151,14 @@ export class PurchaseService {
     // 4) Generate receipt number
     const receipt_no = await this.repository.generateNextReceiptNumber()
 
+    // Enforce fiscal year: block if no open year covers the order date
+    const fy = await assertFiscalYearOpen(this.repository.knex, order_date)
+
     // 5) Build order payload for repository
     const orderData = {
       supplier_id,
       order_date,
+      fiscal_year: fy.fiscal_year,
       invoice_no: invoice_no ?? null,
       remark: notes || null,
       payment_mode,

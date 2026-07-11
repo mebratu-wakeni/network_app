@@ -34,6 +34,7 @@ export class FinancialRepository {
           customer_id: data.customer_id ?? null,
           category: data.category,
           paid_on: data.paid_on,
+          fiscal_year: data.fiscal_year ?? null,
           invoice_no: data.invoice_no || null,
           amount: data.amount,
           description: data.description || null,
@@ -98,6 +99,7 @@ export class FinancialRepository {
       const [row] = await trx('deposits')
         .insert({
           deposit_date: data.deposit_date,
+          fiscal_year: data.fiscal_year ?? null,
           type: data.type || 'deposit',
           amount: data.amount,
           description: data.description || null,

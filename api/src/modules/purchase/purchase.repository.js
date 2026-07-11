@@ -224,6 +224,7 @@ export class PurchaseRepository {
         .insert({
           supplier_id: order.supplier_id,
           order_date: order.order_date,
+          fiscal_year: order.fiscal_year ?? null,
           invoice_no: order.invoice_no || null,
           remark: order.remark || null,
           payment_mode: order.payment_mode,

@@ -1,6 +1,8 @@
 /**
  * Financial service: business logic for expenses, deposits, cash loans
  */
+import { assertFiscalYearOpen } from '../../services/fiscal-year.guard.js'
+
 export class FinancialService {
   constructor(repository) {
     this.repository = repository
@@ -26,6 +28,8 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+    const fy = await assertFiscalYearOpen(this.repository.knex, data.paid_on)
+    data.fiscal_year = fy.fiscal_year
     return this.repository.createExpense(data, user?.id)
   }
 
@@ -63,6 +67,8 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+    const fy = await assertFiscalYearOpen(this.repository.knex, data.deposit_date)
+    data.fiscal_year = fy.fiscal_year
     return this.repository.createDeposit(data, user?.id)
   }
 

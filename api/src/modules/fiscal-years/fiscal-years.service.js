@@ -48,6 +48,15 @@ export class FiscalYearsService {
       err.status = 400
       throw err
     }
+    // Option A: only one open fiscal year is allowed at any time.
+    const openYear = await this.repository.getAnyOpen()
+    if (openYear) {
+      const err = new Error(
+        `Cannot create fiscal year ${yearNum}: fiscal year ${openYear.fiscal_year} is currently open. Close it first.`
+      )
+      err.status = 400
+      throw err
+    }
     const overlaps = await this.repository.hasOverlappingDates(start_date, end_date)
     if (overlaps) {
       const err = new Error('Date range overlaps with an existing fiscal year')
@@ -219,6 +228,15 @@ export class FiscalYearsService {
     }
     if (fy.status !== 'closed') {
       const err = new Error(`Fiscal year ${yearNum} is not closed`)
+      err.status = 400
+      throw err
+    }
+    // Option A: cannot reopen while another year is open
+    const openYear = await this.repository.getAnyOpen()
+    if (openYear) {
+      const err = new Error(
+        `Cannot reopen fiscal year ${yearNum}: fiscal year ${openYear.fiscal_year} is currently open. Close it first.`
+      )
       err.status = 400
       throw err
     }

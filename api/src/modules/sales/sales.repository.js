@@ -67,6 +67,7 @@ export class SalesRepository {
         .insert({
           customer_id: order.customer_id ?? null,
           order_date: order.order_date,
+          fiscal_year: order.fiscal_year ?? null,
           invoice_no: order.invoice_no ?? null,
           remark: order.remark ?? null,
           payment_type: order.payment_type,

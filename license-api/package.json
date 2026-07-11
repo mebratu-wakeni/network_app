@@ -1,0 +1,31 @@
+{
+  "name": "license-api",
+  "version": "1.0.0",
+  "description": "Standalone license management server for mltplc.com products",
+  "main": "src/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon --watch src --exec \"node src/index.js\"",
+    "migrate": "./node_modules/.bin/knex --knexfile db/knexfile.js migrate:latest",
+    "rollback": "./node_modules/.bin/knex --knexfile db/knexfile.js migrate:rollback",
+    "seed": "./node_modules/.bin/knex --knexfile db/knexfile.js seed:run",
+    "change-password": "node scripts/change-admin-password.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.0.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "knex": "^3.1.0",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "private": true
+}
