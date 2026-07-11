@@ -32,7 +32,9 @@ async function request(method, path, body = null, requiresAuth = true) {
 // Auth
 export const auth = {
   login: (username, password) =>
-    request('POST', '/auth/login', { username, password }, false)
+    request('POST', '/auth/login', { username, password }, false),
+  changePassword: (current_password, new_password) =>
+    request('POST', '/auth/change-password', { current_password, new_password })
 }
 
 // Admin license endpoints

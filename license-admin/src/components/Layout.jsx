@@ -1,4 +1,4 @@
-export default function Layout({ admin, onLogout, children }) {
+export default function Layout({ admin, onLogout, onChangePassword, children }) {
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Navbar */}
@@ -15,8 +15,15 @@ export default function Layout({ admin, onLogout, children }) {
             <span className="text-xs text-slate-400 hidden sm:inline">mltplc.com</span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <span className="text-sm text-slate-500 hidden sm:inline">{admin?.display_name || admin?.username}</span>
+            <button
+              onClick={onChangePassword}
+              className="text-xs text-slate-500 hover:text-indigo-600 border border-slate-200 hover:border-indigo-300 px-3 py-1.5 rounded-lg transition"
+              title="Change password"
+            >
+              Change password
+            </button>
             <button
               onClick={onLogout}
               className="text-xs text-slate-500 hover:text-red-600 border border-slate-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition"
