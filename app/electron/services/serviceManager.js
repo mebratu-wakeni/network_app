@@ -57,6 +57,29 @@ function findNodeBinary(env) {
   return 'node' // fallback — may fail
 }
 
+/**
+ * Kill any process currently listening on `port`.
+ * Silently ignores errors — if nothing is there, that is fine too.
+ * Works on Windows (netstat + taskkill) and Unix (lsof / fuser).
+ */
+function killPortSync(port) {
+  try {
+    if (isWin) {
+      const out = execSync(`netstat -ano | findstr ":${port} "`, { encoding: 'utf8', windowsHide: true })
+      const pids = [...new Set(
+        out.split('\n')
+          .map(l => l.trim().split(/\s+/).pop())
+          .filter(p => p && /^\d+$/.test(p) && p !== '0')
+      )]
+      for (const pid of pids) {
+        try { execSync(`taskkill /PID ${pid} /F`, { windowsHide: true }) } catch (_) {}
+      }
+    } else {
+      execSync(`lsof -ti :${port} | xargs kill -9`, { encoding: 'utf8' })
+    }
+  } catch (_) {}
+}
+
 function findProjectRoot(startPath) {
   let current = path.resolve(startPath)
   const root = path.parse(current).root
@@ -117,6 +140,8 @@ class ServerManager {
     }
 
     const port = Number(options.port || process.env.PORT || 4000)
+    // Kill any stale process from a previous session (e.g. old bundle not cleanly shut down).
+    killPortSync(port)
     const dbFile = options.dbFile || process.env.DB_FILE
     const baseEnv = {
       ...process.env,

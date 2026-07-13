@@ -1435,8 +1435,7 @@ app.on('activate', async () => {
 })
 
 app.on('before-quit', async () => {
-  // Optionally stop services when app quits
-  // await serverManager.stopServices()
+  await serverManager.stopServer()
 })
 
 app.whenReady().then(() => {

@@ -10,6 +10,7 @@ const dbPath = path.resolve(__dirname, '..', process.env.DB_PATH || 'db/license.
 fs.mkdirSync(path.dirname(dbPath), { recursive: true })
 
 const migrationsDir = path.resolve(__dirname, 'migrations')
+const seedsDir      = path.resolve(__dirname, 'seeds')
 
 /**
  * Filters out macOS resource-fork ghost files (._*) created when zipping on
@@ -29,6 +30,18 @@ class FilteredMigrationSource {
   }
 }
 
+class FilteredSeedSource {
+  getSeedFiles(loadExtensions) {
+    const files = fs.readdirSync(seedsDir)
+      .filter(f => !f.startsWith('._') && loadExtensions.some(ext => f.endsWith(ext)))
+      .sort()
+    return Promise.resolve(files)
+  }
+  getSeedFile(file) {
+    return import(path.join(seedsDir, file))
+  }
+}
+
 const config = {
   client: 'sqlite3',
   connection: { filename: dbPath },
@@ -38,7 +51,8 @@ const config = {
     tableName: 'knex_migrations'
   },
   seeds: {
-    directory: path.resolve(__dirname, 'seeds')
+    directory: seedsDir,
+    seedSource: new FilteredSeedSource()
   }
 }
 

@@ -1,4 +1,6 @@
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4001'
+// Empty string = relative URLs (API and UI served from same origin in production).
+// Set VITE_API_URL only when running the dev server against a separate API host.
+const BASE = import.meta.env.VITE_API_URL || ''
 
 function getToken() {
   return localStorage.getItem('lm_token')

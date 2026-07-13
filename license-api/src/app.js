@@ -23,11 +23,16 @@ export function createApp() {
 
   const isDev = process.env.NODE_ENV !== 'production'
 
+  // Collect allowed hostnames (protocol-agnostic) from ALLOWED_ORIGINS
+  const allowedHosts = rawOrigins.map(o => { try { return new URL(o).hostname } catch { return '' } }).filter(Boolean)
+
   app.use(cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true)                         // server-to-server / curl
       if (isDev && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true)
       if (rawOrigins.includes(origin)) return callback(null, true)
+      // Also allow http:// variant of any configured origin (same host, different protocol)
+      try { if (allowedHosts.includes(new URL(origin).hostname)) return callback(null, true) } catch (_) {}
       callback(new Error('Not allowed by CORS'))
     },
     credentials: true,
