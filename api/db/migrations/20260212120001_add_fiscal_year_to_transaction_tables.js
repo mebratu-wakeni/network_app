@@ -3,6 +3,9 @@
  * fiscal_year = year part of the transaction date (calendar year)
  */
 export const up = async (knex) => {
+  const client = knex.client.config.client
+  const isPg = client === 'pg' || client === 'postgres'
+
   const addFiscalYearAndBackfill = async (table, dateColumn) => {
     await knex.schema.alterTable(table, (t) => {
       t.integer('fiscal_year')
@@ -10,7 +13,9 @@ export const up = async (knex) => {
     await knex(table)
       .whereNotNull(dateColumn)
       .update({
-        fiscal_year: knex.raw(`CAST(strftime('%Y', ${dateColumn}) AS INTEGER)`)
+        fiscal_year: isPg
+          ? knex.raw(`CAST(EXTRACT(YEAR FROM ${dateColumn}) AS INTEGER)`)
+          : knex.raw(`CAST(strftime('%Y', ${dateColumn}) AS INTEGER)`)
       })
     await knex.schema.alterTable(table, (t) => {
       t.index('fiscal_year')
@@ -45,12 +50,21 @@ export const up = async (knex) => {
   await addFiscalYearAndBackfill('bin_cards', 'transaction_date')
 
   // 10. Account ledger - already has fiscal_year (string). Backfill if empty
-  await knex.raw(`
-    UPDATE account_ledger
-    SET fiscal_year = strftime('%Y', transaction_date),
-        fiscal_period = strftime('%m', transaction_date)
-    WHERE (fiscal_year IS NULL OR fiscal_year = '') AND transaction_date IS NOT NULL
-  `)
+  if (isPg) {
+    await knex.raw(`
+      UPDATE account_ledger
+      SET fiscal_year = TO_CHAR(transaction_date, 'YYYY'),
+          fiscal_period = TO_CHAR(transaction_date, 'MM')
+      WHERE (fiscal_year IS NULL OR fiscal_year = '') AND transaction_date IS NOT NULL
+    `)
+  } else {
+    await knex.raw(`
+      UPDATE account_ledger
+      SET fiscal_year = strftime('%Y', transaction_date),
+          fiscal_period = strftime('%m', transaction_date)
+      WHERE (fiscal_year IS NULL OR fiscal_year = '') AND transaction_date IS NOT NULL
+    `)
+  }
 }
 
 export const down = async (knex) => {

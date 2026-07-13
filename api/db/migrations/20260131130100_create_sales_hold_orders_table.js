@@ -15,6 +15,7 @@ export const up = async (knex) => {
   const client = knex.client.config.client
   await knex.schema.createTable('sales_hold_orders', (t) => {
     t.bigIncrements('id').primary()
+    t.bigInteger('tenant_id').unsigned().notNullable()
 
     // Full current-order state (restore from this only)
     t.json('snapshot').notNullable()
@@ -32,9 +33,11 @@ export const up = async (knex) => {
     t.timestamp('created_at', { useTz: false }).defaultTo(knex.fn.now())
     t.timestamp('last_updated', { useTz: false }).defaultTo(knex.fn.now())
 
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('customer_id').references('id').inTable('customers').onDelete('SET NULL')
     t.foreign('encoder_id').references('id').inTable('users').onDelete('SET NULL')
 
+    t.index('tenant_id', 'sales_hold_orders_tenant_id_index')
     t.index('customer_id', 'sales_hold_orders_customer_id_index')
     t.index('order_date', 'sales_hold_orders_order_date_index')
     t.index('is_archive', 'sales_hold_orders_is_archive_index')

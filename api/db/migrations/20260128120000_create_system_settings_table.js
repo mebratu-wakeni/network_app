@@ -1,13 +1,15 @@
 export const up = async (knex) => {
   await knex.schema.createTable('system_settings', (t) => {
     t.bigIncrements('id').primary()
-    t.string('setting_key', 255).notNullable().unique()
+    t.bigInteger('tenant_id').unsigned().notNullable()
+    t.string('setting_key', 255).notNullable()
     t.text('setting_value')
     t.timestamp('created_at', { useTz: false }).defaultTo(knex.fn.now())
     t.timestamp('updated_at', { useTz: false }).defaultTo(knex.fn.now())
-    
-    // Unique index on setting_key (already enforced by unique constraint, but explicit index for performance)
-    t.index('setting_key', 'system_settings_setting_key_index')
+
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
+    t.unique(['tenant_id', 'setting_key'], 'system_settings_tenant_id_setting_key_unique')
+    t.index('tenant_id', 'system_settings_tenant_id_index')
   })
 }
 

@@ -73,9 +73,11 @@ const licenseManager = new LicenseManager()
 let runtimeConfig = null
 let latestBootMessage = null
 
-// Injected at build time by vite.config.js from VITE_CLOUD_MODE in .env.cloud.
-// When true, all LAN-specific features (UDP discovery, local server) are disabled.
-const IS_CLOUD_BUILD = process.env.IS_CLOUD_BUILD === 'true'
+// This branch (feature/cloud-multi-tenant) is permanently a tenant-based cloud
+// client: there is no self-hosted "server" mode, no LAN discovery, and no local
+// license activation. Always true here (kept as a named constant rather than a
+// literal so the LAN-specific branches below stay easy to find and reason about).
+const IS_CLOUD_BUILD = true
 
 const APP_NAME = 'PharmaSuitLAN'
 const DB_FILE_NAME = 'pharmasuit_lan.db'
@@ -999,22 +1001,14 @@ function createMainWindow() {
 async function bootstrapRuntimeConfig() {
   publishBootProgress('resolve-config', 'Resolving runtime configuration...', 20)
   let effectiveCfg = resolveConfigByDbPresence(runtimeConfig || loadRuntimeConfig())
-  applyRuntimeConfig(effectiveCfg)
 
-  if (effectiveCfg?.setupCompleted && effectiveCfg?.mode === 'server') {
-    publishBootProgress('start-api', 'Starting local API server...', 45)
-    const dbFile = effectiveCfg?.server?.dbFile || path.join(getDefaultDbDirectory(), DB_FILE_NAME)
-    const port = Number(effectiveCfg?.server?.port || 4000)
-    await serverManager.startServer({ port, dbFile })
-    publishBootProgress('wait-api-health', 'Waiting for API health check...', 60)
-    const apiReady = await waitForApiReady(`http://localhost:${port}`)
-    if (apiReady) {
-      publishBootProgress('validate-license', 'Validating license state...', 80)
-      effectiveCfg = await resolveLicenseState(effectiveCfg)
-      applyRuntimeConfig(effectiveCfg)
-      saveRuntimeConfig(effectiveCfg)
-    }
+  // This branch never self-hosts a local API/server, even if a previous build
+  // (pre cloud-multi-tenant pivot) left mode:'server' persisted on this machine.
+  // Force client mode so we never auto-spawn a local server or license flow.
+  if (effectiveCfg?.mode === 'server') {
+    effectiveCfg = { ...effectiveCfg, mode: null, setupCompleted: false }
   }
+  applyRuntimeConfig(effectiveCfg)
 
   publishBootProgress('init-complete', 'Initialization complete', 100)
 
@@ -1367,19 +1361,24 @@ ipcMain.handle('client:connect', async (_event, payload) => {
   const validation = await validateClientServerUrl(payload?.serverUrl)
   if (!validation?.success) return validation
 
+  // client_code identifies which tenant this installation belongs to on a multi-tenant
+  // server. Saved once here, then injected silently into every login request below --
+  // the user never has to re-enter it.
+  const clientCode = String(payload?.clientCode || '').trim().toUpperCase()
+
   const loaded = runtimeConfig || loadRuntimeConfig()
   const config = {
     ...loaded,
     setupCompleted: true,
     mode: 'client',
-    client: { serverUrl: validation.serverUrl },
+    client: { serverUrl: validation.serverUrl, clientCode },
     apiBaseUrl: validation.apiBaseUrl,
     profiles: {
       ...(loaded?.profiles || {}),
       client: {
         ...((loaded?.profiles && loaded.profiles.client) || {}),
         setupCompleted: true,
-        client: { serverUrl: validation.serverUrl }
+        client: { serverUrl: validation.serverUrl, clientCode }
       }
     }
   }
@@ -1391,7 +1390,14 @@ ipcMain.handle('client:connect', async (_event, payload) => {
 
 
 ipcMain.handle('auth:login', async (event, credentials) => {
-  const result = await usersManager.authenticate(credentials);
+  // Silently attach this installation's client_code (tenant identifier) for
+  // client-mode connections to a multi-tenant server. Not needed in server mode
+  // (self-hosted single-tenant, no client_code concept).
+  const loaded = runtimeConfig || loadRuntimeConfig()
+  const clientCode = loaded?.mode === 'client' ? String(loaded?.client?.clientCode || '').trim() : ''
+  const payload = clientCode ? { ...credentials, client_code: clientCode } : credentials
+
+  const result = await usersManager.authenticate(payload);
 
   if (result.success) setToken(result.token);
 

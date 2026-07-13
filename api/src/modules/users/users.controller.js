@@ -139,7 +139,7 @@ export class UsersController {
   getUsersList = async (req, res, next) => {
     try {
       const { searchQuery = '', tableConfig = {} } = req.validBody || {}
-      const result = await this.service.getUsersList(searchQuery, tableConfig)
+      const result = await this.service.getUsersList(req.tenantId, searchQuery, tableConfig)
       
       res.json({
         ok: true,
@@ -159,7 +159,7 @@ export class UsersController {
       // const userId = req.user.id;
       const { id } = req.validParams || { id: Number(req.params.id) };
       const userId = id;
-      const user = await this.service.updateProfile(userId, {...req.validBody, ...req.body});
+      const user = await this.service.updateProfile(req.tenantId, userId, {...req.validBody, ...req.body});
       res.json({ ok: true, user });
     } catch (error) {
       next(error);

@@ -1,22 +1,20 @@
 import path from 'path'
 import fs from 'fs'
-import knexConfig from '../../db/knexfile.js'
+import { fileURLToPath } from 'url'
 
-/** Resolved SQLite path (same as Knex uses). */
-export function getSqliteFilePath () {
-  return knexConfig.connection.filename
-}
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
- * Root directory for user-uploaded files, co-located with the DB file.
- * When DB_FILE points at userData (Electron), avatars survive updates and match the DB.
+ * Root directory for user-uploaded files.
+ * Cloud/Postgres deployments have no local DB file to co-locate with, so this
+ * defaults to a directory under the api/ package (override with UPLOADS_ROOT,
+ * e.g. to point at persistent storage outside the deploy directory on cPanel).
  */
 export function getUploadsRoot () {
   if (process.env.UPLOADS_ROOT) {
     return path.resolve(process.env.UPLOADS_ROOT)
   }
-  const dbPath = getSqliteFilePath()
-  return path.join(path.dirname(dbPath), 'uploads')
+  return path.resolve(__dirname, '../../data/uploads')
 }
 
 export function getAvatarsDir () {

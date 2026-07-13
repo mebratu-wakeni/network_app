@@ -2,7 +2,8 @@ export const up = async (knex) => {
   const client = knex.client.config.client
   await knex.schema.createTable('purchase_orders', (t) => {
     t.bigIncrements('id').primary()
-    
+    t.bigInteger('tenant_id').unsigned().notNullable()
+
     // Supplier Reference
     t.bigInteger('supplier_id')
     
@@ -23,7 +24,7 @@ export const up = async (knex) => {
     t.boolean('withhold_settled').defaultTo(false) // Whether withhold has been settled
     
     // Receipt Information
-    t.string('receipt_no', 255).notNullable().unique() // System-generated receipt number (format: PO#######)
+    t.string('receipt_no', 255).notNullable() // System-generated receipt number (format: PO#######)
     
     // Status
     t.string('status', 50).defaultTo('completed') // 'completed', 'archived', 'reversed'
@@ -36,10 +37,14 @@ export const up = async (knex) => {
     t.string('sync_status', 255).defaultTo('pending')
     
     // Foreign Keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('supplier_id').references('id').inTable('customers').onDelete('SET NULL')
     t.foreign('encoder_id').references('id').inTable('users').onDelete('SET NULL')
-    
+
+    t.unique(['tenant_id', 'receipt_no'], 'purchase_orders_tenant_id_receipt_no_unique')
+
     // Indexes
+    t.index('tenant_id', 'purchase_orders_tenant_id_index')
     t.index('receipt_no', 'purchase_orders_receipt_no_index')
     t.index('supplier_id', 'purchase_orders_supplier_id_index')
     t.index('order_date', 'purchase_orders_order_date_index')

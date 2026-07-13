@@ -30,13 +30,18 @@ export const up = async (knex) => {
     `)
   }
 
-  // 3) Enforce NOT NULL and UNIQUE, and create an index
+  // 3) Enforce NOT NULL, and create a per-tenant UNIQUE index (username only needs
+  // to be unique within a tenant; different tenants may both have an 'admin' user).
   if (client === 'sqlite3') {
-    await knex.raw(`CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique_idx ON users (username)`)
+    await knex.raw(`CREATE UNIQUE INDEX IF NOT EXISTS users_tenant_id_username_unique_idx ON users (tenant_id, username)`)
   } else {
     await knex.schema.alterTable('users', (t) => {
-      t.text('username').notNullable().unique().alter()
+      t.text('username').notNullable().alter()
     })
+    await knex.raw(`
+      ALTER TABLE users
+      ADD CONSTRAINT users_tenant_id_username_unique UNIQUE (tenant_id, username)
+    `)
   }
 }
 

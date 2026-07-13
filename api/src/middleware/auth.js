@@ -28,6 +28,7 @@ export const authenticate = async (req, res, next) => {
         avatar_url: null,
         rules: ['admin'] // Grant all permissions in dev
       }
+      req.tenantId = 1
       return next()
     }
 
@@ -68,10 +69,19 @@ export const authenticate = async (req, res, next) => {
       return next(error)
     }
 
+    // Defense in depth: the token's tenantId must match the user's actual tenant.
+    // Guards against a forged/stale token being used to act on a different tenant's data.
+    if (!decoded.tenantId || user.tenant_id !== decoded.tenantId) {
+      const error = new Error('Invalid or expired token')
+      error.status = 401
+      return next(error)
+    }
+
     // Load effective rules
     const effectiveRules = await permissionsService.getEffectiveRules(user.id)
-    
-    // Attach user and rules to request (include avatar_url for header/profile)
+
+    // Attach user, rules, and tenant scope to request (include avatar_url for header/profile)
+    req.tenantId = decoded.tenantId
     req.user = {
       id: user.id,
       email: user.email,
@@ -85,6 +95,20 @@ export const authenticate = async (req, res, next) => {
   } catch (error) {
     next(error)
   }
+}
+
+/**
+ * Require that req.tenantId was resolved by `authenticate`.
+ * Use on any tenant-scoped route as a guard against the x-role backward-compat
+ * bypass path (which does not resolve a tenant) slipping through unscoped.
+ */
+export const requireTenant = (req, res, next) => {
+  if (!req.tenantId) {
+    const error = new Error('Tenant context is required for this request')
+    error.status = 401
+    return next(error)
+  }
+  next()
 }
 
 /**
@@ -212,4 +236,4 @@ export const requireRole = (allowedRoles = []) => {
   }
 }
 
-export default { authenticate, requireRules, requireAnyRule, requireRole }
+export default { authenticate, requireTenant, requireRules, requireAnyRule, requireRole }

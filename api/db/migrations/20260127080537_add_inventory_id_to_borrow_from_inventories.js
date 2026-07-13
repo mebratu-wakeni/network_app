@@ -1,5 +1,10 @@
 export const up = async (knex) => {
   const client = knex.client.config.client
+  const isPg = client === 'pg' || client === 'postgres'
+  // DATE(...) already returns text on SQLite; on Postgres it returns a `date`, so
+  // cast to text before COALESCE-ing with '' to avoid "invalid input syntax for type date".
+  const dateAsText = (expr) => (isPg ? `DATE(${expr})::text` : `DATE(${expr})`)
+
   // Check if column already exists (from previous migration attempt)
   const columnExists = await knex.schema.hasColumn('borrow_from_inventories', 'inventory_id')
   
@@ -21,7 +26,7 @@ export const up = async (knex) => {
       FROM inventories i
       WHERE i.product_id = borrow_from_inventories.product_id
         AND COALESCE(i.batch_no, '') = COALESCE(borrow_from_inventories.batch_no, '')
-        AND COALESCE(DATE(i.expiry_date), '') = COALESCE(DATE(borrow_from_inventories.expiry_date), '')
+        AND COALESCE(${dateAsText('i.expiry_date')}, '') = COALESCE(${dateAsText('borrow_from_inventories.expiry_date')}, '')
         AND i.purchase_price = borrow_from_inventories.unit_cost
         AND i.acquisition_type = 'borrow'
       ORDER BY i.id DESC

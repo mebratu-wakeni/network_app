@@ -1,7 +1,8 @@
 export const up = async (knex) => {
   await knex.schema.createTable('users', (t) => {
     t.bigIncrements('id').primary()
-    t.text('email').notNullable().unique()
+    t.bigInteger('tenant_id').unsigned().notNullable()
+    t.text('email').notNullable()
     t.text('password_hash').notNullable()
     t.text('display_name')
     t.boolean('is_active').notNullable().defaultTo(true)
@@ -15,6 +16,10 @@ export const up = async (knex) => {
     t.timestamp('avatar_updated_at', { useTz: true })
 
     t.timestamps(true, true)
+
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
+    t.unique(['tenant_id', 'email'], 'users_tenant_id_email_unique')
+    t.index('tenant_id', 'users_tenant_id_index')
   })
 }
 

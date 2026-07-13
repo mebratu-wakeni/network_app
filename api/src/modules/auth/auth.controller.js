@@ -12,7 +12,7 @@ export class AuthController {
    */
   register = async (req, res, next) => {
     try {
-      const result = await this.service.register(req.validBody)
+      const result = await this.service.register(req.tenantId, req.validBody)
       res.status(201).json({ ok: true, ...result })
     } catch (error) {
       next(error)
@@ -21,12 +21,12 @@ export class AuthController {
 
   /**
    * POST /api/auth/login
-   * Login with username and password
+   * Login with client_code + username + password
    */
   login = async (req, res, next) => {
     try {
-      const { username, password } = req.validBody
-      const result = await this.service.login(username, password)
+      const { client_code, username, password } = req.validBody
+      const result = await this.service.login(client_code, username, password)
       res.json({ ok: true, ...result })
     } catch (error) {
       next(error)

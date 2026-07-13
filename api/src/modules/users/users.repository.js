@@ -5,33 +5,36 @@ export class UsersRepository {
   }
 
   /**
-   * Find user by email
+   * Find user by email, scoped to a tenant (email is only unique within a tenant)
    */
-  async findByEmail(email) {
-    return this.knex('users').where({ email }).first()
+  async findByEmail(tenantId, email) {
+    return this.knex('users').where({ tenant_id: tenantId, email }).first()
   }
 
   /**
-   * Find user by username
+   * Find user by username, scoped to a tenant (username is only unique within a tenant --
+   * different tenants may both have an 'admin' user)
    */
-  async findByUsername(username) {
-    return this.knex('users').where({ username }).first()
+  async findByUsername(tenantId, username) {
+    return this.knex('users').where({ tenant_id: tenantId, username }).first()
   }
 
   /**
-   * Find user by id
+   * Find user by id. id is globally unique so no tenant filter is required here,
+   * but callers that enforce tenant isolation should still verify user.tenant_id
+   * matches the caller's tenant (see middleware/auth.js).
    */
   async findById(id) {
     return this.knex('users').where({ id }).first()
   }
 
   /**
-   * Create a new user
+   * Create a new user. `data` must include tenant_id.
    */
   async create(data) {
     return this.knex('users')
       .insert(data)
-      .returning(['id', 'email', 'display_name', 'is_active', 'created_at', 'updated_at', 'last_login_at'])
+      .returning(['id', 'tenant_id', 'email', 'display_name', 'is_active', 'created_at', 'updated_at', 'last_login_at'])
   }
 
   /**
@@ -226,10 +229,10 @@ export class UsersRepository {
   }
 
 
-  async getUsersList(searchQuery, tableConfig) {
+  async getUsersList(tenantId, searchQuery, tableConfig) {
     const query = this.knex('users').select([
       'id', 'username', 'display_name', 'email', 'created_at', 'avatar_url', 'is_active', 'last_login_at'
-    ]);
+    ]).where({ tenant_id: tenantId });
 
     if (searchQuery && searchQuery.trim()) {
       const search = `%${searchQuery.toLowerCase().trim()}%`
@@ -246,9 +249,9 @@ export class UsersRepository {
       .orderBy(tableConfig.sortBy, tableConfig.orderBy);
   }
 
-  async getUsersListCount(searchQuery) {
-    const query = this.knex('users')
-    
+  async getUsersListCount(tenantId, searchQuery) {
+    const query = this.knex('users').where({ tenant_id: tenantId })
+
     if (searchQuery && searchQuery.trim()) {
       const search = `%${searchQuery.toLowerCase().trim()}%`
       query.where(function() {
@@ -410,9 +413,9 @@ export class UsersRepository {
     return updatedUser
   }
 
-  async updateLoginTime(username) {
+  async updateLoginTime(tenantId, username) {
     const user = await this.knex('users')
-      .where({ username })
+      .where({ tenant_id: tenantId, username })
       .update({ last_login_at: this.knex.fn.now() }).returning([
         'id', 'username', 'email', 'display_name', 'is_active', 'last_login_at'
       ]);

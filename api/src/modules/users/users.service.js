@@ -24,10 +24,10 @@ export class UsersService {
   }
 
   /**
-   * Find user by email
+   * Find user by email, scoped to a tenant
    */
-  async findByEmail(email) {
-    return this.repository.findByEmail(email)
+  async findByEmail(tenantId, email) {
+    return this.repository.findByEmail(tenantId, email)
   }
 
   /**
@@ -47,22 +47,22 @@ export class UsersService {
   }
 
   /**
-   * Create a new user
+   * Create a new user within the given tenant.
    */
-  async create(input) {
+  async create(tenantId, input) {
     const { username, email, password, display_name } = input
-    
-    // Check if username already exists
-    const existingUsername = await this.repository.findByUsername(username)
+
+    // Check if username already exists within this tenant
+    const existingUsername = await this.repository.findByUsername(tenantId, username)
     if (existingUsername) {
       const error = new Error('Username already taken')
       error.status = 409
       throw error
     }
 
-    // If email provided, ensure it's unique
+    // If email provided, ensure it's unique within this tenant
     if (email) {
-      const existingEmail = await this.repository.findByEmail(email)
+      const existingEmail = await this.repository.findByEmail(tenantId, email)
       if (existingEmail) {
         const error = new Error('Email already registered')
         error.status = 409
@@ -75,6 +75,7 @@ export class UsersService {
 
     // Create user
     const [created] = await this.repository.create({
+      tenant_id: tenantId,
       username,
       email: email || null,
       password_hash,
@@ -397,9 +398,9 @@ export class UsersService {
     }
   }
 
-  async getUsersList(searchQuery, tableConfig) {
-    const users = await this.repository.getUsersList(searchQuery || '', tableConfig)
-    const total = await this.repository.getUsersListCount(searchQuery || '')
+  async getUsersList(tenantId, searchQuery, tableConfig) {
+    const users = await this.repository.getUsersList(tenantId, searchQuery || '', tableConfig)
+    const total = await this.repository.getUsersListCount(tenantId, searchQuery || '')
     
     return {
       users,
@@ -408,10 +409,10 @@ export class UsersService {
     }
   }
 
-  async updateProfile(userId, profileData) {
-    // Check if username is being updated and if it's unique
+  async updateProfile(tenantId, userId, profileData) {
+    // Check if username is being updated and if it's unique within this tenant
     if (profileData.username) {
-      const existing = await this.repository.findByUsername(profileData.username)
+      const existing = await this.repository.findByUsername(tenantId, profileData.username)
       if (existing && existing.id !== userId) {
         const error = new Error('Username already taken')
         error.status = 409
@@ -419,9 +420,9 @@ export class UsersService {
       }
     }
 
-    // Check if email is being updated and if it's unique
+    // Check if email is being updated and if it's unique within this tenant
     if (profileData.email) {
-      const existing = await this.repository.findByEmail(profileData.email)
+      const existing = await this.repository.findByEmail(tenantId, profileData.email)
       const emailTaken  = existing && parseInt(existing.id) !== userId;
       if (emailTaken) {
         const error = new Error('Email already registered')

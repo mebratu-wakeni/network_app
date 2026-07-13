@@ -1,7 +1,8 @@
 export const up = async (knex) => {
   await knex.schema.createTable('borrow_returns', (t) => {
     t.bigIncrements('id').primary()
-    
+    t.bigInteger('tenant_id').unsigned().notNullable()
+
     // Inventory References
     t.bigInteger('borrowed_inventory_id').notNullable()
     t.bigInteger('returning_inventory_id').notNullable()
@@ -23,10 +24,12 @@ export const up = async (knex) => {
     t.string('sync_status', 20).defaultTo('pending')
     
     // Foreign Keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('borrowed_inventory_id').references('id').inTable('inventories')
     t.foreign('returning_inventory_id').references('id').inTable('inventories')
     
     // Indexes
+    t.index('tenant_id', 'borrow_returns_tenant_id_index')
     t.index('borrowed_inventory_id', 'borrow_returns_borrowed_inventory_id_index')
     t.index('returning_inventory_id', 'borrow_returns_returning_inventory_id_index')
     t.index('returned_on', 'borrow_returns_returned_on_index')

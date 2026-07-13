@@ -5,6 +5,7 @@ export const up = async (knex) => {
   // Create new account_ledger table matching the helper function pattern
   await knex.schema.createTable('account_ledger', (t) => {
     t.bigIncrements('id').primary()
+    t.bigInteger('tenant_id').unsigned().notNullable()
     t.date('transaction_date').notNullable()
     
     // Account Information (using account_code instead of account_id)
@@ -40,10 +41,12 @@ export const up = async (knex) => {
     
     // Foreign Keys
     // Note: account_code foreign key not used as it's a string - validation happens in application layer
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('inventory_id').references('id').inTable('inventories').onDelete('SET NULL')
     t.foreign('created_by').references('id').inTable('users').onDelete('SET NULL')
     
     // Indexes
+    t.index('tenant_id', 'account_ledger_tenant_id_index')
     t.index('transaction_date', 'account_ledger_transaction_date_index')
     t.index('account_code', 'account_ledger_account_code_index')
     t.index(['reference_table', 'reference_id'], 'account_ledger_reference_table_id_index')

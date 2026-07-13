@@ -21,21 +21,13 @@ export function App() {
 
   const router = new Router(main);
 
+  // This branch (feature/cloud-multi-tenant) is a pure tenant cloud client:
+  // no server/client mode picker, no local license activation Setup Wizard.
+  // Flow is simply: Server URL + Tenant Code -> Login -> App.
   const render = (props) => {
     const setupLoading = props.viewModel.getState('setup-loading')
     const setupConfig = props.viewModel.getState('setup-config')
-    const startupMode = props.viewModel.getState('startup-mode')
-    const setupDone = !!setupConfig?.setupCompleted && setupConfig?.mode === startupMode
-    const licenseRequired = startupMode === 'server' && setupConfig?.licenseRequired === true
-    const clientNeedsConnection = startupMode === 'client' && setupConfig?.clientConnected !== true
-
-    // Cloud build: skip mode-selection and auto-start as client.
-    // VITE_CLOUD_MODE is baked in at build time via `.env.cloud` + `vite build --mode cloud`.
-    const isCloudBuild = typeof import.meta !== 'undefined' && import.meta.env?.VITE_CLOUD_MODE === 'true'
-    const alreadySelecting = !!props.viewModel.getState('startup-selected-mode')
-    if (isCloudBuild && !startupMode && !alreadySelecting && !setupLoading) {
-      props.viewModel.chooseStartupMode('client')
-    }
+    const clientConnected = setupConfig?.clientConnected === true
 
     if (setupLoading) {
       return Row({ class: 'h-[100dvh] w-full flex flex-col items-center justify-center gap-4 bg-gray-50', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
@@ -44,10 +36,7 @@ export function App() {
         Row({ tagType: 'div', class: 'text-sm text-gray-500' }, 'Preparing PharmaSuit…')
       ])
     }
-    if (!startupMode) return StartupModeLayout(props)
-    if (!setupDone) return SetupLayout(props, { forcedMode: startupMode })
-    if (licenseRequired) return LicenseRequiredLayout(props)
-    if (clientNeedsConnection) return ClientConnectionLayout(props)
+    if (!clientConnected) return ClientConnectionLayout(props)
 
     const auth = props.viewModel.getState('auth') || { isAuthenticated: false };
     if (!auth.isAuthenticated) return LoginLayout(props);
@@ -62,6 +51,11 @@ export function App() {
   
 }
 
+// NOTE: StartupModeLayout, LicenseRequiredLayout, and SetupLayout below are no longer
+// reachable from render() on this branch (cloud-multi-tenant is client-only, no local
+// server/license mode). Left in place for now rather than deleted outright -- a full
+// removal pass (plus their main.js IPC handlers: startup:select-mode, setup:save-config,
+// setup:choose-data-directory) can follow once the cloud client flow is proven out.
 function StartupModeLayout(props) {
   const loading = props.viewModel.getState('setup-loading')
   const startupError = props.viewModel.getState('startup-error')
@@ -527,23 +521,24 @@ function SetupLayout(props, options = {}) {
 const CLOUD_DEFAULT_URL = 'https://mltplc.com'
 
 function ClientConnectionLayout(props) {
-  const isCloudBuild = typeof import.meta !== 'undefined' && import.meta.env?.VITE_CLOUD_MODE === 'true'
-
   const setupConfig = props.viewModel.getState('setup-config') || {}
   const savedUrl = String(setupConfig?.client?.serverUrl || '').trim()
+  const savedClientCode = String(setupConfig?.client?.clientCode || '').trim()
   const vmError = String(setupConfig?.clientConnectionError || '').trim()
   const vmMessage = String(setupConfig?.clientConnectionMessage || '').trim()
   const vmConnected = setupConfig?.clientConnected === true
 
-  // Cloud builds: pre-fill with the known server URL if nothing is saved yet.
-  const defaultUrl = isCloudBuild ? (savedUrl || CLOUD_DEFAULT_URL) : savedUrl
+  // Pre-fill with the known server URL if nothing is saved yet.
+  const defaultUrl = savedUrl || CLOUD_DEFAULT_URL
   props.ensureLocalStateKey('client-connect-url', defaultUrl)
+  props.ensureLocalStateKey('client-connect-code', savedClientCode)
   props.ensureLocalStateKey('client-connect-loading', false)
   props.ensureLocalStateKey('client-discover-loading', false)
   props.ensureLocalStateKey('client-connect-error', vmError)
   props.ensureLocalStateKey('client-connect-message', vmMessage)
 
   const urlValue = props.getLocalState('client-connect-url')
+  const codeValue = props.getLocalState('client-connect-code')
   const loading = !!props.getLocalState('client-connect-loading')
   const discovering = !!props.getLocalState('client-discover-loading')
   const error = props.getLocalState('client-connect-error')
@@ -552,9 +547,13 @@ function ClientConnectionLayout(props) {
   const connect = async () => {
     props.setLocalState('client-connect-error', '')
     props.setLocalState('client-connect-message', '')
+    if (!String(codeValue || '').trim()) {
+      props.setLocalState('client-connect-error', 'Client code is required.')
+      return
+    }
     props.setLocalState('client-connect-loading', true)
     try {
-      const result = await props.viewModel.connectClientServerUrl(urlValue)
+      const result = await props.viewModel.connectClientServerUrl(urlValue, codeValue)
       if (!result?.success) {
         props.setLocalState('client-connect-error', result?.error || 'Unable to connect to server.')
       }
@@ -587,10 +586,8 @@ function ClientConnectionLayout(props) {
     } catch (_) {}
   }
 
-  const placeholder = isCloudBuild ? 'e.g. https://your-server.com' : 'e.g. http://192.168.1.20:4000'
-  const hint = isCloudBuild
-    ? 'Enter the cloud server URL and click Connect to sign in.'
-    : 'Use Auto-Discover to find the Masatech server on this LAN, or enter the URL manually.'
+  const placeholder = 'e.g. https://your-server.com'
+  const hint = 'Enter the server URL and your tenant code, then click Connect to sign in.'
 
   return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
@@ -607,6 +604,15 @@ function ClientConnectionLayout(props) {
             placeholder
           })
         ]),
+        Row({}, [
+          Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700 mb-1' }, 'Client Code'),
+          Input({
+            value: codeValue,
+            onChange: (e) => props.setLocalState('client-connect-code', e.target.value.toUpperCase()),
+            placeholder: 'e.g. AB3D9F2K'
+          }),
+          Row({ class: 'text-xs text-gray-500 mt-1' }, 'Provided by your administrator when your account was set up.')
+        ]),
         vmConnected
           ? Row({ class: 'text-sm text-green-700' }, `Connected to ${savedUrl}`)
           : null,
@@ -619,11 +625,6 @@ function ClientConnectionLayout(props) {
           onClick: onCancel,
           disabled: loading || discovering
         }, 'Cancel'),
-        !isCloudBuild ? Button({
-          variant: 'outline',
-          onClick: findServer,
-          disabled: loading || discovering
-        }, discovering ? 'Discovering...' : 'Auto-Discover') : null,
         Button({
           variant: 'primary',
           onClick: connect,

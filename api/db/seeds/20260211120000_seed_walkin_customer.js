@@ -1,20 +1,8 @@
 /**
- * Seed: ensure a single "Walk-in" customer exists for expenses/sales.
- * Idempotent: only inserts if no customer with name 'Walk-in' exists (case-insensitive).
+ * The "Walk-in" customer is now created per-tenant during tenant provisioning
+ * (see TenantsService.createTenant()), not as a one-time global seed, because
+ * `customers` is a tenant-scoped table and this seed runs before any tenant exists.
  */
-export const seed = async (knex) => {
-  const existing = await knex('customers')
-    .whereRaw('LOWER(TRIM(name)) = ?', ['walk-in'])
-    .first()
-
-  if (existing) return
-
-  await knex('customers').insert({
-    name: 'Walk-in',
-    customer_type: 'other',
-    contact_person: null,
-    phone: null,
-    email: null,
-    address: null,
-  })
+export const seed = async (_knex) => {
+  // Intentionally empty.
 }

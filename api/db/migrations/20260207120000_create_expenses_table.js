@@ -6,6 +6,7 @@
 export const up = async (knex) => {
   await knex.schema.createTable('expenses', (t) => {
     t.bigIncrements('id').primary()
+    t.bigInteger('tenant_id').unsigned().notNullable()
     t.bigInteger('customer_id')
     t.text('category').notNullable()
     t.date('paid_on').notNullable()
@@ -22,8 +23,10 @@ export const up = async (knex) => {
     t.timestamp('created_at', { useTz: false }).defaultTo(knex.fn.now())
     t.timestamp('last_updated', { useTz: false }).defaultTo(knex.fn.now())
 
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('customer_id').references('id').inTable('customers').onDelete('SET NULL')
     t.foreign('created_by').references('id').inTable('users').onDelete('SET NULL')
+    t.index('tenant_id')
     t.index('paid_on')
     t.index('category')
     t.index('payment_method')

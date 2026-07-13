@@ -504,7 +504,7 @@ class NavigationVM extends ViewModel {
     return { success: true, serverUrl: result.serverUrl }
   }
 
-  async connectClientServerUrl(serverUrl) {
+  async connectClientServerUrl(serverUrl, clientCode) {
     const currentConfig = this.getState('setup-config') || null
     const normalizedUrl = String(serverUrl || '').trim()
     if (!normalizedUrl) {
@@ -525,7 +525,7 @@ class NavigationVM extends ViewModel {
       return probe
     }
 
-    const result = await window.ipcRenderer.invoke('client:connect', { serverUrl: normalizedUrl })
+    const result = await window.ipcRenderer.invoke('client:connect', { serverUrl: normalizedUrl, clientCode: String(clientCode || '').trim() })
     if (!result?.success) {
       const error = result?.error || 'Unable to connect to server.'
       const next = currentConfig

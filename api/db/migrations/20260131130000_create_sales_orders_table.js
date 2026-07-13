@@ -16,6 +16,7 @@ export const up = async (knex) => {
   const client = knex.client.config.client
   await knex.schema.createTable('sales_orders', (t) => {
     t.bigIncrements('id').primary()
+    t.bigInteger('tenant_id').unsigned().notNullable()
 
     // Customer reference (was retailer_id)
     t.bigInteger('customer_id')
@@ -40,7 +41,7 @@ export const up = async (knex) => {
     t.string('withhold_ref', 255) // Customer withholding receipt ref. (optional, unique)
 
     // System-generated receipt (sales order identifier)
-    t.string('receipt_no', 255).notNullable().unique()
+    t.string('receipt_no', 255).notNullable()
 
     // Status
     t.string('status', 50).defaultTo('pending') // 'pending' | 'completed' | 'archived'
@@ -56,10 +57,14 @@ export const up = async (knex) => {
     t.string('sync_status', 255).defaultTo('pending')
 
     // Foreign keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('customer_id').references('id').inTable('customers').onDelete('SET NULL')
     t.foreign('encoder_id').references('id').inTable('users').onDelete('SET NULL')
 
+    t.unique(['tenant_id', 'receipt_no'], 'sales_orders_tenant_id_receipt_no_unique')
+
     // Indexes
+    t.index('tenant_id', 'sales_orders_tenant_id_index')
     t.index('receipt_no', 'sales_orders_receipt_no_index')
     t.index('customer_id', 'sales_orders_customer_id_index')
     t.index('order_date', 'sales_orders_order_date_index')
@@ -88,10 +93,10 @@ export const up = async (knex) => {
     `)
   }
 
-  // Unique index for withhold_ref (nullable)
+  // Unique index for withhold_ref (nullable), scoped per tenant
   await knex.raw(`
     CREATE UNIQUE INDEX sales_orders_withhold_ref_unique
-    ON sales_orders (withhold_ref)
+    ON sales_orders (tenant_id, withhold_ref)
     WHERE withhold_ref IS NOT NULL
   `)
 }

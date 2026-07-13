@@ -31,14 +31,16 @@ class FilteredMigrationSource {
 }
 
 class FilteredSeedSource {
-  getSeedFiles(loadExtensions) {
+  getSeeds(config) {
+    const loadExtensions = config.loadExtensions || ['.js']
     const files = fs.readdirSync(seedsDir)
       .filter(f => !f.startsWith('._') && loadExtensions.some(ext => f.endsWith(ext)))
       .sort()
+      .map(f => path.join(seedsDir, f))
     return Promise.resolve(files)
   }
-  getSeedFile(file) {
-    return import(path.join(seedsDir, file))
+  getSeed(filepath) {
+    return import(filepath)
   }
 }
 
@@ -51,7 +53,6 @@ const config = {
     tableName: 'knex_migrations'
   },
   seeds: {
-    directory: seedsDir,
     seedSource: new FilteredSeedSource()
   }
 }

@@ -4,20 +4,21 @@
 import jwt from 'jsonwebtoken'
 
 export class AuthService {
-  constructor(usersService, usersRepository) {
+  constructor(usersService, usersRepository, tenantsRepository) {
     this.usersService = usersService
     this.usersRepository = usersRepository
+    this.tenantsRepository = tenantsRepository
   }
 
   /**
-   * Generate JWT token for a user
+   * Generate JWT token for a user, scoped to their tenant
    */
-  generateToken(userId) {
+  generateToken(userId, tenantId) {
     const secret = process.env.JWT_SECRET || 'change-me-in-production'
     const expiresIn = process.env.JWT_EXPIRES_IN || '7d'
-    
+
     return jwt.sign(
-      { userId },
+      { userId, tenantId },
       secret,
       { expiresIn }
     )
@@ -38,12 +39,12 @@ export class AuthService {
   }
 
   /**
-   * Register a new user
+   * Register a new user within the caller's tenant (Admin-only route).
    */
-  async register(input) {
-    const user = await this.usersService.create(input)
-    const token = this.generateToken(user.id)
-    
+  async register(tenantId, input) {
+    const user = await this.usersService.create(tenantId, input)
+    const token = this.generateToken(user.id, tenantId)
+
     return {
       user,
       token
@@ -51,12 +52,28 @@ export class AuthService {
   }
 
   /**
-   * Login with username and password
+   * Login with client_code + username + password.
+   * client_code resolves which tenant this login belongs to; different tenants
+   * may have identically-named users (e.g. every pharmacy has an 'admin').
    */
-  async login(username, password) {
-    // Find user by username
-    const user = await this.usersRepository.findByUsername(username);
-    
+  async login(clientCode, username, password) {
+    const tenant = await this.tenantsRepository.findByClientCode(clientCode)
+    if (!tenant) {
+      const error = new Error('Invalid client code')
+      error.status = 401
+      error.code = 'INVALID_CLIENT_CODE'
+      throw error
+    }
+    if (tenant.status !== 'active') {
+      const error = new Error('This account has been suspended. Please contact support.')
+      error.status = 403
+      error.code = 'TENANT_SUSPENDED'
+      throw error
+    }
+
+    // Find user by username, scoped to this tenant
+    const user = await this.usersRepository.findByUsername(tenant.id, username)
+
     if (!user) {
       const error = new Error('Invalid username or password')
       error.status = 401
@@ -78,15 +95,15 @@ export class AuthService {
       throw error
     }
 
-    // update last_login_at 
-    await this.usersRepository.updateLoginTime(username);
+    // update last_login_at
+    await this.usersRepository.updateLoginTime(tenant.id, username);
 
-    // Generate token
-    const token = this.generateToken(user.id)
+    // Generate token (scoped to tenant)
+    const token = this.generateToken(user.id, tenant.id)
 
     // Return user without password hash
     const { password_hash, ...userWithoutPassword } = user
-    
+
     return {
       user: userWithoutPassword,
       token

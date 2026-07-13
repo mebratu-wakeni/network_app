@@ -1,12 +1,25 @@
 import express from 'express'
 import dotenv from 'dotenv'
 import cors from 'cors'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import knex from './db/knex.js'
 import v1Routes from './routes/index.js'
 import { notFound, errorHandler } from './middleware/error.js'
 import { getUploadsRoot, ensureUploadDirs, migrateLegacyAvatarFiles } from './config/storagePaths.js'
 
 dotenv.config()
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// Serve the masatech-admin (super-admin) panel's built SPA at /admin, same origin as
+// the api, once it has been built (npm run build in masatech-admin/) -- mirrors how
+// license-api serves license-admin. In local dev the admin app has its own vite dev
+// server instead (see masatech-admin/vite.config.js), so this is a no-op until built.
+// Override with ADMIN_STATIC_DIR if the deploy's directory layout differs from local dev.
+const ADMIN_DIST_PATH = process.env.ADMIN_STATIC_DIR
+  ? path.resolve(process.env.ADMIN_STATIC_DIR)
+  : path.resolve(__dirname, '../../masatech-admin/dist')
 
 export function createApp() {
   const app = express()
@@ -24,6 +37,13 @@ export function createApp() {
     allowedOrigins.push(...origins)
   }
 
+  // Protocol-agnostic hostname match: a host reachable over both http and https
+  // (common on cPanel before/without a forced SSL redirect) shouldn't 500 with
+  // "Not allowed by CORS" just because the configured origin used the other scheme.
+  const allowedHosts = allowedOrigins
+    .map((o) => { try { return new URL(o).hostname } catch { return '' } })
+    .filter(Boolean)
+
   const isDev = process.env.NODE_ENV !== 'production'
 
   const corsOptions = {
@@ -37,11 +57,14 @@ export function createApp() {
       }
 
       // Match incoming production clients securely
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true)
-      } else {
-        callback(new Error('Not allowed by CORS'))
-      }
+      if (allowedOrigins.includes(origin)) return callback(null, true)
+
+      // Also allow the other protocol (http/https) for an already-configured host
+      try {
+        if (allowedHosts.includes(new URL(origin).hostname)) return callback(null, true)
+      } catch (_) {}
+
+      callback(new Error('Not allowed by CORS'))
     },
     credentials: true, // Safeguards authentication cookies / session transmission
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -71,6 +94,20 @@ export function createApp() {
 
   // Core API Routes
   app.use('/api', v1Routes)
+
+  // masatech-admin static SPA (see ADMIN_DIST_PATH note above).
+  // Express 5 no longer accepts a bare '/admin/*' route pattern, so the SPA
+  // fallback is a path-prefixed middleware (matched by prefix, not pathToRegexp)
+  // rather than a app.get('/admin/*', ...) route.
+  if (fs.existsSync(ADMIN_DIST_PATH)) {
+    app.use('/admin', express.static(ADMIN_DIST_PATH))
+    app.use('/admin', (_req, res, next) => {
+      // Explicit error callback: sendFile() failures (e.g. index.html missing/
+      // deleted after boot) must not become an unhandled rejection that crashes
+      // the whole api process for an unrelated route.
+      res.sendFile(path.join(ADMIN_DIST_PATH, 'index.html'), (err) => { if (err) next(err) })
+    })
+  }
 
   // Fail-safes
   app.use(notFound)

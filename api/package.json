@@ -11,8 +11,10 @@
     "start": "node src/index.js",
     "dev": "nodemon --watch src --exec \"node src/index.js\"",
     "migrate": "./node_modules/.bin/knex --knexfile db/knexfile.js migrate:latest",
+    "migrate:lite": "node scripts/migrate-lite.mjs",
     "rollback": "./node_modules/.bin/knex --knexfile db/knexfile.js migrate:rollback",
     "seed": "./node_modules/.bin/knex --knexfile db/knexfile.js seed:run",
+    "seed:lite": "node scripts/seed-lite.mjs",
     "db:reset": "node scripts/reset-db.js",
     "db:reset:seed": "node scripts/reset-db.js --seed",
     "db:diagnose-ledger": "node scripts/diagnose-ledger.js",
@@ -34,8 +36,9 @@
     "jsonwebtoken": "^9.0.2",
     "knex": "^3.1.0",
     "multer": "^2.0.2",
-    "sqlite3": "^5.1.7",
+    "pg": "^8.22.0",
     "sharp": "^0.34.5",
+    "sqlite3": "^5.1.7",
     "zod": "^4.1.12"
   },
   "devDependencies": {

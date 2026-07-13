@@ -2,6 +2,7 @@ export const up = async (knex) => {
   const client = knex.client.config.client
   await knex.schema.createTable('customers', (t) => {
     t.bigIncrements('id').primary()
+    t.bigInteger('tenant_id').unsigned().notNullable()
     t.string('name', 255).notNullable()
     t.string('contact_person', 255)
     t.string('phone', 255)
@@ -18,6 +19,9 @@ export const up = async (knex) => {
     t.timestamp('created_at', { useTz: false }).defaultTo(knex.fn.now())
     t.timestamp('last_updated', { useTz: false }).defaultTo(knex.fn.now())
     t.string('sync_status', 255).defaultTo('pending')
+
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
+    t.index('tenant_id', 'customers_tenant_id_index')
   })
 
   if (client === 'pg' || client === 'postgres') {

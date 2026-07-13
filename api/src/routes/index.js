@@ -14,6 +14,8 @@ import financial from '../modules/financial/financial.routes.js'
 import fiscalYears from '../modules/fiscal-years/fiscal-years.routes.js'
 import reports from '../modules/reports/reports.routes.js'
 import license from '../modules/license/license.routes.js'
+import tenants from '../modules/tenants/tenants.routes.js'
+import platformAdmin from '../modules/platformAdmins/platformAdmins.routes.js'
 
 const router = Router()
 
@@ -28,6 +30,12 @@ router.get('/db-health', async (_req, res, next) => {
 // Public auth routes
 router.use('/auth', auth)
 router.use('/license', license)
+
+// Platform admin (super-admin) auth -- login/change-password for the masatech-admin panel
+router.use('/platform-admin', platformAdmin)
+
+// Platform admin routes (gated by requirePlatformAdminAuth JWT, not tenant-scoped -- see tenants.routes.js)
+router.use('/tenants', tenants)
 
 // Protected routes
 router.use('/test-items', testItems)
