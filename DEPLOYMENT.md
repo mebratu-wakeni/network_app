@@ -7,6 +7,19 @@ This repo supports two different delivery paths:
 
 Branch policy: [BRANCHING.md](./BRANCHING.md). Multi-tenant readiness: [MULTI_TENANT_READINESS.md](./MULTI_TENANT_READINESS.md).
 
+## API (cPanel / Postgres host)
+
+**Multi-tenant and most cPanel hosts:** ship a **tarball** (zip/`tar.gz` of `api/`), upload via File Manager or SFTP, extract, then:
+
+```bash
+cd /path/to/api
+npm install --production
+npm run migrate
+# restart app (e.g. touch tmp/restart.txt or cPanel Node “Restart”)
+```
+
+Desktop installers are **not** part of the API tarball. They are published automatically by GitHub Actions to `/downloads/cloud-multi/` — see [docs/DOWNLOADS_AND_UPDATES.md](./docs/DOWNLOADS_AND_UPDATES.md).
+
 ## API (Docker — local dev)
 
 ### Images and Compose

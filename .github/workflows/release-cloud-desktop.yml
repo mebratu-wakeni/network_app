@@ -1,8 +1,15 @@
-# Builds PharmaSuit Cloud (multi-tenant) desktop installers for Mac, Windows, Linux.
-# Does NOT deploy API to cPanel — API uses tarball deploy (see docs/DOWNLOADS_AND_UPDATES.md).
+# Builds PharmaSuit Cloud (multi-tenant) desktop installers for Mac, Windows, Linux
+# and publishes them to server.masatechplc.com/downloads/cloud-multi/
+#
+# Does NOT deploy the API — API uses tarball on the Postgres host.
 #
 # Trigger: tag desktop-cloud-v*  OR  manual "Run workflow"
-# Output: GitHub Actions artifacts → upload to server.masatechplc.com/downloads/cloud-multi/
+#
+# Required GitHub secrets (see docs/DOWNLOADS_AND_UPDATES.md):
+#   DOWNLOADS_HOST          — FTP/SFTP host (or reuse SERVER_HOST)
+#   DOWNLOADS_USERNAME      — FTP user
+#   DOWNLOADS_PASSWORD      — FTP password
+#   DOWNLOADS_SERVER_DIR    — remote path, e.g. public_html/downloads/cloud-multi/
 
 name: Release Cloud Desktop
 
@@ -11,6 +18,11 @@ on:
     tags:
       - 'desktop-cloud-v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version to build (must match app/package.json unless you bump first)'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -42,6 +54,12 @@ jobs:
         working-directory: app
         run: npm ci
 
+      - name: Read package version
+        id: pkg
+        working-directory: app
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Build cloud desktop (${{ matrix.platform }})
         working-directory: app
         env:
@@ -55,15 +73,111 @@ jobs:
         with:
           name: cloud-desktop-${{ matrix.platform }}
           path: |
-            app/release-cloud/**/*
+            app/release-cloud/**
           retention-days: 90
+          if-no-files-found: error
 
-      - name: Upload update metadata (yml)
-        uses: actions/upload-artifact@v4
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.build.result != 'cancelled' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          name: cloud-desktop-updates-${{ matrix.platform }}
-          path: |
-            app/release-cloud/**/*.yml
-            app/release-cloud/**/*.blockmap
-          if-no-files-found: ignore
-          retention-days: 90
+          node-version: '20'
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-cloud-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-cloud-v}"
+          else
+            V="$(node -p "require('./app/package.json').version")"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $V"
+
+      - name: Download Mac artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: cloud-desktop-mac
+          path: staging/artifacts/mac
+
+      - name: Download Windows artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: cloud-desktop-win
+          path: staging/artifacts/win
+
+      - name: Download Linux artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: cloud-desktop-linux
+          path: staging/artifacts/linux
+
+      - name: Prepare publish bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d staging/artifacts ] || [ -z "$(find staging/artifacts -type f 2>/dev/null | head -1)" ]; then
+            echo "No installer artifacts downloaded — cannot publish."
+            exit 1
+          fi
+          node scripts/prepare-cloud-multi-release.mjs \
+            --version "${{ steps.ver.outputs.version }}" \
+            --artifacts-dir staging/artifacts \
+            --out-dir staging/publish \
+            --notes "PharmaSuit Cloud ${{ steps.ver.outputs.version }}" \
+            --base-url "https://server.masatechplc.com/downloads/cloud-multi"
+          echo "--- publish tree ---"
+          find staging/publish -type f | sort
+
+      - name: Check downloads secrets
+        shell: bash
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          missing=0
+          [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
+          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
+          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
+          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR (e.g. public_html/downloads/cloud-multi/)" && missing=1
+          exit $missing
+
+      - name: Publish to downloads host (FTP/FTPS)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.DOWNLOADS_HOST }}
+          username: ${{ secrets.DOWNLOADS_USERNAME }}
+          password: ${{ secrets.DOWNLOADS_PASSWORD }}
+          protocol: ftps
+          local-dir: staging/publish/
+          server-dir: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "### Cloud-multi desktop published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** ${{ steps.ver.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Downloads:** https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Update feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json" >> "$GITHUB_STEP_SUMMARY"
