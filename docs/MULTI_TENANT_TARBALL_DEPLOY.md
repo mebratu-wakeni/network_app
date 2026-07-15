@@ -1,14 +1,17 @@
-# Multi-tenant cloud — tarball redeploy (API + admin)
+# Redeploy `server.masatechplc.com` (API + admin)
 
-Target: **https://server.masatechplc.com**
+Your live layout (cPanel):
 
-| URL | What |
-|-----|------|
-| `/health`, `/api/...` | Multi-tenant API (Postgres) |
-| `/admin` | masatech-admin SPA |
-| `/downloads/cloud-multi/` | Electron installers (separate flow) |
+```text
+/home/masatetw/server.masatechplc.com/
+  api/                      ← Node application root
+  masatech-admin/           ← admin SPA (dist served at /admin)
+  masatech-deploy.tar.gz    ← extract in THIS folder
+```
 
-## Packing (matches your existing `api.tar.gz` workflow)
+That is **`masatech-deploy.tar.gz`**, not a flat `api.tar.gz`.
+
+## Pack on your Mac
 
 ```bash
 cd /path/to/network-desktop-app
@@ -16,47 +19,72 @@ git checkout feature/cloud-multi-tenant
 ./scripts/pack-multi-tenant-tarball.sh
 ```
 
-**Pack order (fixed):**
+Produces:
 
-1. Build `masatech-admin` → `dist/`
-2. Stage `api/` (no `.env`, no `node_modules`)
-3. Copy admin into `admin-dist/` inside that stage
-4. Write **`api.tar.gz`** (flat) + optional **`masatech-deploy.tar.gz`** (nested)
+| File | Role |
+|------|------|
+| `dist-release/masatech-deploy.tar.gz` | **Upload this** (also `./masatech-deploy.tar.gz`) |
+| `dist-release/sql/*.sql` | Incremental SQL for phpPgAdmin |
+| `dist-release/DEPLOY.txt` | Checklist |
 
-### Which archive?
+Archive contents:
 
-| File | Layout | Extract where |
-|------|--------|----------------|
-| **`api.tar.gz`** (use this) | `./package.json`, `./src/`, `./admin-dist/`, … | **Into** Node app root (`…/api/` that already has `package.json`) — same as before |
-| `masatech-deploy.tar.gz` | `./api/…` + `./masatech-admin/dist/…` | At **parent** of `api/` |
+```text
+./api/...
+./masatech-admin/dist/...
+```
 
-Wrong extract = `api/api/` nesting or missing `/admin`. Use **`api.tar.gz`** unless you intentionally use the parent layout.
+## Extract (important)
 
-## Redeploy steps
+1. Upload `masatech-deploy.tar.gz` into **`/home/masatetw/server.masatechplc.com/`**
+2. Extract **there** (domain root) so it updates `api/` and `masatech-admin/`
+3. **Do not** open `api/` and extract inside it → that creates `api/api/`
 
-1. Backup Postgres + current `api/` on the server.
-2. Upload `dist-release/api.tar.gz` (or repo-root `api.tar.gz` after pack).
-3. On the server:
+## After extract
 
 ```bash
-cd ~/network-desktop-app/api   # Application root = folder with package.json
-tar -xzf /path/to/api.tar.gz
+cd /home/masatetw/server.masatechplc.com/api
 npm install --production
-npm run migrate
 mkdir -p tmp && touch tmp/restart.txt
 ```
 
-4. First-time only (no platform admin): `npm run seed` then change password at `/admin`.
-5. Verify: `/health`, `/api/db-health`, `/admin`.
+cPanel Node app:
 
-**Do not** overwrite cPanel env (`.env` / Node env panel). The tarball has no secrets.
+- Application root: `…/server.masatechplc.com/api`
+- Startup: `startup.cjs`
+- Keep existing Postgres + `JWT_SECRET` env (tarball has no `.env`)
 
-Startup file: **`startup.cjs`**.
+## Database migrations (no `npm run migrate` in cPanel UI)
 
-## Verify archive before upload
+Knex JS migrations often cannot be run from the File Manager / package.json UI on this host. Use one of:
+
+### Option A — SSH + migrate-lite (if Terminal/SSH works)
 
 ```bash
-tar -tzf dist-release/api.tar.gz | head
-# expect: ./package.json  ./src/…  ./admin-dist/index.html  ./startup.cjs
-# NOT:    ./api/package.json
+cd /home/masatetw/server.masatechplc.com/api
+# activate nodeenv for this app, then:
+node scripts/migrate-lite.mjs
 ```
+
+(`migrate-lite.mjs` avoids the OOM from full `npm run migrate` on CloudLinux.)
+
+### Option B — phpPgAdmin / cPanel → Databases (what you already use)
+
+1. Open PostgreSQL for this app in cPanel Databases / phpPgAdmin  
+2. Run incremental SQL from `dist-release/sql/`, e.g.:
+
+   `20260715120000_add_customer_code_to_customers.sql`
+
+3. That script adds `customer_code`, backfills `CUST0001`…, and records the migration in `knex_migrations`
+
+Do **not** re-run the full `masatech-db-init-phpPgAdmin.sql` on a live DB (that is for empty init).
+
+## Verify
+
+- https://server.masatechplc.com/health  
+- https://server.masatechplc.com/api/db-health  
+- https://server.masatechplc.com/admin  
+
+## Not in this tarball
+
+Electron installers → GitHub Actions → `/downloads/cloud-multi/`

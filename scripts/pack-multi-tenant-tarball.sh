@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# Pack multi-tenant API (+ built admin) the same way server.masatechplc.com expects.
+# Pack for server.masatechplc.com — SAME layout as the live host.
 #
-# Historical formats on this machine / host:
-#   api.tar.gz           → FLAT (./package.json, ./src/, …). Extract INTO the Node app root
-#                          (the directory that already has package.json — usually …/api/).
-#   masatech-deploy.tar.gz → NESTED (./api/… + ./masatech-admin/dist/…). Extract at the
-#                          PARENT of api/ (e.g. …/network-desktop-app/).
+# Live filesystem (from cPanel):
+#   /home/masatetw/server.masatechplc.com/
+#     api/
+#     masatech-admin/
+#     masatech-deploy.tar.gz   ← extract HERE (domain root), not inside api/
 #
-# This script builds BOTH, with the same contents you need for redeploy:
-#   - multi-tenant api source (no .env, no node_modules)
-#   - admin SPA for /admin
+# Archive layout (must match):
+#   ./api/...
+#   ./masatech-admin/dist/...
 #
-# Usage (repo root, feature/cloud-multi-tenant):
+# Usage:
 #   ./scripts/pack-multi-tenant-tarball.sh
 #
-# Output (dist-release/):
-#   api.tar.gz                 ← prefer this (matches prior /api.tar.gz workflow)
-#   masatech-deploy.tar.gz     ← parent-folder layout (api/ + masatech-admin/dist/)
-#   DEPLOY.txt
+# Output:
+#   dist-release/masatech-deploy.tar.gz
+#   ./masatech-deploy.tar.gz          (copy for upload)
+#   dist-release/DEPLOY.txt
+#   dist-release/sql/*.sql            (phpPgAdmin incremental migrations)
 
 set -euo pipefail
 
@@ -26,33 +27,31 @@ cd "$ROOT"
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-TIMESTAMP="$(date -u +%Y%m%dT%H:%M:%SZ)"
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 PKG_VERSION="$(node -p "require('./api/package.json').version" 2>/dev/null || echo 1.0.0)"
 OUT_DIR="$ROOT/dist-release"
-STAGE="$OUT_DIR/stage-api"
+STAGE_API="$OUT_DIR/stage/api"
+WRAP="$OUT_DIR/masatech-deploy-wrap"
 
+echo "==> Target layout: server.masatechplc.com/{api,masatech-admin}  (masatech-deploy.tar.gz)"
 echo "==> Branch: $BRANCH  commit: $COMMIT"
-echo "==> Pack order: (1) build admin  (2) stage api  (3) embed admin  (4) write api.tar.gz + masatech-deploy.tar.gz"
+echo "==> Pack order: (1) build admin  (2) stage api  (3) assemble siblings  (4) tar"
 
 # ---------------------------------------------------------------------------
-# 1) Build masatech-admin FIRST (so dist exists before we stage)
+# 1) Build admin FIRST
 # ---------------------------------------------------------------------------
 echo "==> [1/4] Building masatech-admin…"
 cd "$ROOT/masatech-admin"
-if [ -f package-lock.json ]; then
-  npm ci
-else
-  npm install
-fi
+if [ -f package-lock.json ]; then npm ci; else npm install; fi
 npm run build
-test -f dist/index.html || { echo "ERROR: masatech-admin/dist/index.html missing after build"; exit 1; }
+test -f dist/index.html || { echo "ERROR: masatech-admin/dist/index.html missing"; exit 1; }
 
 # ---------------------------------------------------------------------------
-# 2) Stage api/ (same root layout as historical api.tar.gz)
+# 2) Stage api/ contents
 # ---------------------------------------------------------------------------
-echo "==> [2/4] Staging api/ (flat layout like api.tar.gz)…"
-rm -rf "$STAGE"
-mkdir -p "$STAGE" "$OUT_DIR"
+echo "==> [2/4] Staging api/…"
+rm -rf "$OUT_DIR/stage" "$WRAP"
+mkdir -p "$STAGE_API" "$OUT_DIR/sql"
 
 rsync -a \
   --exclude node_modules \
@@ -64,137 +63,141 @@ rsync -a \
   --exclude uploads \
   --exclude coverage \
   --exclude admin-dist \
+  --exclude tests \
   --exclude '*.sqlite' \
   --exclude '*.sqlite-*' \
   --exclude '.DS_Store' \
   --exclude '._*' \
   --exclude 'startup-error.log' \
-  "$ROOT/api/" "$STAGE/"
+  "$ROOT/api/" "$STAGE_API/"
 
-# Keep .env.example (never ship real .env — production env stays in cPanel)
 if [ -f "$ROOT/api/.env.example" ]; then
-  cp "$ROOT/api/.env.example" "$STAGE/.env.example"
+  cp "$ROOT/api/.env.example" "$STAGE_API/.env.example"
 fi
+rm -f "$STAGE_API"/test-api.js 2>/dev/null || true
 
-# Drop local-only / non-runtime noise (keeps extract clean on redeploy)
-rm -rf "$STAGE/tests" "$STAGE/coverage"
-rm -f "$STAGE"/test-api.js "$STAGE"/startup-error.log 2>/dev/null || true
+# Also embed admin-dist inside api/ (fallback if only api/ is updated)
+mkdir -p "$STAGE_API/admin-dist"
+rsync -a "$ROOT/masatech-admin/dist/" "$STAGE_API/admin-dist/"
 
-# ---------------------------------------------------------------------------
-# 3) Embed admin for /admin
-#    - Flat api.tar.gz → ./admin-dist/  (resolved by api/src/app.js)
-#    - Also keep masatech-admin/dist sibling for masatech-deploy.tar.gz
-# ---------------------------------------------------------------------------
-echo "==> [3/4] Embedding admin SPA…"
-rm -rf "$STAGE/admin-dist"
-mkdir -p "$STAGE/admin-dist"
-rsync -a "$ROOT/masatech-admin/dist/" "$STAGE/admin-dist/"
-test -f "$STAGE/admin-dist/index.html" || { echo "ERROR: admin-dist/index.html missing"; exit 1; }
-
-cat > "$STAGE/DEPLOY_BUILD.json" <<EOF
+cat > "$STAGE_API/DEPLOY_BUILD.json" <<EOF
 {
-  "product": "pharmasuit-multi-tenant-api",
+  "product": "pharmasuit-multi-tenant",
   "version": "$PKG_VERSION",
   "gitBranch": "$BRANCH",
   "gitCommit": "$COMMIT",
   "builtAt": "$TIMESTAMP",
-  "includesAdmin": true,
-  "adminPath": "/admin",
-  "formats": ["api.tar.gz", "masatech-deploy.tar.gz"]
+  "extractAt": "/home/…/server.masatechplc.com/",
+  "layout": ["api/", "masatech-admin/dist/"]
 }
 EOF
 
-# ---------------------------------------------------------------------------
-# 4) Write archives (names match what you already use on the host)
-# ---------------------------------------------------------------------------
-echo "==> [4/4] Writing tarballs…"
+# Copy incremental SQL for phpPgAdmin (cPanel Databases)
+if [ -d "$ROOT/api/db/sql" ]; then
+  rsync -a "$ROOT/api/db/sql/" "$OUT_DIR/sql/"
+  mkdir -p "$STAGE_API/db/sql"
+  rsync -a "$ROOT/api/db/sql/" "$STAGE_API/db/sql/"
+fi
 
-# Primary: flat api.tar.gz — extract INTO Node application root (…/api/)
-FLAT="$OUT_DIR/api.tar.gz"
-tar -czf "$FLAT" -C "$STAGE" .
-# Convenience copy at repo root (same as historical ./api.tar.gz)
-cp -f "$FLAT" "$ROOT/api.tar.gz"
-
-# Secondary: masatech-deploy.tar.gz — extract at PARENT of api/
-# Layout: ./api/...  ./masatech-admin/dist/...
-WRAP="$OUT_DIR/masatech-deploy-wrap"
-rm -rf "$WRAP"
+# ---------------------------------------------------------------------------
+# 3) Assemble domain-root siblings (matches live cPanel folders)
+# ---------------------------------------------------------------------------
+echo "==> [3/4] Assembling masatech-deploy wrap (api/ + masatech-admin/dist/)…"
 mkdir -p "$WRAP/api" "$WRAP/masatech-admin/dist"
-rsync -a "$STAGE/" "$WRAP/api/"
+rsync -a "$STAGE_API/" "$WRAP/api/"
 rsync -a "$ROOT/masatech-admin/dist/" "$WRAP/masatech-admin/dist/"
+test -f "$WRAP/masatech-admin/dist/index.html"
+test -f "$WRAP/api/package.json"
+test -f "$WRAP/api/startup.cjs"
+
+# ---------------------------------------------------------------------------
+# 4) Create masatech-deploy.tar.gz (PRIMARY — same name as on the server)
+# ---------------------------------------------------------------------------
+echo "==> [4/4] Writing masatech-deploy.tar.gz…"
 DEPLOY_TGZ="$OUT_DIR/masatech-deploy.tar.gz"
 tar -czf "$DEPLOY_TGZ" -C "$WRAP" .
 cp -f "$DEPLOY_TGZ" "$ROOT/masatech-deploy.tar.gz"
-rm -rf "$WRAP"
+
+# Sanity: must look like the live archive
+echo "==> Archive preview (must start with ./api/ and ./masatech-admin/):"
+tar -tzf "$DEPLOY_TGZ" | head -12
 
 cat > "$OUT_DIR/DEPLOY.txt" <<EOF
-PharmaSuit multi-tenant — redeploy (server.masatechplc.com)
-==========================================================
+Redeploy server.masatechplc.com (masatech-deploy.tar.gz)
+========================================================
 Built:  $TIMESTAMP
 Branch: $BRANCH
 Commit: $COMMIT
 
-WHICH FILE TO USE
------------------
-Prefer:  dist-release/api.tar.gz   (also copied to ./api.tar.gz)
-Same packing style as your previous /api.tar.gz:
-  archive root = package.json, src/, db/, startup.cjs, admin-dist/, …
+LIVE LAYOUT (from your cPanel screenshot)
+-----------------------------------------
+  /home/masatetw/server.masatechplc.com/
+    api/
+    masatech-admin/
+    masatech-deploy.tar.gz
 
-Optional: dist-release/masatech-deploy.tar.gz
-  archive root = api/ + masatech-admin/dist/
-  Extract at the PARENT of the Node app (e.g. network-desktop-app/).
+UPLOAD FILE
+-----------
+  dist-release/masatech-deploy.tar.gz
+  (also copied to ./masatech-deploy.tar.gz)
 
-REDEPLOY WITH api.tar.gz (recommended — matches prior workflow)
----------------------------------------------------------------
-1. Backup Postgres + current server api/ folder.
-2. Upload api.tar.gz (File Manager / SFTP).
-3. On the server, go to the Node app root (folder that already has package.json),
-   then extract OVER it (does not replace cPanel .env / env vars):
+EXTRACT (domain root — NOT inside api/)
+---------------------------------------
+1. Backup Postgres + backup folders api/ and masatech-admin/.
+2. Upload masatech-deploy.tar.gz into:
+     /home/masatetw/server.masatechplc.com/
+3. In File Manager, open that SAME folder (server.masatechplc.com),
+   select masatech-deploy.tar.gz → Extract.
+   Result should update:
+     ./api/...
+     ./masatech-admin/dist/...
+4. Do NOT extract inside api/ (that creates api/api/).
 
-     cd ~/network-desktop-app/api    # ← your real Application root
-     tar -xzf /path/to/api.tar.gz
+NODE APP
+--------
+cPanel Application root should be:
+  /home/masatetw/server.masatechplc.com/api
+Startup file: startup.cjs
+Keep existing env (DATABASE_URL / DB_*, JWT_SECRET). Tarball has no .env.
 
-   Do NOT extract into a nested api/api/ folder.
-   Do NOT extract at the parent unless you are using masatech-deploy.tar.gz.
+After extract, install deps (SSH or cPanel Terminal if available):
 
-4. Install + migrate + restart:
+  cd /home/masatetw/server.masatechplc.com/api
+  # activate your nodeenv if required, then:
+  npm install --production
+  mkdir -p tmp && touch tmp/restart.txt
 
-     npm install --production
-     npm run migrate
-     # first time only (no platform admin yet):
-     # npm run seed
-     mkdir -p tmp && touch tmp/restart.txt
+DATABASE (migrations)
+---------------------
+npm run migrate often fails / is unavailable on this host.
 
-5. Verify:
+Option A — SSH + low-memory migrator (preferred when Node works):
+  cd /home/masatetw/server.masatechplc.com/api
+  # source your nodevenv, ensure DB_* env is set, then:
+  node scripts/migrate-lite.mjs
 
-     curl -sS https://server.masatechplc.com/health
-     curl -sS https://server.masatechplc.com/api/db-health
-     open https://server.masatechplc.com/admin
+Option B — phpPgAdmin / cPanel → Databases → PostgreSQL (SQL):
+  Run incremental scripts from dist-release/sql/ (also in api/db/sql/):
+    20260715120000_add_customer_code_to_customers.sql
+  Only if that column is not already present.
+  The script also inserts into knex_migrations when finished.
 
-Startup file in cPanel: startup.cjs
-Keep existing JWT_SECRET / DATABASE_URL (or DB_*) in the Node app env panel.
+VERIFY
+------
+  https://server.masatechplc.com/health
+  https://server.masatechplc.com/api/db-health
+  https://server.masatechplc.com/admin
 
-ADMIN
------
-api.tar.gz includes ./admin-dist/ → served at /admin.
-masatech-deploy.tar.gz includes ./masatech-admin/dist/ (sibling of api/) — also supported.
-
-NOT IN THIS TARBALL
--------------------
-Electron installers (use GitHub Action → /downloads/cloud-multi/).
+Electron installers are NOT in this tarball (/downloads/cloud-multi/ is separate).
 EOF
 
-rm -rf "$STAGE"
+rm -rf "$OUT_DIR/stage" "$WRAP"
 
 echo ""
-echo "Done. Pack order complete."
-echo "  Primary:  $FLAT"
-echo "  Also:     $ROOT/api.tar.gz"
-echo "  Alt:      $DEPLOY_TGZ"
-echo "  Guide:    $OUT_DIR/DEPLOY.txt"
-echo ""
-echo "Quick check (flat api.tar.gz must start with package.json / src / admin-dist):"
-tar -tzf "$FLAT" | head -15
-echo "..."
-tar -tzf "$FLAT" | rg -n "^(./)?(package.json|startup.cjs|admin-dist/index.html|src/app.js|db/migrations/)" || true
-ls -lh "$FLAT" "$DEPLOY_TGZ"
+echo "Done."
+echo "  Upload:  $DEPLOY_TGZ"
+echo "  Also:    $ROOT/masatech-deploy.tar.gz"
+echo "  SQL:     $OUT_DIR/sql/"
+echo "  Guide:   $OUT_DIR/DEPLOY.txt"
+ls -lh "$DEPLOY_TGZ"
+ls -la "$OUT_DIR/sql" 2>/dev/null || true

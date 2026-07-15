@@ -9,27 +9,21 @@ Branch policy: [BRANCHING.md](./BRANCHING.md). Multi-tenant readiness: [MULTI_TE
 
 ## API (cPanel / Postgres host)
 
-**Multi-tenant production (`server.masatechplc.com`):** use a **tarball** that includes the API **and** the built masatech-admin SPA (`/admin`).
+**Multi-tenant production (`server.masatechplc.com`):** upload **`masatech-deploy.tar.gz`** and extract at the **domain root** (sibling folders `api/` + `masatech-admin/`), matching the live cPanel layout.
 
 ```bash
-# On your machine (feature/cloud-multi-tenant):
 ./scripts/pack-multi-tenant-tarball.sh
-# → dist-release/api.tar.gz  (same flat layout as previous /api.tar.gz)
-# → also copies to ./api.tar.gz
+# → dist-release/masatech-deploy.tar.gz
 ```
 
-Extract **into** the Node application root (the folder that already contains `package.json`), not into a nested `api/api/`.
+Extract in `/home/…/server.masatechplc.com/` (not inside `api/`).
 
-Full checklist: [docs/MULTI_TENANT_TARBALL_DEPLOY.md](./docs/MULTI_TENANT_TARBALL_DEPLOY.md).
-
-Summary on the server after upload/extract into `api/`:
+Migrations: use `node scripts/migrate-lite.mjs` over SSH, or phpPgAdmin SQL under `dist-release/sql/` — see [docs/MULTI_TENANT_TARBALL_DEPLOY.md](./docs/MULTI_TENANT_TARBALL_DEPLOY.md).
 
 ```bash
-cd ~/network-desktop-app/api   # adjust to Application root
-tar -xzf /path/to/api.tar.gz
+cd /home/…/server.masatechplc.com/api
 npm install --production
-npm run migrate
-# npm run seed   # first time only (platform admin)
+# migrate via migrate-lite or phpPgAdmin SQL (not cPanel package.json)
 mkdir -p tmp && touch tmp/restart.txt
 ```
 
