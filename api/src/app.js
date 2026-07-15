@@ -33,6 +33,21 @@ function resolveAdminDistPath() {
 
 const ADMIN_DIST_PATH = resolveAdminDistPath()
 
+/**
+ * Resolve public desktop downloads tree for /downloads/*.
+ * Priority:
+ *   1. DOWNLOADS_STATIC_DIR env (explicit override on host)
+ *   2. ../../downloads (sibling of api/ — cPanel domain root layout)
+ */
+function resolveDownloadsPath() {
+  if (process.env.DOWNLOADS_STATIC_DIR) {
+    return path.resolve(process.env.DOWNLOADS_STATIC_DIR)
+  }
+  return path.resolve(__dirname, '../../downloads')
+}
+
+const DOWNLOADS_PATH = resolveDownloadsPath()
+
 export function createApp() {
   const app = express()
 
@@ -120,6 +135,20 @@ export function createApp() {
       // the whole api process for an unrelated route.
       res.sendFile(path.join(ADMIN_DIST_PATH, 'index.html'), (err) => { if (err) next(err) })
     })
+  }
+
+  // Desktop installers + update feed (same host as API). Files live on disk at
+  // server.masatechplc.com/downloads/ — not in public_html (this vhost is Node).
+  if (fs.existsSync(DOWNLOADS_PATH)) {
+    app.use('/downloads', express.static(DOWNLOADS_PATH, {
+      index: ['index.html'],
+      fallthrough: true,
+      setHeaders(res, filePath) {
+        if (filePath.endsWith('.yml') || filePath.endsWith('.json')) {
+          res.setHeader('Cache-Control', 'no-cache')
+        }
+      }
+    }))
   }
 
   // Fail-safes

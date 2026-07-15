@@ -9,7 +9,7 @@
 #   DOWNLOADS_HOST          — FTP/SFTP host (or reuse SERVER_HOST)
 #   DOWNLOADS_USERNAME      — FTP user
 #   DOWNLOADS_PASSWORD      — FTP password
-#   DOWNLOADS_SERVER_DIR    — remote path, e.g. public_html/downloads/cloud-multi/
+#   DOWNLOADS_SERVER_DIR    — remote path, e.g. …/server.masatechplc.com/downloads/cloud-multi/
 
 name: Release Cloud Desktop
 
@@ -64,7 +64,7 @@ jobs:
         working-directory: app
         env:
           VITE_CLOUD_MODE: 'true'
-          VITE_DEFAULT_SERVER_URL: https://mltplc.com
+          VITE_DEFAULT_SERVER_URL: https://server.masatechplc.com
           VITE_CLOUD_UPDATES_URL: https://server.masatechplc.com/downloads/cloud-multi
         run: npm run build:cloud -- --publish never
 
@@ -155,7 +155,7 @@ jobs:
           [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
           [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
           [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
-          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR (e.g. public_html/downloads/cloud-multi/)" && missing=1
+          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR (e.g. server.masatechplc.com/downloads/cloud-multi/)" && missing=1
           exit $missing
 
       - name: Publish to downloads host (FTP/FTPS)

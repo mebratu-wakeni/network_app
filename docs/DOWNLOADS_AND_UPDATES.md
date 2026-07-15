@@ -9,21 +9,52 @@
 
 Public downloads + update feed: **`https://server.masatechplc.com/downloads/cloud-multi/`**
 
-## One-time server setup
+## Why you see `{ ok: false, error: "Not Found" }`
 
-1. Create a web-visible folder on the host, for example:
-   - `public_html/downloads/cloud-multi/`
-2. Ensure that URL opens over HTTPS (no directory listing required; `index.html` is the page).
-3. Add GitHub repository secrets (Settings → Secrets and variables → Actions):
+`https://server.masatechplc.com` is the **Node app** (same as `/api` and `/admin`). Putting files under `public_html/` does **not** make them appear on this hostname. The API must serve `/downloads`, and the files must live next to `api/` on disk.
+
+Target layout:
+
+```text
+/home/masatetw/server.masatechplc.com/
+  api/
+  masatech-admin/
+  downloads/
+    cloud-multi/
+      index.html
+      latest.json
+      …
+```
+
+URL `…/downloads/cloud-multi/` → Express static → that folder.
+
+## One-time server setup (remaining checklist)
+
+1. **Redeploy API** that includes `/downloads` static serving (see `api/src/app.js`), then restart the Node app.
+2. **Create the folder** in File Manager (domain root, sibling of `api/`):
+   - `server.masatechplc.com/downloads/cloud-multi/`
+3. **Put at least a page there** (until CI publishes real installers):
+   - Upload repo file `downloads/cloud-multi/index.html` into that folder, **or**
+   - Run a desktop release (step 5) which uploads `index.html` + manifests + installers.
+4. **Restart** the Node app (Stop/Start or `api/tmp/restart.txt`) so it picks up the new `downloads/` directory if it was created after boot.
+5. **GitHub Actions secrets** (Settings → Secrets and variables → Actions):
 
 | Secret | Example | Purpose |
 |--------|---------|---------|
-| `DOWNLOADS_HOST` | `server.masatechplc.com` | FTP/FTPS host |
+| `DOWNLOADS_HOST` | FTP hostname for this cPanel account | FTP/FTPS host |
 | `DOWNLOADS_USERNAME` | cPanel FTP user | Upload auth |
 | `DOWNLOADS_PASSWORD` | FTP password | Upload auth |
-| `DOWNLOADS_SERVER_DIR` | `public_html/downloads/cloud-multi/` | Remote path (trailing slash) |
+| `DOWNLOADS_SERVER_DIR` | path to `…/server.masatechplc.com/downloads/cloud-multi/` | Remote path (trailing slash) |
 
-You can reuse the same host/credentials as other FTP accounts; keep `DOWNLOADS_SERVER_DIR` pointed only at the downloads folder (not the API tree).
+`DOWNLOADS_SERVER_DIR` must be the **domain-root** `downloads/cloud-multi/` folder above — **not** `public_html/…` (unless that path is the same folder on your host).
+
+6. **Publish installers**: bump `app/package.json` version → tag `desktop-cloud-vX.Y.Z` → Action **Release Cloud Desktop** uploads the bundle.
+
+7. **Verify**:
+   - https://server.masatechplc.com/downloads/cloud-multi/  → HTML page (not JSON)
+   - https://server.masatechplc.com/downloads/cloud-multi/latest.json
+
+Optional env override: `DOWNLOADS_STATIC_DIR` = absolute path to the `downloads` directory (parent of `cloud-multi/`).
 
 Protocol in the workflow is **FTPS**. If your host needs plain FTP or SFTP, change `protocol:` in the publish step of `release-cloud-desktop.yml`.
 

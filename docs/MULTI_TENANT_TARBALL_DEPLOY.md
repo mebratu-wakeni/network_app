@@ -11,6 +11,8 @@ Your live layout (cPanel):
 
 That is **`masatech-deploy.tar.gz`**, not a flat `api.tar.gz`.
 
+**You do not need cPanel Terminal** for this redeploy. Use File Manager + Setup Node.js App + phpPgAdmin.
+
 ## Pack on your Mac
 
 ```bash
@@ -32,52 +34,57 @@ Archive contents:
 ```text
 ./api/...
 ./masatech-admin/dist/...
+./downloads/cloud-multi/index.html   ← downloads page seed
+./downloads/cloud-multi/latest.json
 ```
 
-## Extract (important)
+Pack excludes (same idea as the previous live tarball): **`._*`** (macOS AppleDouble), **`.DS_Store`**, and **all `*.md`**. The pack script fails if any of those slip into the archive.
 
-1. Upload `masatech-deploy.tar.gz` into **`/home/masatetw/server.masatechplc.com/`**
-2. Extract **there** (domain root) so it updates `api/` and `masatech-admin/`
-3. **Do not** open `api/` and extract inside it → that creates `api/api/`
+## Step 1 — Upload + extract (File Manager)
 
-## After extract
+1. In cPanel open **File Manager**.
+2. Go to the domain root:  
+   `home/masatetw/server.masatechplc.com/`  
+   You should already see folders named `api` and `masatech-admin` here.
+3. Upload `masatech-deploy.tar.gz` into **this same folder** (next to `api` and `masatech-admin`, not inside them).
+4. Right-click `masatech-deploy.tar.gz` → **Extract**.
+5. Confirm extract location is `server.masatechplc.com/` (domain root).
 
-```bash
-cd /home/masatetw/server.masatechplc.com/api
-npm install --production
-mkdir -p tmp && touch tmp/restart.txt
-```
+**Wrong:** open `api/` first, then extract there → creates nested `api/api/`.  
+**Right:** extract at domain root → updates existing `api/` and `masatech-admin/`.
 
-cPanel Node app:
+Optional: delete the uploaded `.tar.gz` after a successful extract to free space.
 
-- Application root: `…/server.masatechplc.com/api`
-- Startup: `startup.cjs`
-- Keep existing Postgres + `JWT_SECRET` env (tarball has no `.env`)
+## Step 2 — Install packages + restart (Setup Node.js App)
 
-## Database migrations (no `npm run migrate` in cPanel UI)
+1. In cPanel open **Setup Node.js App** (sometimes labeled **Application Manager**).
+2. Find the app whose **Application root** is:  
+   `server.masatechplc.com/api`  
+   Startup file should be `startup.cjs`.
+3. Click **Run NPM Install** (or equivalent). Wait until it finishes.  
+   Do **not** run migrate scripts from this UI (they often OOM on this host).
+4. Restart the app — pick one:
+   - In Setup Node.js App: **Stop App**, then **Start App**, **or**
+   - In File Manager: go to `server.masatechplc.com/api/tmp/`  
+     (create the `tmp` folder if it is missing)  
+     Create or edit a file named `restart.txt` and Save (empty is fine).  
+     That tells the Node/Passenger process to reload.
 
-Knex JS migrations often cannot be run from the File Manager / package.json UI on this host. Use one of:
+Do **not** replace env vars. Keep your existing Postgres + `JWT_SECRET` settings. The tarball does not include `.env`.
 
-### Option A — SSH + migrate-lite (if Terminal/SSH works)
+## Step 3 — Database migration (phpPgAdmin)
 
-```bash
-cd /home/masatetw/server.masatechplc.com/api
-# activate nodeenv for this app, then:
-node scripts/migrate-lite.mjs
-```
+1. On your Mac open:  
+   `dist-release/sql/20260715120000_add_customer_code_to_customers.sql`
+2. In cPanel open **PostgreSQL Databases** → **phpPgAdmin** (or your host’s Postgres tool).
+3. Select the database used by this Node app.
+4. Paste the SQL and **Execute** / **Go**.
 
-(`migrate-lite.mjs` avoids the OOM from full `npm run migrate` on CloudLinux.)
+That adds `customer_code`, backfills `CUST0001`…, and records the migration in `knex_migrations`.
 
-### Option B — phpPgAdmin / cPanel → Databases (what you already use)
+Do **not** re-run the full `masatech-db-init-phpPgAdmin.sql` on a live DB (empty-init only).
 
-1. Open PostgreSQL for this app in cPanel Databases / phpPgAdmin  
-2. Run incremental SQL from `dist-release/sql/`, e.g.:
-
-   `20260715120000_add_customer_code_to_customers.sql`
-
-3. That script adds `customer_code`, backfills `CUST0001`…, and records the migration in `knex_migrations`
-
-Do **not** re-run the full `masatech-db-init-phpPgAdmin.sql` on a live DB (that is for empty init).
+If your host later enables Terminal/SSH, you can use `node scripts/migrate-lite.mjs` instead of Step 3 — not required.
 
 ## Verify
 
