@@ -127,8 +127,9 @@
       var errorEl = document.getElementById('error')
 
       var platforms = [
-        { key: 'mac', label: 'macOS', hint: 'DMG installer' },
-        { key: 'win', label: 'Windows', hint: 'Setup (.exe)' },
+        { key: 'mac', label: 'macOS', hint: 'Universal DMG (Intel + Apple Silicon)' },
+        { key: 'win', label: 'Windows 64-bit', hint: 'Setup (.exe) — Windows 10/11 x64' },
+        { key: 'win32', label: 'Windows 32-bit', hint: 'Setup (.exe) — Windows 10 x86' },
         { key: 'linux', label: 'Linux', hint: 'AppImage' }
       ]
 

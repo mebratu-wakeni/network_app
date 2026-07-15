@@ -38,15 +38,18 @@
     "artifactName": "${productName}-Cloud-Mac-${version}-Installer.${ext}"
   },
   "win": {
+    // Windows 10 64-bit (x64) and 32-bit (ia32). Not a single “universal” binary —
+    // two NSIS installers are published; the downloads page lists both.
     "target": [
       {
         "target": "nsis",
         "arch": [
-          "x64"
+          "x64",
+          "ia32"
         ]
       }
     ],
-    "artifactName": "${productName}-Cloud-Windows-${version}-Setup.${ext}"
+    "artifactName": "${productName}-Cloud-Windows-${version}-${arch}-Setup.${ext}"
   },
   "nsis": {
     "oneClick": false,

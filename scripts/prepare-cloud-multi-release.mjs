@@ -85,7 +85,13 @@ function rewriteUpdaterYml(content, version) {
 function detectPlatformArtifact(fileName) {
   const n = fileName.toLowerCase()
   if (n.endsWith('.dmg') || (n.includes('-mac-') && n.endsWith('.zip'))) return 'mac'
-  if (n.endsWith('.exe') || n.includes('-windows-')) return 'win'
+  if (n.endsWith('.exe') || n.includes('-windows-')) {
+    // Prefer explicit arch markers from artifactName (...-${arch}-Setup.exe)
+    if (n.includes('-ia32-') || n.includes('_ia32') || n.includes('-ia32.')) return 'win32'
+    if (n.includes('-x64-') || n.includes('_x64') || n.includes('-x64.')) return 'win'
+    // Legacy / unmarked Windows installer → treat as 64-bit
+    return 'win'
+  }
   if (n.endsWith('.appimage') || n.includes('-linux-')) return 'linux'
   return null
 }
@@ -118,7 +124,7 @@ function main() {
   ensureDir(args.outDir)
 
   const files = walkFiles(args.artifactsDir)
-  const artifacts = { mac: null, win: null, linux: null }
+  const artifacts = { mac: null, win: null, win32: null, linux: null }
   const copiedInstallers = []
 
   for (const file of files) {
