@@ -42,7 +42,7 @@ describe('ReportsService.getBalanceSheet reconciliation', () => {
     const { coa, closing } = balancedScenario()
     const service = new ReportsService(makeReportsRepository({ coa, closing }))
 
-    const result = await service.getBalanceSheet({ as_of_date: '2026-04-30' })
+    const result = await service.getBalanceSheet(1, { as_of_date: '2026-04-30' })
 
     expect(result.reconciliation.balanced).toBe(true)
     expect(Math.abs(result.reconciliation.variance)).toBeLessThan(0.02)
@@ -55,7 +55,7 @@ describe('ReportsService.getBalanceSheet reconciliation', () => {
     const { coa, closing } = balancedScenario()
     const service = new ReportsService(makeReportsRepository({ coa, closing }))
 
-    const result = await service.getBalanceSheet({ as_of_date: '2026-04-30' })
+    const result = await service.getBalanceSheet(1, { as_of_date: '2026-04-30' })
 
     const expectedSum = closing.reduce((s, r) => s + Number(r.balance || 0), 0)
     expect(result.reconciliation.ledger_sum_check).toBeCloseTo(expectedSum, 2)
@@ -69,7 +69,7 @@ describe('ReportsService.getBalanceSheet reconciliation', () => {
     )
     const service = new ReportsService(makeReportsRepository({ coa, closing }))
 
-    const result = await service.getBalanceSheet({ as_of_date: '2026-04-30' })
+    const result = await service.getBalanceSheet(1, { as_of_date: '2026-04-30' })
 
     expect(result.reconciliation.balanced).toBe(false)
     expect(result.reconciliation.variance).toBeCloseTo(1000, 2)
@@ -85,7 +85,7 @@ describe('ReportsService.getBalanceSheet reconciliation', () => {
     ]
     const service = new ReportsService(makeReportsRepository({ coa, closing }))
 
-    const result = await service.getBalanceSheet({ as_of_date: '2026-04-30' })
+    const result = await service.getBalanceSheet(1, { as_of_date: '2026-04-30' })
 
     expect(result.unmapped_ledger_accounts.some((u) => u.account_code === '9999')).toBe(true)
     expect(result.unmapped_ledger_accounts.find((u) => u.account_code === '9999').note).toMatch(
@@ -102,7 +102,7 @@ describe('ReportsService.getBalanceSheet reconciliation', () => {
     const closingWithSub = [...closing, { account_code: '1199', account_name: 'Cash Sub', balance: 25 }]
     const service = new ReportsService(makeReportsRepository({ coa: coa, closing: closingWithSub }))
 
-    const result = await service.getBalanceSheet({ as_of_date: '2026-04-30' })
+    const result = await service.getBalanceSheet(1, { as_of_date: '2026-04-30' })
 
     const u = result.unmapped_ledger_accounts.find((x) => x.account_code === '1199')
     expect(u).toBeDefined()
@@ -163,7 +163,7 @@ describe('ReportsService.getBalanceSheet reconciliation', () => {
     ]
     const service = new ReportsService(makeReportsRepository({ coa, closing }))
 
-    const result = await service.getBalanceSheet({ as_of_date: '2026-04-03' })
+    const result = await service.getBalanceSheet(1, { as_of_date: '2026-04-03' })
 
     expect(result.reconciliation.balanced).toBe(true)
     expect(result.assets.lines.some((l) => l.account_code === '1000' && l.balance === 211.5)).toBe(true)
@@ -238,7 +238,7 @@ describe('ReportsService.getBalanceSheet reconciliation', () => {
     ]
     const service = new ReportsService(makeReportsRepository({ coa, closing }))
 
-    const result = await service.getBalanceSheet({ as_of_date: '2026-04-03' })
+    const result = await service.getBalanceSheet(1, { as_of_date: '2026-04-03' })
 
     expect(result.coa_hierarchy_conflicts.some((c) => c.account_code === '1000')).toBe(true)
     expect(result.unmapped_ledger_accounts.some((u) => u.account_code === '1000')).toBe(true)
@@ -301,7 +301,7 @@ describe('ReportsService.getBalanceSheet reconciliation', () => {
     ]
     const service = new ReportsService(makeReportsRepository({ coa, closing }))
 
-    const result = await service.getBalanceSheet({ as_of_date: '2026-05-02' })
+    const result = await service.getBalanceSheet(1, { as_of_date: '2026-05-02' })
 
     expect(result.reconciliation.balanced).toBe(false)
     expect(result.reconciliation.variance).toBeCloseTo(-4000, 2)

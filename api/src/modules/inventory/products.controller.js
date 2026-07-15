@@ -20,7 +20,7 @@ export class ProductsController {
       const params = req.body || {}
       const { limit, offset, search, sortBy, orderBy, filter } = params
       
-      const result = await this.service.findAll({
+      const result = await this.service.findAll(req.tenantId, {
         limit: limit || 10,
         offset: offset || 0,
         search: search || '',
@@ -49,7 +49,7 @@ export class ProductsController {
     try {
       const { products } = req.validBody
       
-      const result = await this.service.bulkImport(products)
+      const result = await this.service.bulkImport(req.tenantId, products)
       
       // Log rows that did not import (errors or warnings)
       const skipped = result.results.filter(r => !r.success)
@@ -104,7 +104,7 @@ export class ProductsController {
         return res.status(400).json({ ok: false, error: 'No valid product rows in CSV' })
       }
 
-      const result = await this.service.bulkImport(products)
+      const result = await this.service.bulkImport(req.tenantId, products)
 
       const skipped = result.results.filter(r => !r.success)
       if (skipped.length > 0) {
@@ -138,7 +138,7 @@ export class ProductsController {
       const params = req.query || {}
       const { limit, offset, search, sortBy, orderBy } = params
       
-      const csvContent = await this.service.exportToCSV({
+      const csvContent = await this.service.exportToCSV(req.tenantId, {
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
         search: search || '',
@@ -165,7 +165,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      const category = await this.service.createCategory(data)
+      const category = await this.service.createCategory(req.tenantId, data)
       
       res.json({
         ok: true,
@@ -185,7 +185,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      const unit = await this.service.createUnit(data)
+      const unit = await this.service.createUnit(req.tenantId, data)
       
       res.json({
         ok: true,
@@ -203,7 +203,7 @@ export class ProductsController {
    */
   getAllCategories = async (req, res, next) => {
     try {
-      const categories = await this.service.getAllCategories()
+      const categories = await this.service.getAllCategories(req.tenantId)
       
       res.json({
         ok: true,
@@ -221,7 +221,7 @@ export class ProductsController {
    */
   getAllUnits = async (req, res, next) => {
     try {
-      const units = await this.service.getAllUnits()
+      const units = await this.service.getAllUnits(req.tenantId)
       
       res.json({
         ok: true,
@@ -241,7 +241,7 @@ export class ProductsController {
     try {
       const { name } = req.params
       
-      const category = await this.service.findCategoryByName(name)
+      const category = await this.service.findCategoryByName(req.tenantId, name)
       
       if (!category) {
         return res.status(404).json({
@@ -268,7 +268,7 @@ export class ProductsController {
     try {
       const { name } = req.params
       
-      const unit = await this.service.findUnitByName(name)
+      const unit = await this.service.findUnitByName(req.tenantId, name)
       
       if (!unit) {
         return res.status(404).json({
@@ -295,7 +295,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      const product = await this.service.createProduct(data)
+      const product = await this.service.createProduct(req.tenantId, data)
       
       if (!product || !product.id) {
         console.error('[ProductsController] Product creation returned invalid product:', product)
@@ -335,7 +335,7 @@ export class ProductsController {
       const { id } = req.params
       const data = req.validBody
       
-      const product = await this.service.updateProduct(parseInt(id), data)
+      const product = await this.service.updateProduct(req.tenantId, parseInt(id), data)
       
       if (!product || !product.id) {
         console.error('[ProductsController] Product update returned invalid product:', product)
@@ -373,7 +373,7 @@ export class ProductsController {
     try {
       const { id } = req.params
       
-      await this.service.deleteProduct(parseInt(id))
+      await this.service.deleteProduct(req.tenantId, parseInt(id))
       
       res.json({
         ok: true,

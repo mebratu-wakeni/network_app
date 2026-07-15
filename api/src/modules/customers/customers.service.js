@@ -5,6 +5,10 @@
 
 const BULK_IMPORT_CUSTOMER_TYPES = new Set(['supplier', 'retailer', 'both', 'other'])
 
+function formatCustomerCode(num) {
+  return `CUST${String(num).padStart(4, '0')}`
+}
+
 /** Fast sanity check for bulk import (no zod). Invalid → store null, do not fail row. */
 function normalizeOptionalEmail (raw) {
   if (raw == null) return null
@@ -25,26 +29,28 @@ export class CustomersService {
 
   /**
    * Get all customers with pagination, search, and sorting
+   * @param {number} tenantId
    * @param {Object} params - { limit, offset, search, sortBy, orderBy }
    * @returns {Object} - { customers, total }
    */
-  async findAll(params = {}) {
-    return this.repository.findAll(params)
+  async findAll(tenantId, params = {}) {
+    return this.repository.findAll(tenantId, params)
   }
 
   /**
    * Get customer by ID
+   * @param {number} tenantId
    * @param {number} id - Customer ID
    * @returns {Object} Customer object
    */
-  async findById(id) {
+  async findById(tenantId, id) {
     if (!id || isNaN(parseInt(id, 10))) {
       const error = new Error('Valid customer ID is required')
       error.status = 400
       throw error
     }
 
-    const customer = await this.repository.findById(id)
+    const customer = await this.repository.findById(tenantId, id)
     
     if (!customer) {
       const error = new Error('Customer not found')
@@ -57,12 +63,13 @@ export class CustomersService {
 
   /**
    * Create a new customer
+   * @param {number} tenantId
    * @param {Object} customerData - Customer data
    * @returns {Object} Created customer
    */
-  async create(customerData) {
-    // Check for duplicate name
-    const existing = await this.repository.findByName(customerData.name)
+  async create(tenantId, customerData) {
+    // Check for duplicate name within tenant
+    const existing = await this.repository.findByName(tenantId, customerData.name)
     if (existing) {
       const error = new Error('Customer with this name already exists')
       error.status = 409
@@ -74,25 +81,30 @@ export class CustomersService {
       customerData.email = null
     }
 
-    const customer = await this.repository.create(customerData)
+    const nextCodeNum = await this.repository.getMaxCustomerCodeNumber(tenantId)
+    const customer = await this.repository.create({
+      ...customerData,
+      tenant_id: tenantId,
+      customer_code: formatCustomerCode(nextCodeNum + 1)
+    })
     return customer
   }
 
   /**
    * Update a customer
+   * @param {number} tenantId
    * @param {number} id - Customer ID
    * @param {Object} customerData - Updated customer data
    * @returns {Object} Updated customer
    */
-  async update(id, customerData) {
+  async update(tenantId, id, customerData) {
     if (!id || isNaN(parseInt(id, 10))) {
       const error = new Error('Valid customer ID is required')
       error.status = 400
       throw error
     }
 
-    // Check if customer exists
-    const existing = await this.repository.findById(id)
+    const existing = await this.repository.findById(tenantId, id)
     
     if (!existing) {
       const error = new Error('Customer not found')
@@ -100,9 +112,9 @@ export class CustomersService {
       throw error
     }
 
-    // Check for duplicate name if name is being updated
+    // Check for duplicate name if name is being updated (within tenant)
     if (customerData.name && customerData.name !== existing.name) {
-      const duplicate = await this.repository.findByName(customerData.name)
+      const duplicate = await this.repository.findByName(tenantId, customerData.name)
       if (duplicate) {
         const error = new Error('Customer with this name already exists')
         error.status = 409
@@ -115,52 +127,55 @@ export class CustomersService {
       customerData.email = null
     }
 
-    const updated = await this.repository.update(id, customerData)
+    // customer_code is system-assigned; never accept client overrides
+    const { customer_code: _ignoredCode, ...safeData } = customerData
+
+    const updated = await this.repository.update(tenantId, id, safeData)
     return updated
   }
 
   /**
    * Delete a customer
+   * @param {number} tenantId
    * @param {number} id - Customer ID
    * @returns {boolean} True if deleted
    */
-  async delete(id) {
+  async delete(tenantId, id) {
     if (!id || isNaN(parseInt(id, 10))) {
       const error = new Error('Valid customer ID is required')
       error.status = 400
       throw error
     }
 
-    // Check if customer exists
-    const existing = await this.repository.findById(id)
+    const existing = await this.repository.findById(tenantId, id)
     if (!existing) {
       const error = new Error('Customer not found')
       error.status = 404
       throw error
     }
 
-    const deleted = await this.repository.delete(id)
+    const deleted = await this.repository.delete(tenantId, id)
     return deleted
   }
 
   /**
    * Export customers to CSV
+   * @param {number} tenantId
    * @param {Object} params - { limit, offset, search, sortBy, orderBy }
    * @returns {string} CSV formatted string
    */
-  async exportToCSV(params = {}) {
-    // For export, we typically want all matching records, not just one page
+  async exportToCSV(tenantId, params = {}) {
     const exportParams = {
       ...params,
-      limit: params.limit || 10000, // Large limit for export
+      limit: params.limit || 10000,
       offset: 0
     }
     
-    const result = await this.repository.findAll(exportParams)
+    const result = await this.repository.findAll(tenantId, exportParams)
     const customers = result.customers || []
     
-    // CSV Headers
     const headers = [
+      'Customer Code',
       'Name',
       'Contact Person',
       'Phone',
@@ -176,7 +191,6 @@ export class CustomersService {
       'Last Updated'
     ]
     
-    // Helper function to escape CSV fields
     const escapeCSV = (field) => {
       if (field === null || field === undefined) return ''
       const str = String(field)
@@ -186,9 +200,9 @@ export class CustomersService {
       return str
     }
     
-    // Convert customers to CSV rows
     const rows = customers.map(customer => {
       return [
+        escapeCSV(customer.customer_code || ''),
         escapeCSV(customer.name || ''),
         escapeCSV(customer.contact_person || ''),
         escapeCSV(customer.phone || ''),
@@ -205,22 +219,17 @@ export class CustomersService {
       ].join(',')
     })
     
-    // Combine headers and rows
-    const csvContent = [
-      headers.join(','),
-      ...rows
-    ].join('\n')
-    
-    return csvContent
+    return [headers.join(','), ...rows].join('\n')
   }
 
   /**
    * Bulk import customers — partial success: insert valid rows; skip invalid, duplicate contact person (DB or same file).
    * Requires **name**, **contact_person**, and **customer_type** per row. Duplicate = same contact_person as existing row (case-insensitive) or earlier row in file.
+   * @param {number} tenantId
    * @param {Array} customers - Rows; optional `_csvRowNumber` from CSV pipeline (stripped before insert)
-   * @returns {Object} { total, successful, failed, results } — each result has csvRowNumber
+   * @returns {Object} { total, successful, failed, results }
    */
-  async bulkImport (customers) {
+  async bulkImport (tenantId, customers) {
     if (!Array.isArray(customers) || customers.length === 0) {
       throw new Error('Customers array is required and must not be empty')
     }
@@ -228,7 +237,7 @@ export class CustomersService {
     const failureResults = []
     const pendingInserts = []
     const seenContactLower = new Set()
-    const existingDbContactLower = await this.repository.getContactPersonKeysLowerSet()
+    const existingDbContactLower = await this.repository.getContactPersonKeysLowerSet(tenantId)
 
     for (let index = 0; index < customers.length; index++) {
       const raw = customers[index]
@@ -311,6 +320,7 @@ export class CustomersService {
       seenContactLower.add(cpKey)
 
       const customerData = {
+        tenant_id: tenantId,
         name,
         contact_person: cp,
         phone: customer.phone != null && String(customer.phone).trim() !== '' ? String(customer.phone).trim() : null,
@@ -336,11 +346,22 @@ export class CustomersService {
     const successResults = []
     if (pendingInserts.length > 0) {
       try {
+        let nextCodeNum = await this.repository.getMaxCustomerCodeNumber(tenantId)
+        const rowsWithCodes = pendingInserts.map((p) => {
+          nextCodeNum += 1
+          return {
+            ...p,
+            customerData: {
+              ...p.customerData,
+              customer_code: formatCustomerCode(nextCodeNum)
+            }
+          }
+        })
         const inserted = await this.repository.bulkCreate(
-          pendingInserts.map((p) => p.customerData)
+          rowsWithCodes.map((p) => p.customerData)
         )
         inserted.forEach((insertedRow, k) => {
-          const p = pendingInserts[k]
+          const p = rowsWithCodes[k]
           successResults.push({
             index: p.index,
             csvRowNumber: p.csvRowNumber,
@@ -375,4 +396,3 @@ export class CustomersService {
     }
   }
 }
-

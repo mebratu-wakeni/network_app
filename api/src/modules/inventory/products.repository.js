@@ -8,70 +8,85 @@ export class ProductsRepository {
   }
 
   /**
-   * Find category by name
+   * Find category by name within tenant
    */
-  async findCategoryByName(name) {
-    return this.knex('categories').where({ name }).first()
+  async findCategoryByName(tenantId, name) {
+    return this.knex('categories').where({ tenant_id: tenantId, name }).first()
   }
 
   /**
-   * Find unit by name
+   * Find category by id within tenant
    */
-  async findUnitByName(name) {
-    return this.knex('units').where({ name }).first()
+  async findCategoryById(tenantId, id) {
+    return this.knex('categories').where({ tenant_id: tenantId, id }).first()
+  }
+
+  /**
+   * Find unit by name within tenant
+   */
+  async findUnitByName(tenantId, name) {
+    return this.knex('units').where({ tenant_id: tenantId, name }).first()
+  }
+
+  /**
+   * Find unit by id within tenant
+   */
+  async findUnitById(tenantId, id) {
+    return this.knex('units').where({ tenant_id: tenantId, id }).first()
   }
 
   /**
    * Get default category for new products (e.g. bulk import). Prefer "supplies", else first.
    */
-  async getDefaultCategory() {
-    const byName = await this.findCategoryByName('supplies')
+  async getDefaultCategory(tenantId) {
+    const byName = await this.findCategoryByName(tenantId, 'supplies')
     if (byName) return byName
-    return this.knex('categories').select('id', 'name').limit(1).first()
+    return this.knex('categories').where({ tenant_id: tenantId }).select('id', 'name').limit(1).first()
   }
 
   /**
    * Get default unit for new products (e.g. bulk import). Prefer "bottle", else first.
    */
-  async getDefaultUnit() {
-    const byName = await this.findUnitByName('bottle')
+  async getDefaultUnit(tenantId) {
+    const byName = await this.findUnitByName(tenantId, 'bottle')
     if (byName) return byName
-    return this.knex('units').select('id', 'name').limit(1).first()
+    return this.knex('units').where({ tenant_id: tenantId }).select('id', 'name').limit(1).first()
   }
 
   /**
-   * Get all categories (for validation)
+   * Get all categories for tenant
    */
-  async getAllCategories() {
-    return this.knex('categories').select('id', 'name')
+  async getAllCategories(tenantId) {
+    return this.knex('categories').where({ tenant_id: tenantId }).select('id', 'name')
   }
 
   /**
-   * Get all units (for validation)
+   * Get all units for tenant
    */
-  async getAllUnits() {
-    return this.knex('units').select('id', 'name')
+  async getAllUnits(tenantId) {
+    return this.knex('units').where({ tenant_id: tenantId }).select('id', 'name')
   }
 
   /**
-   * Find product by code
+   * Find product by code within tenant
    */
-  async findByCode(productCode) {
-    return this.knex('products').where({ product_code: productCode }).first()
+  async findByCode(tenantId, productCode) {
+    return this.knex('products').where({ tenant_id: tenantId, product_code: productCode }).first()
   }
 
   /**
-   * Find product by ID
+   * Find product by ID within tenant
    */
-  async findById(id) {
-    return this.knex('products').where({ id }).first()
+  async findById(tenantId, id) {
+    return this.knex('products').where({ tenant_id: tenantId, id }).first()
   }
 
   /**
-   * Find product by name (case-insensitive)
+   * Find product by name (case-insensitive) within tenant
    */
-  async findByName(name) {
+  async findByName(tenantId, name) {
     return this.knex('products')
+      .where({ tenant_id: tenantId })
       .whereRaw('LOWER(name) = LOWER(?)', [name])
       .first()
   }
@@ -79,8 +94,9 @@ export class ProductsRepository {
   /**
    * Distinct normalized product names (trimmed lower) for bulk-import duplicate checks — one query, O(1) per row.
    */
-  async getProductNamesLowerSet () {
+  async getProductNamesLowerSet(tenantId) {
     const rows = await this.knex('products')
+      .where({ tenant_id: tenantId })
       .whereNotNull('name')
       .whereRaw("TRIM(name) <> ''")
       .select(this.knex.raw('LOWER(TRIM(name)) AS k'))
@@ -92,11 +108,11 @@ export class ProductsRepository {
   }
 
   /**
-   * Find product by unique details (name, description, category_id, unit_id)
+   * Find product by unique details (name, description, category_id, unit_id) within tenant
    */
-  async findByUniqueDetails(name, description, categoryId, unitId) {
+  async findByUniqueDetails(tenantId, name, description, categoryId, unitId) {
     return this.knex('products')
-      .where({ name })
+      .where({ tenant_id: tenantId, name })
       .where({ description: description || null })
       .where({ category_id: categoryId || null })
       .where({ unit_id: unitId || null })
@@ -104,24 +120,24 @@ export class ProductsRepository {
   }
 
   /**
-   * Get the highest product code number
+   * Get the highest product code number for tenant
    * Returns the numeric part of the highest product_code (e.g., "PRD0011" -> 11)
    * Assumes format "PRD####" where #### is a 4-digit number
    */
-  async getMaxProductCodeNumber() {
+  async getMaxProductCodeNumber(tenantId) {
     const products = await this.knex('products')
+      .where({ tenant_id: tenantId })
       .select('product_code')
       .whereNotNull('product_code')
       .where('product_code', 'like', 'PRD%')
       .orderBy('id', 'desc')
-      .limit(1000) // Safety limit
-    
+      .limit(1000)
+
     let maxNum = 0
     for (const product of products) {
       const code = product.product_code
       if (code && code.startsWith('PRD')) {
-        // Extract numeric part after "PRD" (assumes format "PRD0001", "PRD0011")
-        const numStr = code.substring(3) // Remove "PRD" prefix
+        const numStr = code.substring(3)
         const num = parseInt(numStr, 10)
         if (!isNaN(num) && num > maxNum) {
           maxNum = num
@@ -135,10 +151,10 @@ export class ProductsRepository {
   static get DEFAULT_LOW_STOCK_THRESHOLD() { return 50 }
 
   /**
-   * Get product stock stats (out-of-stock and low-stock counts) from bin card balances.
+   * Get product stock stats (out-of-stock and low-stock counts) from bin card balances for tenant.
    * No bin card post for a product = 0 balance = out of stock.
    */
-  async getProductStockStats() {
+  async getProductStockStats(tenantId) {
     const hasBinCards = await this.knex.schema.hasTable('bin_cards')
     if (!hasBinCards) {
       return { outOfStock: 0, lowStock: 0 }
@@ -155,6 +171,7 @@ export class ProductsRepository {
        ) AS bc`
     )
     const row = await this.knex('products')
+      .where('products.tenant_id', tenantId)
       .leftJoin(bcSubquery, 'products.id', 'bc.product_id')
       .select(
         this.knex.raw('SUM(CASE WHEN COALESCE(bc.balance, 0) = 0 THEN 1 ELSE 0 END) AS out_of_stock'),
@@ -170,11 +187,12 @@ export class ProductsRepository {
   /**
    * Find all products with pagination, search, sorting, and optional stock filter.
    * Balance = latest bin card balance per product; no bin card post means 0.
+   * @param {number} tenantId
    * @param {Object} params - { limit, offset, search, sortBy, orderBy, filter }
    * @param {string} params.filter - 'all' | 'out-of-stock' | 'low-stock'
    * @returns {Object} - { products, total, stats? }
    */
-  async findAll(params = {}) {
+  async findAll(tenantId, params = {}) {
     const { limit = 10, offset = 0, search = '', sortBy = 'id', orderBy = 'desc', filter = 'all' } = params
     const threshold = ProductsRepository.DEFAULT_LOW_STOCK_THRESHOLD
 
@@ -193,13 +211,20 @@ export class ProductsRepository {
       : null
 
     let query = this.knex('products')
+      .where('products.tenant_id', tenantId)
       .select(
         'products.*',
         'categories.name as category',
         'units.name as unit'
       )
-      .leftJoin('categories', 'products.category_id', 'categories.id')
-      .leftJoin('units', 'products.unit_id', 'units.id')
+      .leftJoin('categories', function () {
+        this.on('products.category_id', 'categories.id')
+          .andOn('categories.tenant_id', '=', 'products.tenant_id')
+      })
+      .leftJoin('units', function () {
+        this.on('products.unit_id', 'units.id')
+          .andOn('units.tenant_id', '=', 'products.tenant_id')
+      })
 
     if (bcSubquery) {
       query = query
@@ -252,7 +277,7 @@ export class ProductsRepository {
       balance: parseInt(p.balance || 0, 10)
     }))
 
-    const stats = await this.getProductStockStats()
+    const stats = await this.getProductStockStats(tenantId)
 
     return {
       products,
@@ -274,12 +299,13 @@ export class ProductsRepository {
   /**
    * Bulk insert categories (chunked for SQLite variable limits + event-loop yield).
    */
-  async bulkInsertCategories (rows) {
+  async bulkInsertCategories(tenantId, rows) {
     if (!Array.isArray(rows) || rows.length === 0) return []
     const CHUNK = 75
     const inserted = []
     for (let i = 0; i < rows.length; i += CHUNK) {
       const slice = rows.slice(i, i + CHUNK).map((r) => ({
+        tenant_id: tenantId,
         name: r.name,
         description: r.description ?? null,
         sync_status: r.sync_status ?? 'pending',
@@ -308,12 +334,13 @@ export class ProductsRepository {
   /**
    * Bulk insert units (chunked).
    */
-  async bulkInsertUnits (rows) {
+  async bulkInsertUnits(tenantId, rows) {
     if (!Array.isArray(rows) || rows.length === 0) return []
     const CHUNK = 75
     const inserted = []
     for (let i = 0; i < rows.length; i += CHUNK) {
       const slice = rows.slice(i, i + CHUNK).map((r) => ({
+        tenant_id: tenantId,
         name: r.name,
         abbreviation: r.abbreviation ?? null,
         sync_status: r.sync_status ?? 'pending',
@@ -335,15 +362,15 @@ export class ProductsRepository {
   async create(data) {
     return this.knex('products')
       .insert(data)
-      .returning(['id', 'product_code', 'name', 'description', 'category_id', 'unit_id', 'remark', 'created_at', 'last_updated'])
+      .returning(['id', 'product_code', 'name', 'description', 'category_id', 'unit_id', 'remark', 'expiry_threshold', 'created_at', 'last_updated'])
   }
 
   /**
-   * Update a product
+   * Update a product within tenant
    */
-  async update(id, data) {
+  async update(tenantId, id, data) {
     return this.knex('products')
-      .where({ id })
+      .where({ tenant_id: tenantId, id })
       .update({
         ...data,
         last_updated: this.knex.fn.now()
@@ -352,18 +379,18 @@ export class ProductsRepository {
   }
 
   /**
-   * Delete a product
+   * Delete a product within tenant
    */
-  async delete(id) {
+  async delete(tenantId, id) {
     return this.knex('products')
-      .where({ id })
+      .where({ tenant_id: tenantId, id })
       .del()
   }
 
   /**
    * Bulk create products (chunked for SQLite SQLITE_MAX_VARIABLE_NUMBER).
    */
-  async bulkCreate (productsArray) {
+  async bulkCreate(productsArray) {
     if (!Array.isArray(productsArray) || productsArray.length === 0) return []
 
     const CHUNK = 75

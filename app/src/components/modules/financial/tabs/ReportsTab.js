@@ -3,6 +3,7 @@ import { Button, Spinner } from '../../../utils/Button'
 import { Input } from '../../../utils/Input'
 import { SelectCompact, SelectOptions } from '../../../utils/Select'
 import { formatDateDDMMYYYY } from '../../../utils/DateUtils'
+import { displayErrorText } from '../../../utils/userErrorMessage.js'
 
 const financeFormat = (v) => (v != null ? Number(v) : 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -24,7 +25,7 @@ export function ReportsTab(props) {
   const asOfDate = vm.getState('report-as-of-date') || ''
   const reportData = vm.getState('report-data')
   const reportLoading = vm.getState('report-loading') === true
-  const error = vm.getState('error')
+  const error = displayErrorText(vm.getState('error'))
 
   const isPeriodReport = reportType !== 'balance-sheet'
   const today = new Date().toISOString().split('T')[0]

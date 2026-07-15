@@ -8,8 +8,8 @@ function makeRepository(overrides = {}) {
     getAllUnits: vi.fn().mockResolvedValue([{ id: 1, name: 'bottle' }]),
     getMaxProductCodeNumber: vi.fn().mockResolvedValue(7),
     getProductNamesLowerSet: vi.fn().mockResolvedValue(new Set()),
-    bulkInsertCategories: vi.fn(async (rows) => rows.map((r, idx) => ({ id: 50 + idx, name: r.name }))),
-    bulkInsertUnits: vi.fn(async (rows) => rows.map((r, idx) => ({ id: 80 + idx, name: r.name }))),
+    bulkInsertCategories: vi.fn(async (_tenantId, rows) => rows.map((r, idx) => ({ id: 50 + idx, name: r.name }))),
+    bulkInsertUnits: vi.fn(async (_tenantId, rows) => rows.map((r, idx) => ({ id: 80 + idx, name: r.name }))),
     createCategory: vi.fn().mockResolvedValue({ id: 5, name: 'new-cat' }),
     createUnit: vi.fn().mockResolvedValue({ id: 8, name: 'new-unit' }),
     findByName: vi.fn().mockResolvedValue(null),
@@ -21,7 +21,7 @@ function makeRepository(overrides = {}) {
 describe('ProductsService', () => {
   it('throws when bulkImport receives an empty list', async () => {
     const service = new ProductsService(makeRepository())
-    await expect(service.bulkImport([])).rejects.toThrow('Products array is required and must not be empty')
+    await expect(service.bulkImport(1, [])).rejects.toThrow('Products array is required and must not be empty')
   })
 
   it('creates missing category/unit once and generates sequential product codes', async () => {
@@ -31,7 +31,7 @@ describe('ProductsService', () => {
     })
     const service = new ProductsService(repository)
 
-    const result = await service.bulkImport([
+    const result = await service.bulkImport(1, [
       { name: 'Amoxicillin', category: 'Medicine', unit: 'Box' },
       { name: 'Vitamin C', category: 'Medicine', unit: 'Box' }
     ])
@@ -42,8 +42,8 @@ describe('ProductsService', () => {
     expect(repository.bulkInsertUnits).toHaveBeenCalledTimes(1)
     expect(repository.bulkCreate).toHaveBeenCalledWith(
       expect.arrayContaining([
-        expect.objectContaining({ product_code: 'PRD0008' }),
-        expect.objectContaining({ product_code: 'PRD0009' })
+        expect.objectContaining({ product_code: 'PRD0008', tenant_id: 1 }),
+        expect.objectContaining({ product_code: 'PRD0009', tenant_id: 1 })
       ])
     )
   })
@@ -54,7 +54,7 @@ describe('ProductsService', () => {
     })
     const service = new ProductsService(repository)
 
-    const result = await service.bulkImport([
+    const result = await service.bulkImport(1, [
       { name: 'Paracetamol', category: 'Medicine', unit: 'Bottle' },
       { name: 'Ibuprofen', category: 'Medicine', unit: 'Bottle' }
     ])
@@ -88,7 +88,7 @@ describe('ProductsService', () => {
     })
     const service = new ProductsService(repository)
 
-    const csv = await service.exportToCSV({})
+    const csv = await service.exportToCSV(1, {})
 
     expect(csv).toContain('"Cough, Syrup"')
     expect(csv).toContain('"He said ""hello"""')

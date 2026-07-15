@@ -78,7 +78,7 @@ export class LedgerHelper {
    * @param {Object} trx - Knex transaction (optional)
    * @returns {Promise<Array<{account_code, account_name, balance}>>}
    */
-  async getClosingBalances(asOfDate, trx = null) {
+  async getClosingBalances(asOfDate, trx = null, tenantId = null) {
     const db = trx || this.knex
     const dateStr = typeof asOfDate === 'string' && asOfDate.length >= 10
       ? asOfDate.slice(0, 10)
@@ -88,8 +88,11 @@ export class LedgerHelper {
 
     if (!dateStr || dateStr.length < 10) return []
 
-    const rows = await db('account_ledger')
-      .where('transaction_date', '<=', dateStr)
+    let query = db('account_ledger').where('transaction_date', '<=', dateStr)
+    if (tenantId != null) {
+      query = query.where({ tenant_id: tenantId })
+    }
+    const rows = await query
       .select(
         'account_code',
         db.raw('MAX(account_name) as account_name'),
@@ -112,12 +115,15 @@ export class LedgerHelper {
    * @param {Object} trx - Knex transaction (optional)
    * @returns {Promise<Object>} { accountCode: balance (number), ... }
    */
-  async getCurrentBalances(accountCodes, trx = null) {
+  async getCurrentBalances(accountCodes, trx = null, tenantId = null) {
     const db = trx || this.knex
     if (!accountCodes || accountCodes.length === 0) return {}
 
-    const rows = await db('account_ledger')
-      .whereIn('account_code', accountCodes)
+    let query = db('account_ledger').whereIn('account_code', accountCodes)
+    if (tenantId != null) {
+      query = query.where({ tenant_id: tenantId })
+    }
+    const rows = await query
       .select('account_code')
       .select(db.raw('COALESCE(SUM(debit - credit), 0) as balance'))
       .groupBy('account_code')
@@ -139,6 +145,7 @@ export class LedgerHelper {
    */
   async postGLTransaction(transactionData, trx = null) {
     const {
+      tenant_id = null,
       transaction_date: rawTransactionDate,
       reference_no,
       reference_table,
@@ -179,10 +186,13 @@ export class LedgerHelper {
 
     // Only active COA rows may post to the GL (codes must exist and be usable)
     const accountCodes = [...new Set(entries.map((entry) => entry.account_code))]
-    const accounts = await db('chart_of_accounts')
+    let accountsQuery = db('chart_of_accounts')
       .whereIn('account_code', accountCodes)
       .where('is_active', true)
-      .select('account_code', 'account_name')
+    if (tenant_id != null) {
+      accountsQuery = accountsQuery.where({ tenant_id })
+    }
+    const accounts = await accountsQuery.select('account_code', 'account_name')
 
     const accountMap = {}
     accounts.forEach((account) => {
@@ -192,7 +202,11 @@ export class LedgerHelper {
     const foundActive = new Set(accounts.map((a) => a.account_code))
     for (const code of accountCodes) {
       if (foundActive.has(code)) continue
-      const row = await db('chart_of_accounts').where({ account_code: code }).first()
+      let inactiveQuery = db('chart_of_accounts').where({ account_code: code })
+      if (tenant_id != null) {
+        inactiveQuery = inactiveQuery.where({ tenant_id })
+      }
+      const row = await inactiveQuery.first()
       if (!row) {
         throw new Error(`Account code ${code} not found in chart of accounts`)
       }
@@ -214,8 +228,12 @@ export class LedgerHelper {
       // Use computed SUM(debit-credit) of existing rows for prior balance.
       // The old logic used stored balance from last row by date, which breaks for backdated
       // transactions (e.g. PO dated 03-01 inserted after a 03-04 deposit → no rows with date<=03-01 → wrong prior=0).
-      const priorRows = await db('account_ledger')
+      let priorQuery = db('account_ledger')
         .where('account_code', entry.account_code)
+      if (tenant_id != null) {
+        priorQuery = priorQuery.where({ tenant_id })
+      }
+      const priorRows = await priorQuery
         .select(db.raw('COALESCE(SUM(debit - credit), 0) as balance'))
         .first()
       const currentBalance = parseFloat(priorRows?.balance || 0)
@@ -224,8 +242,7 @@ export class LedgerHelper {
       const newBalance = currentBalance + debitAmount - creditAmount
 
       // Insert GL entry (one row per account)
-      const [ledgerEntry] = await db('account_ledger')
-        .insert({
+      const insertRow = {
           transaction_date: transaction_date,
           account_code: entry.account_code,
           account_name: accountName,
@@ -244,7 +261,12 @@ export class LedgerHelper {
           created_at: db.fn.now(),
           last_updated: db.fn.now(),
           sync_status: 'pending'
-        })
+        }
+      if (tenant_id != null) {
+        insertRow.tenant_id = tenant_id
+      }
+      const [ledgerEntry] = await db('account_ledger')
+        .insert(insertRow)
         .returning('*')
 
       insertedEntries.push(ledgerEntry)
@@ -276,6 +298,7 @@ export class LedgerHelper {
    */
   async recordInitialStockImport(params, trx = null) {
     const {
+      tenant_id = null,
       inventoryId,
       quantity,
       unitCost,
@@ -305,6 +328,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `INIT-STOCK-${inventoryId}`,
       reference_table: 'inventories',
@@ -334,6 +358,7 @@ export class LedgerHelper {
    */
   async recordStockAdjustmentAdd(params, trx = null) {
     const {
+      tenant_id = null,
       inventoryId,
       quantity,
       unitCost,
@@ -364,6 +389,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `ADJ-${inventoryId}`,
       reference_table: 'inventories',
@@ -395,6 +421,7 @@ export class LedgerHelper {
    */
   async recordStockAdjustmentSubtractBorrowTo(params, trx = null) {
     const {
+      tenant_id = null,
       inventoryId,
       quantity,
       unitCost,
@@ -427,6 +454,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `BORROW-TO-${inventoryId}`,
       reference_table: 'borrow_to_inventories',
@@ -456,6 +484,7 @@ export class LedgerHelper {
    */
   async recordStockAdjustmentSubtract(params, trx = null) {
     const {
+      tenant_id = null,
       inventoryId,
       quantity,
       unitCost,
@@ -486,6 +515,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `ADJ-${inventoryId}`,
       reference_table: 'inventories',
@@ -518,6 +548,7 @@ export class LedgerHelper {
    */
   async recordBorrowFrom(params, trx = null) {
     const {
+      tenant_id = null,
       inventoryId,
       borrowFromId,
       quantity,
@@ -550,6 +581,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `BORROW-FROM-${borrowFromId}`,
       reference_table: 'borrow_from_inventories',
@@ -569,6 +601,7 @@ export class LedgerHelper {
    */
   async recordBorrowReturnSettlement (params, trx = null) {
     const {
+      tenant_id = null,
       borrowReturnId,
       borrowedInventoryId,
       obligationUnitCost,
@@ -618,6 +651,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: ref,
       reference_table: 'borrow_from_returns',
@@ -648,6 +682,7 @@ export class LedgerHelper {
    */
   async recordReturnBorrowedTo(params, trx = null) {
     const {
+      tenant_id = null,
       inventoryId,
       returnId,
       quantity,
@@ -679,6 +714,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `RETURN-TO-${returnId}`,
       reference_table: 'borrow_to_returns',
@@ -707,6 +743,7 @@ export class LedgerHelper {
    */
   async recordPurchaseCash(params, trx = null) {
     const {
+      tenant_id = null,
       purchaseOrderId,
       totalAmount,
       withholdAmount = 0,
@@ -748,6 +785,7 @@ export class LedgerHelper {
     }
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `PO-${purchaseOrderId}`,
       reference_table: 'purchase_orders',
@@ -776,6 +814,7 @@ export class LedgerHelper {
    */
   async recordPurchaseCredit(params, trx = null) {
     const {
+      tenant_id = null,
       purchaseOrderId,
       totalAmount,
       withholdAmount = 0,
@@ -831,6 +870,7 @@ export class LedgerHelper {
     }
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `PO-${purchaseOrderId}`,
       reference_table: 'purchase_orders',
@@ -859,6 +899,7 @@ export class LedgerHelper {
    */
   async recordPurchaseCheque(params, trx = null) {
     const {
+      tenant_id = null,
       purchaseOrderId,
       totalAmount,
       withholdAmount = 0,
@@ -914,6 +955,7 @@ export class LedgerHelper {
     }
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `PO-${purchaseOrderId}`,
       reference_table: 'purchase_orders',
@@ -942,6 +984,7 @@ export class LedgerHelper {
    */
   async recordPurchasePayment(params, trx = null) {
     const {
+      tenant_id = null,
       purchaseOrderId,
       paymentId,
       amount,
@@ -970,6 +1013,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `PAY-${paymentId}`,
       reference_table: 'purchase_payments',
@@ -998,6 +1042,7 @@ export class LedgerHelper {
    */
   async recordSalesPayment(params, trx = null) {
     const {
+      tenant_id = null,
       salesOrderId,
       paymentId,
       amount,
@@ -1026,6 +1071,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber ? `PAY-${referenceNumber}` : `PAY-SO-${paymentId}`,
       reference_table: 'sales_payments',
@@ -1051,6 +1097,7 @@ export class LedgerHelper {
    */
   async reversePurchaseOrder(params, trx = null) {
     const {
+      tenant_id = null,
       purchaseOrderId,
       transactionDate,
       reason,
@@ -1059,13 +1106,16 @@ export class LedgerHelper {
     } = params
 
     // Get all original ledger entries for this purchase order
-    const originalEntries = await (trx || this.knex)('account_ledger')
+    let entriesQuery = (trx || this.knex)('account_ledger')
       .where({
         reference_table: 'purchase_orders',
         reference_id: purchaseOrderId,
         transaction_type: 'purchase'
       })
-      .orderBy('id', 'asc')
+    if (tenant_id != null) {
+      entriesQuery = entriesQuery.where({ tenant_id })
+    }
+    const originalEntries = await entriesQuery.orderBy('id', 'asc')
 
     if (originalEntries.length === 0) {
       throw new Error('No ledger entries found for this purchase order')
@@ -1094,6 +1144,7 @@ export class LedgerHelper {
     })
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `REV-${purchaseOrderId}`,
       reference_table: 'purchase_orders',
@@ -1128,6 +1179,7 @@ export class LedgerHelper {
    */
   async recordSalesOrder(params, trx = null) {
     const {
+      tenant_id = null,
       salesOrderId,
       firstPayment = 0,
       outstandingBalance = 0,
@@ -1198,6 +1250,7 @@ export class LedgerHelper {
     }
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `SO-${salesOrderId}`,
       reference_table: 'sales_orders',
@@ -1214,6 +1267,7 @@ export class LedgerHelper {
    */
   async recordExpense(params, trx = null) {
     const {
+      tenant_id = null,
       expenseId,
       amount,
       paymentMethod,
@@ -1235,6 +1289,7 @@ export class LedgerHelper {
           ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `EXP-${expenseId}`,
       reference_table: 'expenses',
@@ -1254,12 +1309,15 @@ export class LedgerHelper {
    * @returns {Promise<Object>} Result from postGLTransaction or { success: true } if nothing to reverse
    */
   async reverseFiscalYearClosing(params, trx = null) {
-    const { fiscalYearId, transactionDate, reason = 'Reopen fiscal year', referenceNumber = null, createdBy = null } = params
+    const { tenantId = null, fiscalYearId, transactionDate, reason = 'Reopen fiscal year', referenceNumber = null, createdBy = null } = params
     const db = trx || this.knex
-    const entries = await db('account_ledger')
+    let entriesQuery = db('account_ledger')
       .where({ reference_table: 'fiscal_years', reference_id: fiscalYearId })
       .whereIn('transaction_type', ['year_end_closing', 'year_end_opening'])
-      .orderBy('id', 'asc')
+    if (tenantId != null) {
+      entriesQuery = entriesQuery.where({ tenant_id: tenantId })
+    }
+    const entries = await entriesQuery.orderBy('id', 'asc')
     if (entries.length === 0) return { success: true, message: 'No closing entries to reverse', entries: [] }
     const accountGroups = {}
     entries.forEach((entry) => {
@@ -1278,6 +1336,7 @@ export class LedgerHelper {
       }
     })
     return await this.postGLTransaction({
+      tenant_id: tenantId,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `FY-REV-${fiscalYearId}`,
       reference_table: 'fiscal_years',
@@ -1294,11 +1353,14 @@ export class LedgerHelper {
    * @param {Object} params - { depositId, transactionDate, reason, createdBy }
    */
   async reverseDeposit(params, trx = null) {
-    const { depositId, transactionDate, reason, referenceNumber = null, createdBy = null } = params
+    const { tenant_id = null, depositId, transactionDate, reason, referenceNumber = null, createdBy = null } = params
     const db = trx || this.knex
-    const entries = await db('account_ledger')
+    let entriesQuery = db('account_ledger')
       .where({ reference_table: 'deposits', reference_id: depositId, transaction_type: 'deposit' })
-      .orderBy('id', 'asc')
+    if (tenant_id != null) {
+      entriesQuery = entriesQuery.where({ tenant_id })
+    }
+    const entries = await entriesQuery.orderBy('id', 'asc')
     if (entries.length === 0) return { success: true, message: 'No ledger entries to reverse', entries: [] }
     const accountGroups = {}
     entries.forEach((entry) => {
@@ -1317,6 +1379,7 @@ export class LedgerHelper {
       }
     })
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `DEP-REV-${depositId}`,
       reference_table: 'deposits',
@@ -1333,6 +1396,7 @@ export class LedgerHelper {
    */
   async recordDeposit(params, trx = null) {
     const {
+      tenant_id = null,
       depositId,
       amount,
       accountCode = '4100', // 4100 Owner's Capital or 4300 Opening Balance
@@ -1348,6 +1412,7 @@ export class LedgerHelper {
     ]
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `DEP-${depositId}`,
       reference_table: 'deposits',
@@ -1364,12 +1429,13 @@ export class LedgerHelper {
    * When lending cash to a partner, loans receivable increases and cash decreases.
    */
   async recordCashLoanReceivable(params, trx = null) {
-    const { loanId, amount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const { tenant_id = null, loanId, amount, transactionDate, description, referenceNumber = null, createdBy = null } = params
     const entries = [
       { account_code: '1210', debit: amount, credit: 0, description },  // DR Loans Receivable – amount owed by partner
       { account_code: '1100', debit: 0, credit: amount, description }  // CR Cash – cash disbursed
     ]
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `LOAN-REC-${loanId}`,
       reference_table: 'cash_loans_receivable',
@@ -1386,12 +1452,13 @@ export class LedgerHelper {
    * When partner returns cash, cash increases and loans receivable decreases.
    */
   async recordCashLoanReceivableReturn(params, trx = null) {
-    const { loanId, returnAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const { tenant_id = null, loanId, returnAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
     const entries = [
       { account_code: '1100', debit: returnAmount, credit: 0, description },  // DR Cash – receive cash
       { account_code: '1210', debit: 0, credit: returnAmount, description }  // CR Loans Receivable – reduce receivable
     ]
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `LOAN-REC-RET-${loanId}`,
       reference_table: 'cash_loans_receivable',
@@ -1407,12 +1474,13 @@ export class LedgerHelper {
    * Record cash loan payable (borrow): DR Cash (1100), CR Loans Payable (3300)
    */
   async recordCashLoanPayable(params, trx = null) {
-    const { loanId, amount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const { tenant_id = null, loanId, amount, transactionDate, description, referenceNumber = null, createdBy = null } = params
     const entries = [
       { account_code: '1100', debit: amount, credit: 0, description },
       { account_code: '3300', debit: 0, credit: amount, description }
     ]
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `LOAN-PAY-${loanId}`,
       reference_table: 'cash_loans_payable',
@@ -1428,12 +1496,13 @@ export class LedgerHelper {
    * Record cash loan payable repayment: DR Loans Payable (3300), CR Cash (1100)
    */
   async recordCashLoanPayableRepayment(params, trx = null) {
-    const { repaymentAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const { tenant_id = null, repaymentAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
     const entries = [
       { account_code: '3300', debit: repaymentAmount, credit: 0, description },
       { account_code: '1100', debit: 0, credit: repaymentAmount, description }
     ]
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `LOAN-PAY-REP`,
       reference_table: 'cash_loans_payable',
@@ -1450,12 +1519,13 @@ export class LedgerHelper {
    * When settling withholds with tax authority, cash is received and withhold receivable is cleared.
    */
   async recordWithholdReceivableSettlement(params, trx = null) {
-    const { settlementId, totalAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const { tenant_id = null, settlementId, totalAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
     const entries = [
       { account_code: '1100', debit: totalAmount, credit: 0, description },  // DR Cash – receive from tax authority
       { account_code: '1250', debit: 0, credit: totalAmount, description }  // CR Withhold Receivable – clear receivable
     ]
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `WITHHOLD-REC-SET-${settlementId}`,
       reference_table: 'withhold_receivable_settlements',
@@ -1472,12 +1542,13 @@ export class LedgerHelper {
    * When remitting withheld tax to the tax authority, we clear the liability and pay cash.
    */
   async recordWithholdPayableSettlement(params, trx = null) {
-    const { settlementId, totalAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
+    const { tenant_id = null, settlementId, totalAmount, transactionDate, description, referenceNumber = null, createdBy = null } = params
     const entries = [
       { account_code: '3210', debit: totalAmount, credit: 0, description },  // DR Withhold Payable – clear liability
       { account_code: '1100', debit: 0, credit: totalAmount, description }  // CR Cash – payment to tax authority
     ]
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `WITHHOLD-PAY-SET-${settlementId}`,
       reference_table: 'withhold_payable_settlements',
@@ -1502,6 +1573,7 @@ export class LedgerHelper {
    */
   async reverseSalesOrder(params, trx = null) {
     const {
+      tenant_id = null,
       salesOrderId,
       transactionDate,
       reason,
@@ -1542,6 +1614,7 @@ export class LedgerHelper {
     })
 
     return await this.postGLTransaction({
+      tenant_id,
       transaction_date: transactionDate,
       reference_no: referenceNumber || `REV-SO-${salesOrderId}`,
       reference_table: 'sales_orders',

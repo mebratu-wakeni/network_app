@@ -19,7 +19,11 @@ const mockService = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../../src/middleware/auth.js', () => ({
-  authenticate: (_req, _res, next) => next(),
+  authenticate: (req, _res, next) => {
+    req.tenantId = 1
+    next()
+  },
+  requireTenant: (_req, _res, next) => next(),
   requireRules: () => (_req, _res, next) => next()
 }))
 

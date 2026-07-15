@@ -614,8 +614,6 @@ export class InventoryVM extends ViewModel {
   }
 
   async createCategory(categoryData) {
-    if (this.getState('loading')) return;
-    
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -624,10 +622,13 @@ export class InventoryVM extends ViewModel {
       const result = await window.ipcRenderer.invoke('inventory:create-category', categoryData);
 
       if (result.success) {
+        const category = result.category;
         this.updateState('success', { message: 'Category created successfully' });
-        // Reload categories list to include the new one
-        await this.loadCategories();
-        return result.category;
+        const list = this.getState('category-list') || [];
+        if (category && !list.some((c) => String(c.id) === String(category.id))) {
+          this.updateState('category-list', [...list, { id: category.id, name: category.name }]);
+        }
+        return category;
       }
 
       throw new Error(result.error || 'Failed to create category');
@@ -641,8 +642,6 @@ export class InventoryVM extends ViewModel {
   }
 
   async createUnit(unitData) {
-    if (this.getState('loading')) return;
-    
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -651,10 +650,13 @@ export class InventoryVM extends ViewModel {
       const result = await window.ipcRenderer.invoke('inventory:create-unit', unitData);
 
       if (result.success) {
+        const unit = result.unit;
         this.updateState('success', { message: 'Unit created successfully' });
-        // Reload units list to include the new one
-        await this.loadUnits();
-        return result.unit;
+        const list = this.getState('unit-list') || [];
+        if (unit && !list.some((u) => String(u.id) === String(unit.id))) {
+          this.updateState('unit-list', [...list, { id: unit.id, name: unit.name }]);
+        }
+        return unit;
       }
 
       throw new Error(result.error || 'Failed to create unit');
@@ -668,8 +670,6 @@ export class InventoryVM extends ViewModel {
   }
 
   async createProduct(productData) {
-    if (this.getState('loading')) return;
-    
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -1402,11 +1402,6 @@ export class InventoryVM extends ViewModel {
       ...form,
       [key]: value
     });
-    // Trigger re-render by updating loading state
-    this.updateState('loading', true);
-    setTimeout(() => {
-      this.updateState('loading', false);
-    }, 0);
   }
 
   /** Apply several product-form fields in one state update (avoids losing updates from back-to-back single-field writes). */
@@ -1416,10 +1411,6 @@ export class InventoryVM extends ViewModel {
       ...form,
       ...fields
     });
-    this.updateState('loading', true);
-    setTimeout(() => {
-      this.updateState('loading', false);
-    }, 0);
   }
 
   resetProductForm() {

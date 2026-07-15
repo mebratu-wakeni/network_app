@@ -435,7 +435,7 @@ function LoansReceivables(props) {
                   }))
                 }
                 return TableRow({ key: loan.id, class: `hover:bg-indigo-50 ${highlightOverdue(loan.expected_return_date)}` }, [
-                  TableDCell({ class: 'w-24' }, loan.reference_no || `LR${loan.id}`),
+                  TableDCell({ class: 'w-24' }, loan.reference_no || '—'),
                   TableDCell({}, loan.partner_name || '—'),
                   TableDCell({ class: 'w-24' }, formatDateDDMMYYYY(loan.lent_date)),
                   TableDCell({ class: 'w-24' }, loan.expected_return_date ? formatDateDDMMYYYY(loan.expected_return_date) : '—'),
@@ -507,7 +507,7 @@ function LoanDetailDrawer(props) {
   return Drawer({ class: 'flex flex-col h-full', openSlide: showSlide }, [
     Card({ class: 'flex flex-col h-full' }, [
       CardHeader({ class: 'flex items-center justify-between px-5 h-12 border-b border-gray-200 flex-shrink-0' }, [
-        Row({ class: 'text-base font-semibold text-gray-900' }, `Loan ${loan.reference_no || `#${loan.id}`}`),
+        Row({ class: 'text-base font-semibold text-gray-900' }, `Loan ${loan.reference_no || '—'}`),
         IconButton({ onClick: onClose }, IonIcon({ name: 'close-outline', class: 'text-xl' }))
       ]),
       CardBody({ class: 'flex-1 overflow-y-auto min-h-0 px-5 py-4' }, [
@@ -741,7 +741,7 @@ function RecordReturnModalContent(vm, loan, handleClose, delegator) {
     attributes: { name: 'record-return-form' },
     delegator
   }, [
-    Row({ class: 'text-lg font-semibold mb-4' }, `Record Return – ${loan.partner_name || 'Partner'} (${loan.reference_no || `#${loan.id}`})`),
+    Row({ class: 'text-lg font-semibold mb-4' }, `Record Return – ${loan.partner_name || 'Partner'} (${loan.reference_no || '—'})`),
     Row({}, [
       Row({ tagType: 'label', class: 'block text-sm font-medium text-gray-700 mb-1', attributes: { for: 'return-amount' } }, 'Amount (Br)'),
       Input({
@@ -1186,7 +1186,7 @@ function WithholdSettlementModalContent(vm, ordersToSettle, handleClose) {
     Row({ class: 'max-h-32 overflow-y-auto border border-gray-200 rounded p-2 text-sm' }, [
       Row({ class: 'font-medium text-gray-600 mb-2' }, 'Orders in this settlement:'),
       ...(ordersToSettle || []).slice(0, 10).map((o) => Row({ class: 'flex justify-between py-1' }, [
-        Row({}, `${o.receipt_no || o.id} · ${o.customer_name || '—'}`),
+        Row({}, `${o.receipt_no || '—'} · ${o.customer_name || '—'}`),
         Row({}, `Br ${financeFormat(o.withhold_amount)}`)
       ])),
       ordersToSettle.length > 10 ? Row({ class: 'text-gray-500 py-1' }, `...and ${ordersToSettle.length - 10} more`) : null

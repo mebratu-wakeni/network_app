@@ -2,24 +2,26 @@
  * Service: Business logic layer for inventories/stock
  * Orchestrates use cases and coordinates between repository and business rules
  */
+import { assertFiscalYearOpen } from '../../services/fiscal-year.guard.js'
+
+function todayIso () {
+  return new Date().toISOString().split('T')[0]
+}
+
 export class InventoriesService {
   constructor(repository) {
     this.repository = repository
   }
 
-  /**
-   * Bulk import stock items
-   * @param {Array} stockItems - Array of stock items to import
-   * @param {Object} options - Import options (purchase_date, acquisition_type, reason, created_by)
-   * @returns {Object} Summary with { total, successful, failed, results }
-   */
-  async bulkImport(stockItems, options = {}) {
+  async bulkImport(tenantId, stockItems, options = {}) {
     if (!Array.isArray(stockItems) || stockItems.length === 0) {
       throw new Error('Stock items array is required and must not be empty')
     }
 
-    // Stock items are already transformed to backend format in the controller
-    const result = await this.repository.bulkImport(stockItems, options)
+    const transactionDate = options.purchase_date || options.purchaseDate || todayIso()
+    await assertFiscalYearOpen(this.repository.knex, tenantId, transactionDate)
+
+    const result = await this.repository.bulkImport(tenantId, stockItems, options)
 
     return {
       total: result.summary.total,
@@ -44,44 +46,26 @@ export class InventoriesService {
     }
   }
 
-  /**
-   * Get all stock/inventories with pagination, search, filters, and sorting
-   * @param {Object} params - { limit, offset, search, filter, sortBy, orderBy }
-   * @returns {Object} - { stock, total, stats }
-   */
-  async findAll(params = {}) {
-    return this.repository.findAll(params)
+  async findAll(tenantId, params = {}) {
+    return this.repository.findAll(tenantId, params)
   }
 
-  /**
-   * Get inventories by product_id (inventories table only). All have valid inventory id.
-   * @param {number} productId
-   * @returns {Promise<Array>}
-   */
-  async findInventoriesByProduct(productId) {
-    return this.repository.findInventoriesByProduct(productId)
+  async findInventoriesByProduct(tenantId, productId) {
+    return this.repository.findInventoriesByProduct(tenantId, productId)
   }
 
-  /**
-   * Export stock/inventories to CSV
-   * @param {Object} params - { limit, offset, search, filter, sortBy, orderBy }
-   * @returns {string} CSV formatted string
-   */
-  async exportToCSV(params = {}) {
-    // For export, we typically want all matching records, not just one page
+  async exportToCSV(tenantId, params = {}) {
     const exportParams = {
       ...params,
-      limit: params.limit || 10000, // Large limit for export
+      limit: params.limit || 10000,
       offset: 0
     }
-    
-    const result = await this.repository.findAll(exportParams)
+
+    const result = await this.repository.findAll(tenantId, exportParams)
     const stockItems = result.stock || []
-    
-    // CSV Headers
+
     const headers = ['Product Code', 'Product Name', 'Category', 'Location', 'Quantity', 'Unit', 'Unit Cost', 'Selling Price', 'Expiry Date', 'Batch Number', 'Inventory Code', 'Status']
-    
-    // Helper function to escape CSV fields
+
     const escapeCSV = (field) => {
       if (field === null || field === undefined) return ''
       const str = String(field)
@@ -90,8 +74,7 @@ export class InventoriesService {
       }
       return str
     }
-    
-    // Helper function to format date
+
     const formatDate = (dateStr) => {
       if (!dateStr) return ''
       try {
@@ -105,8 +88,7 @@ export class InventoriesService {
         return ''
       }
     }
-    
-    // Helper function to get status (low stock = product total quantity < threshold)
+
     const getStatus = (item) => {
       const productTotal = item.productTotalQuantity != null ? item.productTotalQuantity : item.quantity
       if (productTotal === 0) return 'Out of Stock'
@@ -122,8 +104,7 @@ export class InventoriesService {
       if (productTotal < 50) return 'Low Stock'
       return 'In Stock'
     }
-    
-    // Convert stock items to CSV rows
+
     const rows = stockItems.map(item => {
       return [
         escapeCSV(item.productCode || item.product_code || ''),
@@ -140,63 +121,19 @@ export class InventoriesService {
         escapeCSV(getStatus(item))
       ].join(',')
     })
-    
-    // Combine headers and rows
-    const csvContent = [
-      headers.join(','),
-      ...rows
-    ].join('\n')
-    
-    return csvContent
+
+    return [headers.join(','), ...rows].join('\n')
   }
 
-  /**
-   * Update a stock item
-   * @param {number} inventoryId - Inventory ID
-   * @param {Object} updateData - Fields to update
-   * @returns {Object} Updated inventory record
-   */
-  async update(inventoryId, updateData) {
+  async update(tenantId, inventoryId, updateData) {
     if (!inventoryId || isNaN(parseInt(inventoryId, 10))) {
       const error = new Error('Valid inventory ID is required')
       error.status = 400
       throw error
     }
 
-    const updated = await this.repository.updateById(inventoryId, updateData)
-    
-    // Transform to frontend format
-    return {
-      id: updated.id,
-      inventoryCode: updated.inventory_code,
-      productCode: updated.product_code,
-      location: updated.location,
-      quantity: parseInt(updated.quantity, 10),
-      unitCost: parseFloat(updated.purchase_price),
-      sellingPrice: updated.selling_price ? parseFloat(updated.selling_price) : null,
-      expiryDate: updated.expiry_date,
-      batchNumber: updated.batch_no,
-      location: updated.location
-    }
-  }
+    const updated = await this.repository.updateById(tenantId, inventoryId, updateData)
 
-  /**
-   * Adjust stock quantity
-   * @param {number} inventoryId - Inventory ID
-   * @param {Object} adjustmentData - Adjustment data
-   * @param {number} userId - User ID performing the adjustment
-   * @returns {Object} Updated inventory record
-   */
-  async adjustStock(inventoryId, adjustmentData, userId = null) {
-    if (!inventoryId || isNaN(parseInt(inventoryId, 10))) {
-      const error = new Error('Valid inventory ID is required')
-      error.status = 400
-      throw error
-    }
-
-    const updated = await this.repository.adjustStockQuantity(inventoryId, adjustmentData, userId)
-    
-    // Transform to frontend format
     return {
       id: updated.id,
       inventoryCode: updated.inventory_code,
@@ -210,20 +147,39 @@ export class InventoriesService {
     }
   }
 
-  /**
-   * Create borrow from inventory record
-   * This creates:
-   * 1. Inventory record (stock added to our inventory)
-   * 2. Bin card entry (transaction tracking)
-   * 3. Borrow_from_inventories record (borrowing record)
-   * @param {Object} borrowData - Borrow from data
-   * @param {number} userId - User ID creating the record
-   * @returns {Object} Created borrow_from_inventories record with inventory info
-   */
-  async createBorrowFrom(borrowData, userId = null) {
-    const borrowFromRecord = await this.repository.createBorrowFromInventory(borrowData, userId)
-    
-    // Transform to frontend format
+  async adjustStock(tenantId, inventoryId, adjustmentData, userId = null) {
+    if (!inventoryId || isNaN(parseInt(inventoryId, 10))) {
+      const error = new Error('Valid inventory ID is required')
+      error.status = 400
+      throw error
+    }
+
+    const transactionDate =
+      adjustmentData.adjustmentDate ||
+      adjustmentData.adjustment_date ||
+      todayIso()
+    await assertFiscalYearOpen(this.repository.knex, tenantId, transactionDate)
+
+    const updated = await this.repository.adjustStockQuantity(tenantId, inventoryId, adjustmentData, userId)
+
+    return {
+      id: updated.id,
+      inventoryCode: updated.inventory_code,
+      productCode: updated.product_code,
+      location: updated.location,
+      quantity: parseInt(updated.quantity, 10),
+      unitCost: parseFloat(updated.purchase_price),
+      sellingPrice: updated.selling_price ? parseFloat(updated.selling_price) : null,
+      expiryDate: updated.expiry_date,
+      batchNumber: updated.batch_no
+    }
+  }
+
+  async createBorrowFrom(tenantId, borrowData, userId = null) {
+    await assertFiscalYearOpen(this.repository.knex, tenantId, todayIso())
+
+    const borrowFromRecord = await this.repository.createBorrowFromInventory(tenantId, borrowData, userId)
+
     return {
       id: borrowFromRecord.id,
       productId: borrowFromRecord.product_id,
@@ -241,41 +197,31 @@ export class InventoriesService {
     }
   }
 
-  /**
-   * Get return history for a borrow_to_inventory record
-   * @param {number} borrowToInventoryId - ID from borrow_to_inventories table
-   * @returns {Array} Array of return records
-   */
-  async getBorrowToReturnHistory(borrowToInventoryId) {
-    return await this.repository.getBorrowToReturnHistory(borrowToInventoryId)
+  async getBorrowToReturnHistory(tenantId, borrowToInventoryId) {
+    return await this.repository.getBorrowToReturnHistory(tenantId, borrowToInventoryId)
   }
 
-  /**
-   * Process return of borrowed-to items
-   * @param {Object} returnData - Return data
-   * @param {number} userId - User ID processing the return
-   * @returns {Object} Created return record with inventory info
-   */
-  async processBorrowToReturn(returnData, userId = null) {
-    return await this.repository.processBorrowToReturn(returnData, userId)
+  async processBorrowToReturn(tenantId, returnData, userId = null) {
+    const transactionDate =
+      returnData.returnedDate ||
+      returnData.returned_date ||
+      todayIso()
+    await assertFiscalYearOpen(this.repository.knex, tenantId, transactionDate)
+
+    return await this.repository.processBorrowToReturn(tenantId, returnData, userId)
   }
 
-  /**
-   * Get return status for a borrowed-from item (total borrowed, total returned, remaining).
-   * @param {Object} opts - { borrowFromId?: number, borrowedInventoryId?: number }
-   * @returns {Object} { totalBorrowed, totalReturned, remaining }
-   */
-  async getBorrowFromReturnStatus(opts) {
-    return await this.repository.getBorrowFromReturnStatus(opts)
+  async getBorrowFromReturnStatus(tenantId, opts) {
+    return await this.repository.getBorrowFromReturnStatus(tenantId, opts)
   }
 
-  /**
-   * Process return of borrowed-from items (AP + Borrow Variance + inventory at returning lot cost).
-   * @param {Object} returnData - Return data
-   * @param {number} userId - User ID processing the return
-   * @returns {Object} Result of the operation
-   */
-  async processBorrowFromReturn(returnData, userId = null) {
-    return await this.repository.processBorrowFromReturn(returnData, userId)
+  async processBorrowFromReturn(tenantId, returnData, userId = null) {
+    const transactionDate =
+      returnData.returnedOn ||
+      returnData.returned_on ||
+      todayIso()
+    await assertFiscalYearOpen(this.repository.knex, tenantId, transactionDate)
+
+    return await this.repository.processBorrowFromReturn(tenantId, returnData, userId)
   }
 }

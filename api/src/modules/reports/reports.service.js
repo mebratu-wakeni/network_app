@@ -86,14 +86,14 @@ export class ReportsService {
    * Period amounts derived from ledger balance field: closing_balance - opening_balance.
    * Same account 5100 (Sales Revenue) as Dashboard. Revenue is credit-normal, Expense is debit-normal.
    */
-  async getIncomeStatement(params) {
+  async getIncomeStatement(tenantId, params) {
     const { date_from, date_to } = params
-    const coa = await this.repository.getChartOfAccounts()
+    const coa = await this.repository.getChartOfAccounts(tenantId)
 
     const dateFromPrev = new Date(new Date(date_from).getTime() - 86400000).toISOString().split('T')[0]
     const [opening, closing] = await Promise.all([
-      this.repository.getClosingBalances(dateFromPrev).catch(() => []),
-      this.repository.getClosingBalances(date_to)
+      this.repository.getClosingBalances(tenantId, dateFromPrev).catch(() => []),
+      this.repository.getClosingBalances(tenantId, date_to)
     ])
     const openingMap = this._balanceMap(opening)
     const closingMap = this._balanceMap(closing)
@@ -222,11 +222,11 @@ export class ReportsService {
    * Uses full reporting COA (includes inactive accounts that still have ledger rows).
    * Surfaces ledger codes missing from COA and reconciliation variance when the identity does not hold.
    */
-  async getBalanceSheet(params) {
+  async getBalanceSheet(tenantId, params) {
     const { as_of_date } = params
-    const coaRaw = await this.repository.getChartOfAccountsForReporting()
+    const coaRaw = await this.repository.getChartOfAccountsForReporting(tenantId)
     const coa = this._dedupeCoaByCode(coaRaw)
-    const closing = await this.repository.getClosingBalances(as_of_date)
+    const closing = await this.repository.getClosingBalances(tenantId, as_of_date)
     const balanceMap = this._balanceMap(closing)
     const coaHierarchyConflicts = this._coaHierarchyConflicts(coa, balanceMap, [
       'Asset',
@@ -378,9 +378,9 @@ export class ReportsService {
   /**
    * Cash Flow: movements in Cash (1100) - simplified operating section
    */
-  async getCashFlow(params) {
+  async getCashFlow(tenantId, params) {
     const { date_from, date_to } = params
-    const activity = await this.repository.getPeriodActivity(date_from, date_to)
+    const activity = await this.repository.getPeriodActivity(tenantId, date_from, date_to)
     const cashAct = activity.find((a) => a.account_code === '1100') || {
       total_debit: 0,
       total_credit: 0
@@ -390,9 +390,10 @@ export class ReportsService {
     const netChange = cashIn - cashOut
 
     const opening = await this.repository.getClosingBalances(
+      tenantId,
       new Date(new Date(date_from).getTime() - 86400000).toISOString().split('T')[0]
     ).catch(() => [])
-    const closing = await this.repository.getClosingBalances(date_to)
+    const closing = await this.repository.getClosingBalances(tenantId, date_to)
     const openingCash = opening.find((b) => b.account_code === '1100')?.balance ?? 0
     const closingCash = closing.find((b) => b.account_code === '1100')?.balance ?? 0
 
@@ -413,15 +414,15 @@ export class ReportsService {
    * Statement of Changes in Equity: movements in Equity accounts (4xxx)
    * Changes derived from ledger balance: opening - closing (equity is credit-normal)
    */
-  async getStatementOfChangesInEquity(params) {
+  async getStatementOfChangesInEquity(tenantId, params) {
     const { date_from, date_to } = params
-    const coa = await this.repository.getChartOfAccounts()
+    const coa = await this.repository.getChartOfAccounts(tenantId)
     const equityAccounts = coa.filter((a) => a.account_type === 'Equity' && a.level === 2)
 
     const dateFromPrev = new Date(new Date(date_from).getTime() - 86400000).toISOString().split('T')[0]
     const [opening, closing] = await Promise.all([
-      this.repository.getClosingBalances(dateFromPrev).catch(() => []),
-      this.repository.getClosingBalances(date_to)
+      this.repository.getClosingBalances(tenantId, dateFromPrev).catch(() => []),
+      this.repository.getClosingBalances(tenantId, date_to)
     ])
     const openingMap = this._balanceMap(opening)
     const closingMap = this._balanceMap(closing)

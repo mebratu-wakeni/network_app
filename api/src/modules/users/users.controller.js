@@ -24,7 +24,6 @@ export class UsersController {
         return next(error)
       }
 
-      // Return current user with their rules and avatar (for header/profile)
       res.json({
         ok: true,
         user: {
@@ -48,7 +47,7 @@ export class UsersController {
   getProfile = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const user = await this.service.getById(id)
+      const user = await this.service.getById(req.tenantId, id)
       res.json({ ok: true, user })
     } catch (error) {
       next(error)
@@ -63,14 +62,13 @@ export class UsersController {
   assignRole = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const result = await this.service.assignRoleToUser(id, req.validBody)
+      const result = await this.service.assignRoleToUser(req.tenantId, id, req.validBody)
       res.json({ ok: true, ...result })
     } catch (error) {
       next(error)
     }
   }
 
-  // controllers/users.controller.js
   deleteUser = async (req, res, next) => {
     try {
       const { id } = req.validParams;
@@ -82,7 +80,7 @@ export class UsersController {
         return next(error);
       }
 
-      const deletedUser = await this.service.deleteUser(id);
+      const deletedUser = await this.service.deleteUser(req.tenantId, id);
 
       return res.json({
         ok: true,
@@ -101,7 +99,7 @@ export class UsersController {
   removeRole = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const result = await this.service.removeRoleFromUser(id, req.validBody)
+      const result = await this.service.removeRoleFromUser(req.tenantId, id, req.validBody)
       res.json({ ok: true, ...result })
     } catch (error) {
       next(error)
@@ -115,7 +113,7 @@ export class UsersController {
   assignRule = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const result = await this.service.assignRuleToUser(id, req.validBody)
+      const result = await this.service.assignRuleToUser(req.tenantId, id, req.validBody)
       res.json({ ok: true, ...result })
     } catch (error) {
       next(error)
@@ -129,7 +127,7 @@ export class UsersController {
   removeRule = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const result = await this.service.removeRuleFromUser(id, req.validBody)
+      const result = await this.service.removeRuleFromUser(req.tenantId, id, req.validBody)
       res.json({ ok: true, ...result })
     } catch (error) {
       next(error)
@@ -152,11 +150,8 @@ export class UsersController {
     }
   }
 
-  // In your UsersController class:
-
   updateProfile = async (req, res, next) => {
     try {
-      // const userId = req.user.id;
       const { id } = req.validParams || { id: Number(req.params.id) };
       const userId = id;
       const user = await this.service.updateProfile(req.tenantId, userId, {...req.validBody, ...req.body});
@@ -168,9 +163,9 @@ export class UsersController {
 
   updateUserProfile = async (req, res, next) => {
     try {
-      const userId = req.user.id; // self
+      const userId = req.user.id;
 
-      const user = await this.service.updateUserProfile(userId, {...req.validBody, ...req.body})
+      const user = await this.service.updateUserProfile(req.tenantId, userId, {...req.validBody, ...req.body})
 
       res.json({ ok: true, user});
 
@@ -182,16 +177,14 @@ export class UsersController {
 
   uploadAvatar = async (req, res, next) => {
     try {
-      // Get user ID from route params (allows admin to update any user's avatar)
       const { id } = req.validParams || { id: Number(req.params.id) };
       const userId = id;
-      const userInfo = await this.service.getById(id);
+      const userInfo = await this.service.getById(req.tenantId, id);
 
       const avatarKey = userInfo.avatar_key;
 
       this.deleteAvatarFile(avatarKey);
 
-      // Create multer instance
       const upload = multer({
         storage: multer.diskStorage({
           destination: (req, file, cb) => {
@@ -221,7 +214,6 @@ export class UsersController {
         }
       });
 
-      // Wrap the multer middleware in a Promise to handle it properly
       const uploadPromise = new Promise((resolve, reject) => {
         upload.single('avatar')(req, res, (err) => {
           if (err) {
@@ -238,9 +230,6 @@ export class UsersController {
         return res.status(400).json({ ok: false, error: 'No avatar file uploaded' });
       }
 
-      
-
-      // Process image to get metadata
       const imageBuffer = await sharp(req.file.path)
         .metadata()
         .then(metadata => ({
@@ -259,11 +248,11 @@ export class UsersController {
         avatar_height: imageBuffer.height
       };
 
-      const user = await this.service.updateAvatar(userId, avatarData);
+      const user = await this.service.updateAvatar(req.tenantId, userId, avatarData);
 
       res.json({ ok: true, user });
     } catch (error) {
-      console.error('Upload error:', error); // Debug log
+      console.error('Upload error:', error);
       next(error);
     }
   };
@@ -271,96 +260,59 @@ export class UsersController {
   changePassword = async (req, res, next) => {
     try {
       const userId = req.user.id;
-      const result = await this.service.changePassword(userId, req.validBody);
+      const result = await this.service.changePassword(req.tenantId, userId, req.validBody);
       res.json({ ok: true, ...result });
     } catch (error) {
       next(error);
     }
   };
 
-  /**
-   * DELETE /api/users/avatar
-   * Remove user's avatar (delete file and clear database fields)
-   */
   removeAvatar = async (req, res, next) => {
     try {
-      // Get user ID from route params (allows admin to remove any user's avatar)
       const { id } = req.validParams || { id: Number(req.params.id) };
       const userId = id;
 
-      // Get avatar key and remove from database
-      const result = await this.service.removeAvatar(userId);
-
-      // // Delete the file from filesystem if it exists
-      // if (result.avatarKey) {
-      //   const filePath = path.join('uploads', 'avatars', result.avatarKey);
-      //   try {
-      //     if (fs.existsSync(filePath)) {
-      //       fs.unlinkSync(filePath);
-      //       // eslint-disable-next-line no-console
-      //     }
-      //   } catch (fileError) {
-      //     // Log error but don't fail the request if file deletion fails
-      //     // (file might have been manually deleted or doesn't exist)
-      //     // eslint-disable-next-line no-console
-      //     console.warn(`Warning: Could not delete avatar file ${filePath}:`, fileError.message);
-      //   }
-      // }
+      const result = await this.service.removeAvatar(req.tenantId, userId);
 
       this.deleteAvatarFile(result.avatarKey)
 
       res.json({ ok: true, user: result.user });
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Remove avatar error:', error);
       next(error);
     }
   };
 
   deleteAvatarFile(avatarKey) {
-    // Delete the file from filesystem if it exists
     if (avatarKey) {
       const filePath = path.join(getAvatarsDir(), avatarKey);
       try {
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
-          // eslint-disable-next-line no-console
         }
       } catch (fileError) {
-        // Log error but don't fail the request if file deletion fails
-        // (file might have been manually deleted or doesn't exist)
-        // eslint-disable-next-line no-console
         console.warn(`Warning: Could not delete avatar file ${filePath}:`, fileError.message);
       }
     }
   }
 
-  /**
-   * GET /api/users/:id/permissions
-   * Get user's roles and directly assigned rules
-   */
   getPermissions = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const permissions = await this.service.getUserRolesAndRules(id)
+      const permissions = await this.service.getUserRolesAndRules(req.tenantId, id)
       res.json({ ok: true, ...permissions })
     } catch (error) {
       next(error)
     }
   }
 
-  /**
-   * PATCH /api/users/:id/toggle-status
-   * Toggle user active status (admin only)
-   */
   toggleUserStatus = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const user = await this.service.toggleUserStatus(id)
+      const user = await this.service.toggleUserStatus(req.tenantId, id)
       res.json({ ok: true, user })
     } catch (error) {
       next(error)
     }
   }
 }
-

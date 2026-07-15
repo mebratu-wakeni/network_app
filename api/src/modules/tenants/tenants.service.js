@@ -126,6 +126,7 @@ export class TenantsService {
       // Default walk-in customer for quick sales/expenses
       await trx('customers').insert({
         tenant_id: tenant.id,
+        customer_code: 'CUST0001',
         name: 'Walk-in',
         customer_type: 'other'
       })
@@ -171,7 +172,7 @@ export class TenantsService {
 
     const tempPassword = generateTempPassword()
     const hash = await bcrypt.hash(tempPassword, 10)
-    await this.usersRepository.changePassword(userId, hash)
+    await this.usersRepository.changePassword(tenantId, userId, hash)
 
     return { username: user.username, tempPassword }
   }

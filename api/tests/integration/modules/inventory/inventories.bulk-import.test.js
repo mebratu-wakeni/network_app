@@ -8,6 +8,8 @@ import { InventoriesRepository } from '../../../../src/modules/inventory/invento
 import { InventoriesService } from '../../../../src/modules/inventory/inventories.service.js'
 import { InventoriesController } from '../../../../src/modules/inventory/inventories.controller.js'
 
+const TENANT_ID = 1
+
 function createTestDb() {
   return knexModule({
     client: 'sqlite3',
@@ -19,21 +21,24 @@ function createTestDb() {
 async function createSchema(db) {
   await db.schema.createTable('categories', (t) => {
     t.increments('id').primary()
-    t.string('name').notNullable().unique()
+    t.integer('tenant_id').unsigned().notNullable().defaultTo(TENANT_ID)
+    t.string('name').notNullable()
     t.timestamp('created_at')
     t.timestamp('last_updated')
   })
 
   await db.schema.createTable('units', (t) => {
     t.increments('id').primary()
-    t.string('name').notNullable().unique()
+    t.integer('tenant_id').unsigned().notNullable().defaultTo(TENANT_ID)
+    t.string('name').notNullable()
     t.timestamp('created_at')
     t.timestamp('last_updated')
   })
 
   await db.schema.createTable('products', (t) => {
     t.increments('id').primary()
-    t.string('product_code').unique()
+    t.integer('tenant_id').unsigned().notNullable().defaultTo(TENANT_ID)
+    t.string('product_code')
     t.string('name').notNullable()
     t.string('description')
     t.integer('category_id')
@@ -46,8 +51,9 @@ async function createSchema(db) {
 
   await db.schema.createTable('inventories', (t) => {
     t.increments('id').primary()
+    t.integer('tenant_id').unsigned().notNullable().defaultTo(TENANT_ID)
     t.integer('product_id').notNullable()
-    t.string('inventory_code').unique()
+    t.string('inventory_code')
     t.string('batch_no')
     t.date('expiry_date')
     t.date('purchase_date').notNullable()
@@ -65,6 +71,7 @@ async function createSchema(db) {
 
   await db.schema.createTable('bin_cards', (t) => {
     t.increments('id').primary()
+    t.integer('tenant_id').unsigned().notNullable().defaultTo(TENANT_ID)
     t.integer('product_id').notNullable()
     t.integer('inventory_id')
     t.string('batch_no')
@@ -86,11 +93,24 @@ async function createSchema(db) {
     t.timestamp('last_updated')
     t.string('sync_status').defaultTo('pending')
   })
+
+  await db.schema.createTable('fiscal_years', (t) => {
+    t.increments('id').primary()
+    t.integer('tenant_id').unsigned().notNullable()
+    t.integer('fiscal_year').notNullable()
+    t.date('start_date').notNullable()
+    t.date('end_date').notNullable()
+    t.string('status', 20).notNullable().defaultTo('open')
+  })
 }
 
 function createTestApp(controller) {
   const app = express()
   app.use(express.json())
+  app.use((req, _res, next) => {
+    req.tenantId = TENANT_ID
+    next()
+  })
   app.post('/api/inventories/bulk-import', validate(bulkImportStockSchema), controller.bulkImport)
   app.use(notFound)
   app.use(errorHandler)
@@ -104,6 +124,13 @@ describe('inventories bulk-import integration', () => {
   beforeEach(async () => {
     db = createTestDb()
     await createSchema(db)
+    await db('fiscal_years').insert({
+      tenant_id: TENANT_ID,
+      fiscal_year: 2026,
+      start_date: '2026-01-01',
+      end_date: '2026-12-31',
+      status: 'open'
+    })
 
     const repository = new InventoriesRepository(db)
     const service = new InventoriesService(repository)
@@ -137,18 +164,18 @@ describe('inventories bulk-import integration', () => {
     expect(res.body.success).toBe(true)
     expect(res.body.summary).toMatchObject({ total: 1, successful: 1, failed: 0 })
 
-    const category = await db('categories').whereRaw('LOWER(name) = LOWER(?)', ['Analgesics']).first()
-    const unit = await db('units').whereRaw('LOWER(name) = LOWER(?)', ['Strip']).first()
+    const category = await db('categories').where({ tenant_id: TENANT_ID }).whereRaw('LOWER(name) = LOWER(?)', ['Analgesics']).first()
+    const unit = await db('units').where({ tenant_id: TENANT_ID }).whereRaw('LOWER(name) = LOWER(?)', ['Strip']).first()
     expect(category).toBeTruthy()
     expect(unit).toBeTruthy()
 
-    const product = await db('products').where({ name: 'Imported Product X' }).first()
+    const product = await db('products').where({ tenant_id: TENANT_ID, name: 'Imported Product X' }).first()
     expect(product).toBeTruthy()
     expect(product.product_code).toMatch(/^PRD\d+$/)
     expect(product.category_id).toBe(category.id)
     expect(product.unit_id).toBe(unit.id)
 
-    const inventory = await db('inventories').where({ product_id: product.id }).first()
+    const inventory = await db('inventories').where({ tenant_id: TENANT_ID, product_id: product.id }).first()
     expect(inventory).toBeTruthy()
     expect(Number(inventory.quantity)).toBe(5)
   })

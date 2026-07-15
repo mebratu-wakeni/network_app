@@ -20,12 +20,17 @@ export class UsersRepository {
   }
 
   /**
-   * Find user by id. id is globally unique so no tenant filter is required here,
-   * but callers that enforce tenant isolation should still verify user.tenant_id
-   * matches the caller's tenant (see middleware/auth.js).
+   * Find user by id. Used by auth middleware (token already validated against tenant).
    */
   async findById(id) {
     return this.knex('users').where({ id }).first()
+  }
+
+  /**
+   * Find user by id scoped to a tenant (for tenant-isolated API operations).
+   */
+  async findByIdForTenant(tenantId, id) {
+    return this.knex('users').where({ id, tenant_id: tenantId }).first()
   }
 
   /**
@@ -40,9 +45,9 @@ export class UsersRepository {
   /**
    * Update user
    */
-  async update(id, data) {
+  async update(tenantId, id, data) {
     return this.knex('users')
-      .where({ id })
+      .where({ id, tenant_id: tenantId })
       .update(data)
       .returning(['id', 'email', 'display_name', 'is_active', 'avatar_url', 'avatar_key', 'created_at', 'updated_at', 'last_login_at'])
   }
@@ -205,9 +210,9 @@ export class UsersRepository {
   }
 
   // repository/users.repository.js
-  async deleteUser(id) {
+  async deleteUser(tenantId, id) {
     const user = await this.knex('users')
-      .where({ id })
+      .where({ id, tenant_id: tenantId })
       .first();
 
     if (!user) {
@@ -217,7 +222,7 @@ export class UsersRepository {
     }
 
     await this.knex('users')
-      .where({ id })
+      .where({ id, tenant_id: tenantId })
       .delete();
 
     // Return a controlled subset (important)
@@ -265,7 +270,7 @@ export class UsersRepository {
     return parseInt(result.total, 10)
   }
 
-  async updateProfile(userId, profileData) {
+  async updateProfile(tenantId, userId, profileData) {
     // Map camelCase to snake_case for database
     const updateData = {}
     if (profileData.username !== undefined) updateData.username = profileData.username
@@ -274,7 +279,7 @@ export class UsersRepository {
     if (profileData.is_active !== undefined) updateData.is_active = profileData.is_active
     
     const [updatedUser] = await this.knex('users')
-      .where('id', userId)
+      .where({ id: userId, tenant_id: tenantId })
       .update({
         ...updateData,
         updated_at: this.knex.fn.now()
@@ -286,10 +291,10 @@ export class UsersRepository {
         'created_at', 'updated_at', 'last_login_at'
       ]);
 
-    return updatedUser
+    return updatedUser || null
   }
 
-  async updateUserProfile(userId, profileData) {
+  async updateUserProfile(tenantId, userId, profileData) {
     // Map camelCase to snake_case for database
     const updateData = {}
     if (profileData.email !== undefined) updateData.email = profileData.email
@@ -297,7 +302,7 @@ export class UsersRepository {
     if (profileData.phone !== undefined) updateData.phone = profileData.phone
 
     const [updatedUser] = await this.knex('users')
-      .where('id', userId)
+      .where({ id: userId, tenant_id: tenantId })
       .update({
         ...updateData,
         updated_at: this.knex.fn.now()
@@ -309,12 +314,12 @@ export class UsersRepository {
         'created_at', 'updated_at', 'last_login_at'
       ]);
 
-    return updatedUser
+    return updatedUser || null
   }
 
-  async updateAvatar(userId, avatarData) {
+  async updateAvatar(tenantId, userId, avatarData) {
     const [updatedUser] = await this.knex('users')
-      .where('id', userId)
+      .where({ id: userId, tenant_id: tenantId })
       .update({
         ...avatarData,
         avatar_updated_at: this.knex.fn.now(),
@@ -333,9 +338,9 @@ export class UsersRepository {
   /**
    * Remove avatar from user (set all avatar fields to null)
    */
-  async removeAvatar(userId) {
+  async removeAvatar(tenantId, userId) {
     const [updatedUser] = await this.knex('users')
-      .where('id', userId)
+      .where({ id: userId, tenant_id: tenantId })
       .update({
         avatar_key: null,
         avatar_url: null,
@@ -356,14 +361,20 @@ export class UsersRepository {
     return updatedUser
   }
 
-  async changePassword(userId, hashedPassword) {
-    await this.knex('users')
-      .where('id', userId)
+  async changePassword(tenantId, userId, hashedPassword) {
+    const updated = await this.knex('users')
+      .where({ id: userId, tenant_id: tenantId })
       .update({
         password_hash: hashedPassword,
         updated_at: this.knex.fn.now(),
         last_password_changed_at: this.knex.fn.now()
       })
+
+    if (!updated) {
+      const error = new Error('User not found')
+      error.status = 404
+      throw error
+    }
 
     return { message: 'Password updated successfully' }
   }
@@ -385,9 +396,8 @@ export class UsersRepository {
    * @param {number} userId - User ID
    * @returns {Object} Updated user
    */
-  async toggleUserStatus(userId) {
-    // Get current user status
-    const user = await this.findById(userId)
+  async toggleUserStatus(tenantId, userId) {
+    const user = await this.findByIdForTenant(tenantId, userId)
     if (!user) {
       const error = new Error('User not found')
       error.status = 404
@@ -398,7 +408,7 @@ export class UsersRepository {
 
     // Update user status
     const [updatedUser] = await this.knex('users')
-      .where('id', userId)
+      .where({ id: userId, tenant_id: tenantId })
       .update({
         is_active: newStatus,
         updated_at: this.knex.fn.now()

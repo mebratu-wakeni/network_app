@@ -9,35 +9,33 @@ export class ProductsService {
 
   /**
    * Get all products with pagination, search, and sorting
+   * @param {number} tenantId
    * @param {Object} params - { limit, offset, search, sortBy, orderBy }
    * @returns {Object} - { products, total }
    */
-  async findAll(params = {}) {
-    return this.repository.findAll(params)
+  async findAll(tenantId, params = {}) {
+    return this.repository.findAll(tenantId, params)
   }
 
   /**
    * Export products to CSV
+   * @param {number} tenantId
    * @param {Object} params - { limit, offset, search, sortBy, orderBy }
    * @returns {string} CSV formatted string
    */
-  async exportToCSV(params = {}) {
-    // For export, we typically want all matching records, not just one page
+  async exportToCSV(tenantId, params = {}) {
     const exportParams = {
       ...params,
-      limit: params.limit || 10000, // Large limit for export
+      limit: params.limit || 10000,
       offset: 0
     }
-    
-    const result = await this.repository.findAll(exportParams)
+
+    const result = await this.repository.findAll(tenantId, exportParams)
     const products = result.products || []
-    
-    // CSV Headers
+
     const headers = ['Product Code', 'Name', 'Description', 'Category', 'Unit', 'Balance', 'Created At', 'Last Updated']
-    
-    // Convert products to CSV rows
+
     const rows = products.map(product => {
-      // Escape fields that contain commas or quotes
       const escapeCSV = (field) => {
         if (field === null || field === undefined) return ''
         const str = String(field)
@@ -46,7 +44,7 @@ export class ProductsService {
         }
         return str
       }
-      
+
       return [
         escapeCSV(product.product_code || ''),
         escapeCSV(product.name || ''),
@@ -58,32 +56,21 @@ export class ProductsService {
         escapeCSV(product.last_updated || '')
       ].join(',')
     })
-    
-    // Combine headers and rows
-    const csvContent = [
-      headers.join(','),
-      ...rows
-    ].join('\n')
-    
-    return csvContent
+
+    return [headers.join(','), ...rows].join('\n')
   }
 
   /**
    * Bulk import products from CSV-shaped rows.
-   * Only **name** is required per row. **category** and **unit** are optional (auto-created when a name string is provided).
-   * **product_code** is never taken from the client import payload — it is generated in this method.
-   * @param {Array} products - Array of product objects with { name, description?, category?, unit? }
-   * @returns {Object} Summary with { total, successful, failed, results }
    */
-  async bulkImport(products) {
+  async bulkImport(tenantId, products) {
     if (!Array.isArray(products) || products.length === 0) {
       throw new Error('Products array is required and must not be empty')
     }
 
-    // Get all categories and units for lookup
-    const categories = await this.repository.getAllCategories()
-    const units = await this.repository.getAllUnits()
-    
+    const categories = await this.repository.getAllCategories(tenantId)
+    const units = await this.repository.getAllUnits(tenantId)
+
     const categoryMap = new Map(categories.map((c) => [c.name.toLowerCase(), c.id]))
     const unitMap = new Map(units.map((u) => [u.name.toLowerCase(), u.id]))
 
@@ -97,6 +84,7 @@ export class ProductsService {
     const missingCategories = uniqueCategoryNames.filter((n) => !categoryMap.has(n.toLowerCase()))
     if (missingCategories.length > 0) {
       const createdCats = await this.repository.bulkInsertCategories(
+        tenantId,
         missingCategories.map((name) => ({
           name,
           description: null,
@@ -114,6 +102,7 @@ export class ProductsService {
     const missingUnits = uniqueUnitNames.filter((n) => !unitMap.has(n.toLowerCase()))
     if (missingUnits.length > 0) {
       const createdUnits = await this.repository.bulkInsertUnits(
+        tenantId,
         missingUnits.map((name) => ({
           name,
           abbreviation: null,
@@ -125,8 +114,8 @@ export class ProductsService {
       }
     }
 
-    let nextCodeNum = await this.repository.getMaxProductCodeNumber()
-    const existingNamesLower = await this.repository.getProductNamesLowerSet()
+    let nextCodeNum = await this.repository.getMaxProductCodeNumber(tenantId)
+    const existingNamesLower = await this.repository.getProductNamesLowerSet(tenantId)
     const seenNameLower = new Set()
 
     const results = []
@@ -143,7 +132,7 @@ export class ProductsService {
             success: false,
             issueKind: 'error',
             error: 'Product name is required',
-            product: product
+            product
           })
           continue
         }
@@ -169,20 +158,19 @@ export class ProductsService {
             success: false,
             issueKind: 'warning',
             error: `Product with name "${name}" already exists`,
-            product: product,
+            product,
             existingProduct: null
           })
           continue
         }
         seenNameLower.add(nameKey)
 
-        // Generate product_code in format "PRD####"
         nextCodeNum++
         const productCode = `PRD${String(nextCodeNum).padStart(4, '0')}`
 
-        // Prepare product for insertion
         const description = (product.description || '').trim() || null
         const productData = {
+          tenant_id: tenantId,
           product_code: productCode,
           name,
           description,
@@ -196,30 +184,26 @@ export class ProductsService {
 
         productsToInsert.push(productData)
 
-        // Add to results as pending (will be marked success after insert)
         results.push({
           index,
           success: true,
           product: productData
         })
-
       } catch (error) {
         results.push({
           index,
           success: false,
           issueKind: 'error',
           error: error.message || 'Unknown error during validation',
-          product: product
+          product
         })
       }
     }
 
-    // Bulk insert all valid products
     if (productsToInsert.length > 0) {
       try {
         const inserted = await this.repository.bulkCreate(productsToInsert)
-        
-        // Update results with inserted products
+
         let insertIndex = 0
         for (let i = 0; i < results.length; i++) {
           if (results[i].success) {
@@ -228,7 +212,6 @@ export class ProductsService {
           }
         }
       } catch (error) {
-        // If bulk insert fails, mark all pending as failed
         for (const result of results) {
           if (result.success && !result.product.id) {
             result.success = false
@@ -240,7 +223,6 @@ export class ProductsService {
       }
     }
 
-    // Calculate summary: errors = invalid / requirement failures; warnings = skipped (e.g. duplicate)
     const successful = results.filter(r => r.success).length
     const warnings = results.filter(r => !r.success && r.issueKind === 'warning').length
     const errors = results.filter(r => !r.success && r.issueKind !== 'warning').length
@@ -256,139 +238,123 @@ export class ProductsService {
     }
   }
 
-  /**
-   * Create a new category
-   * @param {Object} data - { name, description? }
-   * @returns {Object} Created category
-   */
-  async createCategory(data) {
-    // Check if category already exists
-    const existing = await this.repository.findCategoryByName(data.name)
+  async createCategory(tenantId, data) {
+    const existing = await this.repository.findCategoryByName(tenantId, data.name)
     if (existing) {
       throw new Error(`Category "${data.name}" already exists`)
     }
 
-    const categoryData = {
+    const category = await this.repository.createCategory({
+      tenant_id: tenantId,
       name: data.name.trim(),
       description: data.description?.trim() || null,
       sync_status: 'pending'
-    }
-
-    const category = await this.repository.createCategory(categoryData)
+    })
     return category
   }
 
-  /**
-   * Create a new unit
-   * @param {Object} data - { name, abbreviation? }
-   * @returns {Object} Created unit
-   */
-  async createUnit(data) {
-    // Check if unit already exists
-    const existing = await this.repository.findUnitByName(data.name)
+  async createUnit(tenantId, data) {
+    const existing = await this.repository.findUnitByName(tenantId, data.name)
     if (existing) {
       throw new Error(`Unit "${data.name}" already exists`)
     }
 
-    const unitData = {
+    const unit = await this.repository.createUnit({
+      tenant_id: tenantId,
       name: data.name.trim(),
       abbreviation: data.abbreviation?.trim() || null,
       sync_status: 'pending'
-    }
-
-    const unit = await this.repository.createUnit(unitData)
+    })
     return unit
   }
 
-  /**
-   * Get all categories
-   * @returns {Array} Array of category objects
-   */
-  async getAllCategories() {
-    return this.repository.getAllCategories()
+  async getAllCategories(tenantId) {
+    return this.repository.getAllCategories(tenantId)
   }
 
-  /**
-   * Get all units
-   * @returns {Array} Array of unit objects
-   */
-  async getAllUnits() {
-    return this.repository.getAllUnits()
+  async getAllUnits(tenantId) {
+    return this.repository.getAllUnits(tenantId)
   }
 
-  /**
-   * Find category by name
-   * @param {string} name - Category name
-   * @returns {Object|null} Category object or null
-   */
-  async findCategoryByName(name) {
-    return this.repository.findCategoryByName(name)
+  async findCategoryByName(tenantId, name) {
+    return this.repository.findCategoryByName(tenantId, name)
   }
 
-  /**
-   * Find unit by name
-   * @param {string} name - Unit name
-   * @returns {Object|null} Unit object or null
-   */
-  async findUnitByName(name) {
-    return this.repository.findUnitByName(name)
+  async findUnitByName(tenantId, name) {
+    return this.repository.findUnitByName(tenantId, name)
   }
 
-  /**
-   * Create a new product with auto-generated product code
-   * @param {Object} data - { name, description?, category_id, unit_id, remark? }
-   * @returns {Object} Created product
-   */
-  async createProduct(data) {
-    // Check if product with same name already exists
-    const existing = await this.repository.findByName(data.name)
+  async createProduct(tenantId, data) {
+    const existing = await this.repository.findByName(tenantId, data.name)
     if (existing) {
       throw new Error(`Product "${data.name}" already exists`)
     }
 
-    // Get next product code number
-    const nextCodeNum = await this.repository.getMaxProductCodeNumber()
+    if (data.category_id != null) {
+      const category = await this.repository.findCategoryById(tenantId, data.category_id)
+      if (!category) {
+        throw new Error('Invalid category ID')
+      }
+    }
+
+    if (data.unit_id != null) {
+      const unit = await this.repository.findUnitById(tenantId, data.unit_id)
+      if (!unit) {
+        throw new Error('Invalid unit ID')
+      }
+    }
+
+    const nextCodeNum = await this.repository.getMaxProductCodeNumber(tenantId)
     const productCode = `PRD${String(nextCodeNum + 1).padStart(4, '0')}`
 
     const productData = {
+      tenant_id: tenantId,
       product_code: productCode,
       name: data.name.trim(),
       description: data.description?.trim() || null,
       category_id: data.category_id ?? null,
       unit_id: data.unit_id ?? null,
       remark: data.remark?.trim() || null,
+      expiry_threshold: data.expiry_threshold ?? 30,
       sync_status: 'pending'
     }
 
     const result = await this.repository.create(productData)
-    
     const createdProduct = Array.isArray(result) ? result[0] : result
-    
+
     if (!createdProduct || !createdProduct.id) {
       throw new Error('Product creation failed: No product returned from database')
     }
-    
+
     return createdProduct
   }
 
-  /**
-   * Update an existing product
-   * @param {number} id - Product ID
-   * @param {Object} data - { name, description?, category_id, unit_id, remark? }
-   * @returns {Object} Updated product
-   */
-  async updateProduct(id, data) {
-    // Check if product exists
-    const existing = await this.repository.findById(id)
+  async updateProduct(tenantId, id, data) {
+    const existing = await this.repository.findById(tenantId, id)
     if (!existing) {
-      throw new Error(`Product with ID ${id} not found`)
+      const err = new Error(`Product with ID ${id} not found`)
+      err.status = 404
+      throw err
     }
 
-    // If name is being updated, check for duplicates
     if (data.name && data.name.trim() !== existing.name) {
-      const duplicate = await this.repository.findByName(data.name.trim())
+      const duplicate = await this.repository.findByName(tenantId, data.name.trim())
       if (duplicate && duplicate.id !== id) {
         throw new Error(`Product "${data.name}" already exists`)
+      }
+    }
+
+    if (Object.hasOwn(data, 'category_id') && data.category_id != null) {
+      const category = await this.repository.findCategoryById(tenantId, data.category_id)
+      if (!category) {
+        throw new Error('Invalid category ID')
+      }
+    }
+
+    if (Object.hasOwn(data, 'unit_id') && data.unit_id != null) {
+      const unit = await this.repository.findUnitById(tenantId, data.unit_id)
+      if (!unit) {
+        throw new Error('Invalid unit ID')
       }
     }
 
@@ -405,25 +371,17 @@ export class ProductsService {
       expiry_threshold: data.expiry_threshold != null ? data.expiry_threshold : (existing.expiry_threshold != null ? existing.expiry_threshold : 30)
     }
 
-    await this.repository.update(id, updateData)
-    // Always read back the row so clients get the full persisted record (e.g. expiry_threshold)
-    // even if the driver's UPDATE … RETURNING shape varies.
-    return this.repository.findById(id)
+    await this.repository.update(tenantId, id, updateData)
+    return this.repository.findById(tenantId, id)
   }
 
-  /**
-   * Delete a product
-   * @param {number} id - Product ID
-   * @returns {boolean} True if deleted
-   */
-  async deleteProduct(id) {
-    // Check if product exists
-    const existing = await this.repository.findById(id)
+  async deleteProduct(tenantId, id) {
+    const existing = await this.repository.findById(tenantId, id)
     if (!existing) {
       throw new Error(`Product with ID ${id} not found`)
     }
 
-    await this.repository.delete(id)
+    await this.repository.delete(tenantId, id)
     return true
   }
 }

@@ -31,7 +31,7 @@ export class CustomersVM extends ViewModel {
     this.setState('customer-table-config', {
       limit: 10,
       offset: 0,
-      sortBy: 'id',
+      sortBy: 'customer_code',
       orderBy: 'desc'
     });
     this.setState('customer-search-query', '');
@@ -145,6 +145,7 @@ export class CustomersVM extends ViewModel {
           });
           // Also update the form with the new values
           this.updateState('customer-form', {
+            customer_code: result.customer.customer_code || '',
             name: result.customer.name || '',
             contact_person: result.customer.contact_person || '',
             phone: result.customer.phone || '',
@@ -401,6 +402,7 @@ export class CustomersVM extends ViewModel {
     // Populate form with customer data
     if (customer) {
       this.updateState('customer-form', {
+        customer_code: customer.customer_code || '',
         name: customer.name || '',
         contact_person: customer.contact_person || '',
         phone: customer.phone || '',

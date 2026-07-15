@@ -185,8 +185,15 @@ export default defineConfig(({ mode }) => {
   // the renderer bundle AND the Electron main-process bundle at build time.
   const env = loadEnv(mode, process.cwd(), '')
   const isCloudBuild = env.VITE_CLOUD_MODE === 'true'
+  const cloudDefaultServer =
+    env.VITE_DEFAULT_SERVER_URL ||
+    (mode === 'development' ? 'http://localhost:4000' : 'https://mltplc.com')
 
   return {
+    define: {
+      'import.meta.env.VITE_CLOUD_MODE': JSON.stringify(isCloudBuild ? 'true' : ''),
+      'import.meta.env.VITE_DEFAULT_SERVER_URL': JSON.stringify(isCloudBuild ? cloudDefaultServer : ''),
+    },
     plugins: [
       tailwindcss(),
       ioniconsOptimizer(),
@@ -196,8 +203,9 @@ export default defineConfig(({ mode }) => {
           vite: {
             build: {},
             define: {
-              // Injected as a Node.js process.env so main.js can read it at runtime.
+              // Injected as Node process.env so main.js can read them at runtime.
               'process.env.IS_CLOUD_BUILD': JSON.stringify(isCloudBuild ? 'true' : 'false'),
+              'process.env.CLOUD_DEFAULT_SERVER_URL': JSON.stringify(isCloudBuild ? cloudDefaultServer : ''),
             },
           },
         },

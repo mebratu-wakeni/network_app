@@ -405,7 +405,7 @@ function SalesHistoryTableSection(props) {
               ]),
               TableBody({}, orders.map((order) =>
                 TableRow({ key: order.id }, [
-                  TableDCell({ class: 'font-medium' }, order.receipt_no || `SO${order.id}`),
+                  TableDCell({ class: 'font-medium' }, order.receipt_no || '—'),
                   TableDCell({}, order.customer_name || 'Walk-in'),
                   TableDCell({}, formatDateDDMMYYYY(order.order_date)),
                   TableDCell({ class: 'font-medium' }, `Br ${financeFormat(order.net_amount)}`),

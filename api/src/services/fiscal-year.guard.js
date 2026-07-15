@@ -10,24 +10,29 @@
  * Returns the matching fiscal year row so callers can set `fiscal_year` on
  * the INSERT without a second DB round-trip.
  *
- * Uses a date-range lookup rather than year-number extraction so it works
- * correctly with any calendar (Gregorian, Ethiopian, custom fiscal periods).
- *
  * @param {import('knex').Knex | import('knex').Knex.Transaction} knex
+ * @param {number} tenantId - Tenant scope for fiscal year lookup
  * @param {string} transactionDate - ISO date string (YYYY-MM-DD)
  * @returns {Promise<object>} the open fiscal year row
  * @throws {Error} HTTP 400 if no fiscal year covers the date or it is closed
  */
-export async function assertFiscalYearOpen(knex, transactionDate) {
+export async function assertFiscalYearOpen(knex, tenantId, transactionDate) {
+  if (!tenantId) {
+    const err = new Error('Tenant context is required.')
+    err.status = 401
+    throw err
+  }
+
   if (!transactionDate) {
     const err = new Error('Transaction date is required.')
     err.status = 400
     throw err
   }
 
-  const dateStr = String(transactionDate).substring(0, 10) // normalise to YYYY-MM-DD
+  const dateStr = String(transactionDate).substring(0, 10)
 
   const fy = await knex('fiscal_years')
+    .where({ tenant_id: tenantId })
     .where('start_date', '<=', dateStr)
     .where('end_date', '>=', dateStr)
     .first()

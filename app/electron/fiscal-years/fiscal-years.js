@@ -47,7 +47,30 @@ class FiscalYearsManager {
   }
 
   async getCurrent(token) {
-    return this.apiRequest('/fiscal-years/current', { method: 'GET' }, token)
+    const url = getApiUrl('/fiscal-years/current')
+    const headers = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
+    const response = await apiFetch(url, { method: 'GET', headers })
+    let data
+    try {
+      data = await response.json()
+    } catch (e) {
+      const text = await response.text()
+      throw new Error(`Invalid JSON: ${text}`)
+    }
+
+    if (response.status === 404) {
+      return { success: true, fiscal_year: null }
+    }
+
+    if (!response.ok) {
+      const err = new Error(data.error || data.message || `HTTP ${response.status}`)
+      if (data.details) err.details = data.details
+      throw err
+    }
+
+    return data
   }
 
   async closeYear(year, token) {

@@ -1,5 +1,6 @@
 const { ViewModel, SharedStateManager } = Liteframe;
 import { today, weekBounds } from '../utils/DateUtils.js';
+import { summarizeLoadErrors } from '../utils/userErrorMessage.js';
 
 const EMPTY_DASHBOARD = {
   salesToday: null,
@@ -194,7 +195,11 @@ export class DashboardVM extends ViewModel {
     }
 
     if (errors.length > 0) {
-      this.updateState('error', `Failed to load: ${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '…' : ''}`);
+      const summary = summarizeLoadErrors(
+        errors,
+        'Some dashboard figures could not be loaded.'
+      )
+      if (summary) this.updateState('error', summary)
     }
 
     this.updateState('dashboard', dashboard);

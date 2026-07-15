@@ -24,7 +24,7 @@ export function OrderDetailsDrawer(props) {
     return null;
   }
 
-  const orderRef = selectedOrder.receipt_number || `PO${selectedOrder.id}`;
+  const orderRef = selectedOrder.receipt_number || '—';
   const headerTitle = `${CONTENT_TITLES[contentType] || CONTENT_TITLES.details}: ${orderRef}`;
 
   /** Switch drawer body to payment form (called from details view footer). */

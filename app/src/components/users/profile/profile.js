@@ -2,6 +2,7 @@ const { Row, StatefulRow } = Liteframe;
 import { IonIcon } from "../../utils/Icon";
 import UsersProfileVM from "./ProfileVM";
 import { UserDetails } from "./UserDetail";
+import { displayErrorText } from "../../utils/userErrorMessage.js";
 
 
 export default function UserProfile() {
@@ -26,10 +27,7 @@ function ErrorToast(props) {
   if (!error) return false;
   closeToast('error', props);
 
-  const message =
-    typeof error === 'string'
-      ? error
-      : error.message || 'An unexpected error occurred';
+  const message = displayErrorText(error, 'An unexpected error occurred.');
 
   const handleClose = () => {
     props.viewModel.updateState('error', null);

@@ -12,12 +12,9 @@ export class PurchaseService {
     this.productsRepository = options.productsRepository || null
   }
 
-  /**
-   * Lookup products for dropdown/search
-   */
-  async getProducts(params = {}) {
+  async getProducts(tenantId, params = {}) {
     const { search, limit } = params
-    const products = await this.repository.findProducts({ search, limit })
+    const products = await this.repository.findProducts(tenantId, { search, limit })
     return products.map(p => ({
       id: p.id,
       product_code: p.product_code,
@@ -27,31 +24,20 @@ export class PurchaseService {
     }))
   }
 
-  /**
-   * Lookup suppliers for dropdown/search
-   */
-  async getSuppliers(params = {}) {
+  async getSuppliers(tenantId, params = {}) {
     const { search, limit } = params
-    const suppliers = await this.repository.findSuppliers({ search, limit })
-    return suppliers
+    return this.repository.findSuppliers(tenantId, { search, limit })
   }
 
-  /**
-   * Get withhold percentage from system settings
-   */
-  async getWithholdPercentage() {
-    const value = await this.repository.getWithholdPercentageSetting()
+  async getWithholdPercentage(tenantId) {
+    const value = await this.repository.getWithholdPercentageSetting(tenantId)
     return {
       setting_name: 'withhold_percentage',
       withhold_percentage: value
     }
   }
 
-  /**
-   * Create purchase order with items, optional initial payment, and receipt snapshot.
-   * Handles financial calculations according to payment mode rules.
-   */
-  async createOrder(payload, user) {
+  async createOrder(payload, user, tenantId) {
     const userId = user?.id || null
 
     const {
@@ -74,7 +60,6 @@ export class PurchaseService {
       throw error
     }
 
-    // 1) Compute subtotal
     const enrichedItems = items.map(it => {
       const total_price = it.quantity * it.unit_price
       return { ...it, total_price }
@@ -82,10 +67,9 @@ export class PurchaseService {
 
     const subtotal = enrichedItems.reduce((sum, it) => sum + it.total_price, 0)
 
-    // 2) Resolve withhold percentage
     let appliedWithholdPercentage = withhold_percentage
     if (appliedWithholdPercentage == null) {
-      const setting = await this.repository.getWithholdPercentageSetting()
+      const setting = await this.repository.getWithholdPercentageSetting(tenantId)
       appliedWithholdPercentage = setting != null ? setting : null
     }
 
@@ -96,7 +80,6 @@ export class PurchaseService {
 
     const netAmount = subtotal - withholdAmount
 
-    // 3) Determine initial payment based on payment_mode
     let initialPayment = null
     let amountPaid = 0
 
@@ -148,13 +131,10 @@ export class PurchaseService {
       payment_status = 'partial'
     }
 
-    // 4) Generate receipt number
-    const receipt_no = await this.repository.generateNextReceiptNumber()
+    const receipt_no = await this.repository.generateNextReceiptNumber(tenantId)
 
-    // Enforce fiscal year: block if no open year covers the order date
-    const fy = await assertFiscalYearOpen(this.repository.knex, order_date)
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, order_date)
 
-    // 5) Build order payload for repository
     const orderData = {
       supplier_id,
       order_date,
@@ -174,7 +154,6 @@ export class PurchaseService {
       hold_order_id: hold_order_id || null
     }
 
-    // 6) Prepare receipt snapshot structure
     const snapshotOrderMeta = {
       supplier_id,
       order_date,
@@ -206,7 +185,7 @@ export class PurchaseService {
       order: snapshotOrderMeta,
       items: snapshotItems,
       payments: initialPayment ? [snapshotPayment] : [],
-      supplier: null // can be populated lazily when reading
+      supplier: null
     }
 
     const receiptSnapshot = {
@@ -217,6 +196,7 @@ export class PurchaseService {
     }
 
     const result = await this.repository.createOrderWithItemsAndReceipt(
+      tenantId,
       {
         order: orderData,
         items: enrichedItems,
@@ -226,7 +206,6 @@ export class PurchaseService {
       userId
     )
 
-    // Shape response per design
     const order = result.order
     return {
       id: order.id,
@@ -242,16 +221,12 @@ export class PurchaseService {
     }
   }
 
-  /**
-   * List orders with filters + stats
-   */
-  async listOrders(params = {}) {
-    return this.repository.listOrders(params)
+  async listOrders(tenantId, params = {}) {
+    return this.repository.listOrders(tenantId, params)
   }
 
-  /** Export purchase orders to CSV. Grouped by order: order meta only on first row of each order (like import purchase preview). */
-  async exportPurchaseOrder() {
-    const result = await this.repository.exportPurchaseOrder()
+  async exportPurchaseOrder(tenantId) {
+    const result = await this.repository.exportPurchaseOrder(tenantId)
     const rows = result.export || []
 
     const headers = [
@@ -335,25 +310,18 @@ export class PurchaseService {
     return [headers.join(','), ...csvRows].join('\n')
   }
 
-  /**
-   * Get full order details
-   */
-  async getOrderDetails(id) {
-    const full = await this.repository.getOrderById(id)
+  async getOrderDetails(tenantId, id) {
+    const full = await this.repository.getOrderById(tenantId, id)
     if (!full) {
       const error = new Error('Order not found')
       error.status = 404
       throw error
     }
-
     return full
   }
 
-  /**
-   * Get receipt for an order (by order ID)
-   */
-  async getOrderReceipt(id) {
-    const receipt = await this.repository.getReceiptByOrderId(id)
+  async getOrderReceipt(tenantId, id) {
+    const receipt = await this.repository.getReceiptByOrderId(tenantId, id)
     if (!receipt) {
       const error = new Error('Receipt not found')
       error.status = 404
@@ -362,15 +330,14 @@ export class PurchaseService {
     return receipt
   }
 
-  /**
-   * Record payment for an order
-   */
-  async payOrder(id, body, user) {
+  async payOrder(tenantId, id, body, user) {
     const userId = user?.id || null
+    const paymentDate = body.payment_date || new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, tenantId, paymentDate)
 
     const paymentData = {
       amount: body.payment_amount,
-      payment_date: body.payment_date,
+      payment_date: paymentDate,
       payment_method: body.payment_mode,
       note: body.notes || null,
       cheque_no: body.cheque_details?.cheque_number || null,
@@ -378,7 +345,12 @@ export class PurchaseService {
       cheque_date: body.cheque_details?.cheque_date || null
     }
 
-    const { payment, remaining_balance } = await this.repository.recordPayment(id, paymentData, userId)
+    const { payment, remaining_balance } = await this.repository.recordPayment(
+      tenantId,
+      id,
+      paymentData,
+      userId
+    )
 
     return {
       id: payment.id,
@@ -388,13 +360,12 @@ export class PurchaseService {
     }
   }
 
-  /**
-   * Reverse purchase order
-   */
-  async reverseOrder(id, body, user) {
+  async reverseOrder(tenantId, id, body, user) {
     const userId = user?.id || null
+    const reversalDate = new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, tenantId, reversalDate)
 
-    return await this.repository.reverseOrder(id, {
+    return await this.repository.reverseOrder(tenantId, id, {
       reason: body.reason,
       reverse_inventory: body.reverse_inventory !== false,
       reverse_ledger: body.reverse_ledger !== false,
@@ -402,19 +373,16 @@ export class PurchaseService {
     })
   }
 
-  /**
-   * Bulk import purchases
-   */
-  async bulkImport(body, user) {
+  async bulkImport(tenantId, body, user) {
     const userId = user?.id || null
-
-    return await this.repository.bulkImportPurchases(body, userId)
+    const purchaseDate = body.purchase_date || body.purchaseDate
+    if (purchaseDate) {
+      await assertFiscalYearOpen(this.repository.knex, tenantId, purchaseDate)
+    }
+    return await this.repository.bulkImportPurchases(tenantId, body, userId)
   }
 
-  /**
-   * Resolve supplier name to ID: find existing (supplier/both) or create new supplier.
-   */
-  async resolveSupplierId(supplierName) {
+  async resolveSupplierId(tenantId, supplierName) {
     if (!this.customersRepository) {
       const err = new Error('Supplier resolution not available: customersRepository not configured')
       err.status = 500
@@ -426,16 +394,17 @@ export class PurchaseService {
       err.status = 400
       throw err
     }
-    let supplier = await this.customersRepository.findSupplierByName(name)
+    let supplier = await this.customersRepository.findSupplierByName(tenantId, name)
     if (supplier) return supplier.id
-    const created = await this.customersRepository.create({ name, customer_type: 'supplier' })
+    const created = await this.customersRepository.create({
+      tenant_id: tenantId,
+      name,
+      customer_type: 'supplier'
+    })
     return created.id
   }
 
-  /**
-   * Resolve product name to ID: find existing or create new product (default category/unit).
-   */
-  async resolveProductId(productName, categoryName = null, unitName = null) {
+  async resolveProductId(tenantId, productName, categoryName = null, unitName = null) {
     if (!this.productsRepository) {
       const err = new Error('Product resolution not available: productsRepository not configured')
       err.status = 500
@@ -447,26 +416,27 @@ export class PurchaseService {
       err.status = 400
       throw err
     }
-    let product = await this.productsRepository.findByName(name)
+    let product = await this.productsRepository.findByName(tenantId, name)
     if (product) return product.id
     let category = null
     let unit = null
     if (categoryName && String(categoryName).trim()) {
-      category = await this.productsRepository.findCategoryByName(String(categoryName).trim())
+      category = await this.productsRepository.findCategoryByName(tenantId, String(categoryName).trim())
     }
-    if (!category) category = await this.productsRepository.getDefaultCategory()
+    if (!category) category = await this.productsRepository.getDefaultCategory(tenantId)
     if (unitName && String(unitName).trim()) {
-      unit = await this.productsRepository.findUnitByName(String(unitName).trim())
+      unit = await this.productsRepository.findUnitByName(tenantId, String(unitName).trim())
     }
-    if (!unit) unit = await this.productsRepository.getDefaultUnit()
+    if (!unit) unit = await this.productsRepository.getDefaultUnit(tenantId)
     if (!category || !unit) {
       const err = new Error('Cannot create product: no default category or unit in database. Please add at least one category and one unit.')
       err.status = 400
       throw err
     }
-    const nextNum = await this.productsRepository.getMaxProductCodeNumber()
+    const nextNum = await this.productsRepository.getMaxProductCodeNumber(tenantId)
     const productCode = `PRD${String(nextNum + 1).padStart(4, '0')}`
     const result = await this.productsRepository.create({
+      tenant_id: tenantId,
       product_code: productCode,
       name,
       description: null,
@@ -478,10 +448,7 @@ export class PurchaseService {
     return created.id
   }
 
-  /**
-   * Import orders from spreadsheet payload (supplier/product names). Resolves names to IDs (find or create) then creates each order.
-   */
-  async importFromSpreadsheet(body, user) {
+  async importFromSpreadsheet(body, user, tenantId) {
     const { orders } = body
     if (!this.customersRepository || !this.productsRepository) {
       const err = new Error('Import from spreadsheet requires customers and products repositories')
@@ -493,10 +460,10 @@ export class PurchaseService {
     for (let i = 0; i < orders.length; i++) {
       const orderInput = orders[i]
       try {
-        const supplier_id = await this.resolveSupplierId(orderInput.supplier_name)
+        const supplier_id = await this.resolveSupplierId(tenantId, orderInput.supplier_name)
         const items = []
         for (const it of orderInput.items) {
-          const product_id = await this.resolveProductId(it.product_name, it.category || null, it.unit || null)
+          const product_id = await this.resolveProductId(tenantId, it.product_name, it.category || null, it.unit || null)
           items.push({
             product_id,
             quantity: it.quantity,
@@ -515,7 +482,7 @@ export class PurchaseService {
           first_payment: orderInput.payment_mode === 'credit' ? (orderInput.amount_paid ?? 0) : null,
           notes: 'Bulk import from spreadsheet'
         }
-        const order = await this.createOrder(payload, user)
+        const order = await this.createOrder(payload, user, tenantId)
         successful.push({ index: i, order, purchase_order_id: order.id, receipt_number: order.receipt_number })
       } catch (err) {
         failed.push({
@@ -536,22 +503,16 @@ export class PurchaseService {
     }
   }
 
-  /**
-   * Payment history
-   */
-  async getPaymentHistory(id) {
-    return this.repository.getPaymentHistory(id)
+  async getPaymentHistory(tenantId, id) {
+    return this.repository.getPaymentHistory(tenantId, id)
   }
 
-  /**
-   * Hold orders
-   */
-  async listHoldOrders(params = {}) {
-    return this.repository.listHoldOrders(params)
+  async listHoldOrders(tenantId, params = {}) {
+    return this.repository.listHoldOrders(tenantId, params)
   }
 
-  async getHoldOrder(id) {
-    const hold = await this.repository.getHoldOrderById(id)
+  async getHoldOrder(tenantId, id) {
+    const hold = await this.repository.getHoldOrderById(tenantId, id)
     if (!hold) {
       const error = new Error('Hold order not found')
       error.status = 404
@@ -560,28 +521,20 @@ export class PurchaseService {
     return hold
   }
 
-  /**
-   * Create hold order: full current-order snapshot for UI restore.
-   * @param {Object} body - Validated createHoldOrder payload
-   * @param {Object} user - { id, full_name }
-   */
-  async createHoldOrder(body, user) {
-    return await this.repository.createHoldOrder(body, user || null)
+  async createHoldOrder(tenantId, body, user) {
+    return await this.repository.createHoldOrder(tenantId, body, user || null)
   }
 
-  async archiveHoldOrder(id) {
-    await this.repository.archiveHoldOrder(id)
+  async archiveHoldOrder(tenantId, id) {
+    await this.repository.archiveHoldOrder(tenantId, id)
   }
 
-  /**
-   * Receipt list / get / void
-   */
-  async listReceipts(params = {}) {
-    return this.repository.listReceipts(params)
+  async listReceipts(tenantId, params = {}) {
+    return this.repository.listReceipts(tenantId, params)
   }
 
-  async getReceiptByNo(receiptNo) {
-    const receipt = await this.repository.getReceiptByReceiptNo(receiptNo)
+  async getReceiptByNo(tenantId, receiptNo) {
+    const receipt = await this.repository.getReceiptByReceiptNo(tenantId, receiptNo)
     if (!receipt) {
       const error = new Error('Receipt not found')
       error.status = 404
@@ -590,8 +543,8 @@ export class PurchaseService {
     return receipt
   }
 
-  async voidReceipt(id) {
-    const receipt = await this.repository.voidReceipt(id)
+  async voidReceipt(tenantId, id) {
+    const receipt = await this.repository.voidReceipt(tenantId, id)
     if (!receipt) {
       const error = new Error('Receipt not found')
       error.status = 404
@@ -600,4 +553,3 @@ export class PurchaseService {
     return receipt
   }
 }
-

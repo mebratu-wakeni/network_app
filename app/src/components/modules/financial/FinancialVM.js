@@ -1,5 +1,6 @@
 const { ViewModel, SharedStateManager } = Liteframe
 import { DROPDOWN_SEARCH_DEBOUNCE_MS, DROPDOWN_SEARCH_LIMIT } from '../../utils/dropdownSearchConfig'
+import { formatUserError } from '../../utils/userErrorMessage.js'
 
 /** Default expense form shape; paid_on is set to today when called. */
 function getDefaultExpenseForm() {
@@ -263,7 +264,7 @@ export class FinancialVM extends ViewModel {
         stats: res?.stats || { total_unsettled: 0, count_confirmed_unsettled: 0, count_unconfirmed: 0, count_settled: 0 }
       })
     } catch (e) {
-      this.updateState('error', e.message)
+      this.updateState('error', formatUserError(e, 'Something went wrong. Please try again.'))
     } finally {
       this.updateState('loading', false)
     }
@@ -339,7 +340,7 @@ export class FinancialVM extends ViewModel {
       const totalOutstanding = loans.reduce((s, l) => s + Math.max(0, Number(l.amount || 0) - Number(l.returned_amount || 0)), 0)
       this.updateState('loans-receivable', { loans, total: res?.total ?? loans.length, total_outstanding: totalOutstanding })
     } catch (e) {
-      this.updateState('error', e.message)
+      this.updateState('error', formatUserError(e, 'Something went wrong. Please try again.'))
     } finally {
       this.updateState('loading', false)
     }
@@ -458,7 +459,7 @@ export class FinancialVM extends ViewModel {
       this.updateState('expenses', res?.expenses || [])
       this.updateState('expense-total', res?.total ?? 0)
     } catch (e) {
-      this.updateState('error', e.message)
+      this.updateState('error', formatUserError(e, 'Something went wrong. Please try again.'))
     } finally {
       this.updateState('loading', false)
     }
@@ -521,7 +522,7 @@ export class FinancialVM extends ViewModel {
       this.updateState('deposit-total', listRes?.total ?? 0)
       this.updateState('deposit-stats', statsRes?.stats || {})
     } catch (e) {
-      this.updateState('error', e.message)
+      this.updateState('error', formatUserError(e, 'Something went wrong. Please try again.'))
     } finally {
       this.updateState('loading', false)
     }
@@ -596,7 +597,7 @@ export class FinancialVM extends ViewModel {
       const loansTotalOutstanding = loans.reduce((s, l) => s + Math.max(0, Number(l.amount || 0) - Number(l.returned_amount || 0)), 0)
       this.updateState('loans-receivable', { loans, total: loansRes?.total ?? loans.length, total_outstanding: loansTotalOutstanding })
     } catch (e) {
-      this.updateState('error', e.message)
+      this.updateState('error', formatUserError(e, 'Something went wrong. Please try again.'))
     } finally {
       this.updateState('loading', false)
     }
@@ -635,7 +636,7 @@ export class FinancialVM extends ViewModel {
         stats: res?.stats || { total_unsettled: 0, count_unsettled: 0, count_settled: 0 }
       })
     } catch (e) {
-      this.updateState('error', e.message)
+      this.updateState('error', formatUserError(e, 'Something went wrong. Please try again.'))
     } finally {
       this.updateState('loading', false)
     }
@@ -750,7 +751,7 @@ export class FinancialVM extends ViewModel {
       this.updateState('trade-payables', { orders: tradeRes?.orders || [], total_outstanding: tradeRes?.total_outstanding ?? 0 })
       this.updateState('loans-payable', { loans: loansRes?.loans || [], total: loansRes?.total ?? 0 })
     } catch (e) {
-      this.updateState('error', e.message)
+      this.updateState('error', formatUserError(e, 'Something went wrong. Please try again.'))
     } finally {
       this.updateState('loading', false)
     }
@@ -926,7 +927,7 @@ export class FinancialVM extends ViewModel {
         }
       }
     } catch (e) {
-      this.updateState('error', e.message || 'Failed to load report.')
+      this.updateState('error', formatUserError(e, 'Could not load report.'))
     } finally {
       this.updateState('report-loading', false)
     }

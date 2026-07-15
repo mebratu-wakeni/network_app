@@ -33,7 +33,7 @@ export class LedgerController {
         return res.json({ ok: true, balances: Object.fromEntries(accountCodes.map((c) => [c, 0])) })
       }
 
-      const balances = await this.ledgerHelper.getCurrentBalances(accountCodes)
+      const balances = await this.ledgerHelper.getCurrentBalances(accountCodes, null, req.tenantId)
       res.json({ ok: true, balances })
     } catch (err) {
       next(err)

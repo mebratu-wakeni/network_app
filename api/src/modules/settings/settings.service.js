@@ -8,8 +8,8 @@ export class SettingsService {
     this.repository = repository
   }
 
-  async getSettings() {
-    const raw = await this.repository.getAll(allowedSettingKeys)
+  async getSettings(tenantId) {
+    const raw = await this.repository.getAll(tenantId, allowedSettingKeys)
     const withhold = raw.withhold_percentage
     return {
       withhold_percentage: withhold != null ? Number(raw.withhold_percentage) : null,
@@ -21,7 +21,7 @@ export class SettingsService {
     }
   }
 
-  async updateSettings(input) {
+  async updateSettings(tenantId, input) {
     const updates = {}
     if (input.hasOwnProperty('withhold_percentage')) {
       updates.withhold_percentage = input.withhold_percentage == null ? null : String(input.withhold_percentage)
@@ -31,8 +31,8 @@ export class SettingsService {
     if (input.hasOwnProperty('company_phone')) updates.company_phone = input.company_phone ?? ''
     if (input.hasOwnProperty('company_email')) updates.company_email = input.company_email ?? ''
     if (input.hasOwnProperty('company_tin')) updates.company_tin = input.company_tin ?? ''
-    if (Object.keys(updates).length === 0) return this.getSettings()
-    await this.repository.setMany(updates)
-    return this.getSettings()
+    if (Object.keys(updates).length === 0) return this.getSettings(tenantId)
+    await this.repository.setMany(tenantId, updates)
+    return this.getSettings(tenantId)
   }
 }

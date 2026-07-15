@@ -140,7 +140,7 @@ export function Payments(props) {
         TableBody({}, [
           ...ordersWithOutstanding.map(order => 
             TableRow({ key: order.id }, [
-              TableDCell({ class: 'font-medium' }, order.receipt_number || `PO${order.id}`),
+              TableDCell({ class: 'font-medium' }, order.receipt_number || '—'),
               TableDCell({}, order.supplier_name || 'Unknown'),
               TableDCell({}, formatDateDDMMYYYY(order.order_date)),
               TableDCell({}, 

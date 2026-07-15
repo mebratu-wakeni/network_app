@@ -53,7 +53,7 @@ export class CustomersController {
           .filter(Boolean)
       }
 
-      const result = await this.service.findAll({
+      const result = await this.service.findAll(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 10,
         offset: offset ? parseInt(offset, 10) : 0,
         search: search || '',
@@ -81,7 +81,7 @@ export class CustomersController {
   getOne = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const customer = await this.service.findById(id)
+      const customer = await this.service.findById(req.tenantId, id)
 
       res.json({
         ok: true,
@@ -98,7 +98,7 @@ export class CustomersController {
    */
   create = async (req, res, next) => {
     try {
-      const customer = await this.service.create(req.validBody)
+      const customer = await this.service.create(req.tenantId, req.validBody)
 
       res.status(201).json({
         ok: true,
@@ -116,7 +116,7 @@ export class CustomersController {
   update = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const customer = await this.service.update(id, req.validBody)
+      const customer = await this.service.update(req.tenantId, id, req.validBody)
 
       res.json({
         ok: true,
@@ -135,7 +135,7 @@ export class CustomersController {
   delete = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      await this.service.delete(id)
+      await this.service.delete(req.tenantId, id)
 
       res.json({
         ok: true
@@ -153,7 +153,7 @@ export class CustomersController {
     try {
       const { customers } = req.validBody
 
-      const result = await this.service.bulkImport(customers)
+      const result = await this.service.bulkImport(req.tenantId, customers)
 
       const skipped = result.results.filter((r) => !r.success && r.skipped).length
       const validationFailed = result.results.filter((r) => !r.success && r.validationFailed).length
@@ -200,7 +200,7 @@ export class CustomersController {
         return res.status(400).json({ ok: false, error: 'No data rows found in CSV' })
       }
 
-      const importResult = await this.service.bulkImport(customers)
+      const importResult = await this.service.bulkImport(req.tenantId, customers)
 
       const mergedResults = [...importResult.results].sort(
         (a, b) => (a.csvRowNumber ?? 0) - (b.csvRowNumber ?? 0)
@@ -239,7 +239,7 @@ export class CustomersController {
       const params = req.query || {}
       const { limit, offset, search, sortBy, orderBy } = params
 
-      const csvContent = await this.service.exportToCSV({
+      const csvContent = await this.service.exportToCSV(req.tenantId, {
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
         search: search || '',

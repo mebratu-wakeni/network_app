@@ -29,7 +29,7 @@ export class BinCardsController {
       if (dateTo) filter.dateTo = dateTo
       if (location) filter.location = location
 
-      const result = await this.service.getByProductId(productId, {
+      const result = await this.service.getByProductId(req.tenantId, productId, {
         limit: limit ? parseInt(limit, 10) : undefined,
         offset: offset ? parseInt(offset, 10) : 0,
         sortBy: sortBy || 'transaction_date',
@@ -70,7 +70,7 @@ export class BinCardsController {
       if (dateTo) filter.dateTo = dateTo
       if (location) filter.location = location
 
-      const csvContent = await this.service.exportToCSV(productId, {
+      const csvContent = await this.service.exportToCSV(req.tenantId, productId, {
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
         search: search || '',

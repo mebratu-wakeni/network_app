@@ -1,20 +1,22 @@
 /**
- * Repository: Data access for system_settings (key-value)
+ * Repository: Data access for system_settings (key-value, per tenant)
  */
 export class SettingsRepository {
   constructor(knex) {
     this.knex = knex
   }
 
-  async getByKey(key) {
+  async getByKey(tenantId, key) {
     const row = await this.knex('system_settings')
-      .where({ setting_key: key })
+      .where({ tenant_id: tenantId, setting_key: key })
       .first()
     return row ? row.setting_value : null
   }
 
-  async getAll(keys = null) {
-    let q = this.knex('system_settings').select('setting_key', 'setting_value')
+  async getAll(tenantId, keys = null) {
+    let q = this.knex('system_settings')
+      .where({ tenant_id: tenantId })
+      .select('setting_key', 'setting_value')
     if (keys && keys.length > 0) {
       q = q.whereIn('setting_key', keys)
     }
@@ -26,31 +28,34 @@ export class SettingsRepository {
     return out
   }
 
-  async set(key, value) {
+  async set(tenantId, key, value) {
     const val = value == null ? null : String(value)
-    // Upsert by setting_key so we avoid duplicate key (pkey or unique) and race conditions
     const client = this.knex.client.config.client
     if (client === 'pg' || client === 'postgres') {
       await this.knex('system_settings')
         .insert({
+          tenant_id: tenantId,
           setting_key: key,
           setting_value: val,
           created_at: this.knex.fn.now(),
           updated_at: this.knex.fn.now()
         })
-        .onConflict('setting_key')
+        .onConflict(['tenant_id', 'setting_key'])
         .merge({
           setting_value: val,
           updated_at: this.knex.fn.now()
         })
     } else {
-      const existing = await this.knex('system_settings').where({ setting_key: key }).first()
+      const existing = await this.knex('system_settings')
+        .where({ tenant_id: tenantId, setting_key: key })
+        .first()
       if (existing) {
         await this.knex('system_settings')
-          .where({ setting_key: key })
+          .where({ tenant_id: tenantId, setting_key: key })
           .update({ setting_value: val, updated_at: this.knex.fn.now() })
       } else {
         await this.knex('system_settings').insert({
+          tenant_id: tenantId,
           setting_key: key,
           setting_value: val,
           created_at: this.knex.fn.now(),
@@ -61,10 +66,10 @@ export class SettingsRepository {
     return val
   }
 
-  async setMany(obj) {
+  async setMany(tenantId, obj) {
     for (const [key, value] of Object.entries(obj)) {
-      await this.set(key, value)
+      await this.set(tenantId, key, value)
     }
-    return this.getAll(Object.keys(obj))
+    return this.getAll(tenantId, Object.keys(obj))
   }
 }

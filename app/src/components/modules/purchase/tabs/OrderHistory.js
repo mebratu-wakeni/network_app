@@ -363,7 +363,7 @@ function OrderHistoryTableSection(props) {
               TableBody({}, [
                 ...orders.map((order) =>
                   TableRow({ key: order.id }, [
-                    TableDCell({ class: 'font-medium' }, order.receipt_number || `PO${order.id}`),
+                    TableDCell({ class: 'font-medium' }, order.receipt_number || '—'),
                     TableDCell({}, order.supplier_name || 'Unknown'),
                     TableDCell({}, formatDateDDMMYYYY(order.order_date)),
                     TableDCell({ class: 'font-medium' }, `Br ${financeFormat(order.net_amount)}`),

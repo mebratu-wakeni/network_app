@@ -4,7 +4,7 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate, requireRules } from '../../middleware/auth.js'
+import { authenticate, requireRules, requireTenant } from '../../middleware/auth.js'
 import { uploadCsvFile } from '../../middleware/uploadCsv.js'
 import { CustomersRepository } from './customers.repository.js'
 import { CustomersService } from './customers.service.js'
@@ -25,8 +25,8 @@ const controller = new CustomersController(service)
 
 const router = Router()
 
-// All routes require authentication
-router.use(authenticate)
+// All routes require authentication and tenant context
+router.use(authenticate, requireTenant)
 
 // Get all customers - requires CanSeeCustomers rule
 router.get(

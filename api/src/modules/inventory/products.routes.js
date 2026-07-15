@@ -4,7 +4,7 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate, requireRules } from '../../middleware/auth.js'
+import { authenticate, requireRules, requireTenant } from '../../middleware/auth.js'
 import { ProductsRepository } from './products.repository.js'
 import { ProductsService } from './products.service.js'
 import { ProductsController } from './products.controller.js'
@@ -29,8 +29,8 @@ const controller = new ProductsController(service)
 
 const router = Router()
 
-// All routes require authentication
-router.use(authenticate)
+// All routes require authentication and tenant context
+router.use(authenticate, requireTenant)
 
 // List products - requires CanSeeProductDetails rule (or can be adjusted based on your RBAC)
 router.post('/', controller.list)

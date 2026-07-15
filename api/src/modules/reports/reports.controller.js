@@ -14,7 +14,7 @@ export class ReportsController {
         err.status = 400
         throw err
       }
-      const report = await this.service.getIncomeStatement({ date_from, date_to })
+      const report = await this.service.getIncomeStatement(req.tenantId, { date_from, date_to })
       res.json({ success: true, report })
     } catch (err) {
       next(err)
@@ -29,7 +29,7 @@ export class ReportsController {
         err.status = 400
         throw err
       }
-      const report = await this.service.getBalanceSheet({ as_of_date })
+      const report = await this.service.getBalanceSheet(req.tenantId, { as_of_date })
       res.json({ success: true, report })
     } catch (err) {
       next(err)
@@ -44,7 +44,7 @@ export class ReportsController {
         err.status = 400
         throw err
       }
-      const report = await this.service.getCashFlow({ date_from, date_to })
+      const report = await this.service.getCashFlow(req.tenantId, { date_from, date_to })
       res.json({ success: true, report })
     } catch (err) {
       next(err)
@@ -59,7 +59,7 @@ export class ReportsController {
         err.status = 400
         throw err
       }
-      const report = await this.service.getStatementOfChangesInEquity({ date_from, date_to })
+      const report = await this.service.getStatementOfChangesInEquity(req.tenantId, { date_from, date_to })
       res.json({ success: true, report })
     } catch (err) {
       next(err)

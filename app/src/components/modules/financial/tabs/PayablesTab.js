@@ -432,7 +432,7 @@ function LoanPayableDetailDrawer(props) {
   return Drawer({ class: 'flex flex-col h-full', openSlide: showSlide }, [
     Card({ class: 'flex flex-col h-full' }, [
       CardHeader({ class: 'flex items-center justify-between px-5 h-12 border-b border-gray-200 flex-shrink-0' }, [
-        Row({ class: 'text-base font-semibold text-gray-900' }, `Loan ${loan.reference_no || `#${loan.id}`}`),
+        Row({ class: 'text-base font-semibold text-gray-900' }, `Loan ${loan.reference_no || '—'}`),
         IconButton({ onClick: onClose }, IonIcon({ name: 'close-outline', class: 'text-xl' }))
       ]),
       CardBody({ class: 'flex-1 overflow-y-auto min-h-0 px-5 py-4' }, [
@@ -781,7 +781,7 @@ function WithholdPayableSettlementModalContent(vm, ordersToSettle, handleClose) 
     Row({}, [Row({ tagType: 'label', class: 'block text-sm font-medium text-gray-700 mb-1', attributes: { for: 'settlement_date' } }, 'Settlement date'), Input({ type: 'date', class: 'w-full', name: 'settlement_date', value: defaultDate })]),
     Row({}, [Row({ tagType: 'label', class: 'block text-sm font-medium text-gray-700 mb-1', attributes: { for: 'reference_no' } }, 'Reference no. (optional)'), Input({ type: 'text', class: 'w-full', name: 'reference_no', placeholder: 'Tax authority reference' })]),
     Row({}, [Row({ tagType: 'label', class: 'block text-sm font-medium text-gray-700 mb-1', attributes: { for: 'notes' } }, 'Notes (optional)'), Input({ type: 'text', class: 'w-full', name: 'notes', placeholder: 'Notes' })]),
-    Row({ class: 'max-h-32 overflow-y-auto border border-gray-200 rounded p-2 text-sm' }, [Row({ class: 'font-medium text-gray-600 mb-2' }, 'Orders in this settlement:'), ...(ordersToSettle || []).slice(0, 10).map((o) => Row({ class: 'flex justify-between py-1' }, [Row({}, `${o.receipt_no || o.id} · ${o.supplier_name || '—'}`), Row({}, `Br ${financeFormat(o.withhold_amount)}`)])), ordersToSettle.length > 10 ? Row({ class: 'text-gray-500 py-1' }, `...and ${ordersToSettle.length - 10} more`) : null].filter(Boolean)),
+    Row({ class: 'max-h-32 overflow-y-auto border border-gray-200 rounded p-2 text-sm' }, [Row({ class: 'font-medium text-gray-600 mb-2' }, 'Orders in this settlement:'), ...(ordersToSettle || []).slice(0, 10).map((o) => Row({ class: 'flex justify-between py-1' }, [Row({}, `${o.receipt_no || '—'} · ${o.supplier_name || '—'}`), Row({}, `Br ${financeFormat(o.withhold_amount)}`)])), ordersToSettle.length > 10 ? Row({ class: 'text-gray-500 py-1' }, `...and ${ordersToSettle.length - 10} more`) : null].filter(Boolean)),
     Row({ class: 'flex justify-end gap-2 pt-2' }, [Button({ type: 'button', variant: 'secondary', onClick: handleClose }, 'Cancel'), Button({ type: 'submit', variant: 'primary', class: 'withhold-pay-settle-submit-btn', disabled: vm.getState('withhold-payables-settlement-submitting') }, 'Settle')])
   ])
 }

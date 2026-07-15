@@ -8,6 +8,7 @@ import { showAlert, showConfirmation } from '../../../utils/ModalHelpers'
 import { DropdownSearch, DropdownSearchItem } from '../../../utils/DropdownSearch'
 import { IonIcon } from '../../../utils/Icon'
 import Badge from '../../../utils/Badge'
+import { displayErrorText } from '../../../utils/userErrorMessage.js'
 import { ActionDropdown, ActionItem } from '../../../utils/Action'
 import { formatDateDDMMYYYY } from '../../../utils/DateUtils'
 import Drawer from '../../../shared/ExampleDrawer'
@@ -79,7 +80,7 @@ export function ExpenseTab(props) {
   const sortBy = tableConfig.sortBy || 'paid_on'
   const orderBy = tableConfig.orderBy || 'desc'
   const loading = vm.getState('loading')
-  const error = vm.getState('error')
+  const error = displayErrorText(vm.getState('error'))
   const drawerOpen = vm.getState('expense-drawer-open') === true
   const selectedExpense = vm.getState('selected-expense')
 
@@ -204,10 +205,11 @@ export function ExpenseTab(props) {
 }
 
 async function handleReverseExpense(vm, expense) {
+  const expenseRef = expense.invoice_no || `${expense.category} · ${expense.paid_on || '—'}`
   try {
     const confirmed = await showConfirmation({
       title: 'Reverse Expense',
-      message: `Reverse expense #${expense.id} (${expense.category}, Br ${financeFormat(expense.amount)})? This action cannot be undone.`,
+      message: `Reverse expense ${expenseRef} (Br ${financeFormat(expense.amount)})? This action cannot be undone.`,
       variant: 'warning'
     })
     if (!confirmed) return
@@ -219,7 +221,9 @@ async function handleReverseExpense(vm, expense) {
 
 function ExpenseDetailDrawer(props) {
   const { viewModel, expense, onClose } = props
-  const title = `Expense #${expense.id}`
+  const title = expense.invoice_no
+    ? `Expense · ${expense.invoice_no}`
+    : `Expense · ${expense.category} · ${expense.paid_on || '—'}`
 
   return Drawer({ class: 'flex flex-col h-full', openSlide: true }, [
     Card({ class: 'flex flex-col h-full' }, [

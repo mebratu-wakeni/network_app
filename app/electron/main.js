@@ -22,7 +22,7 @@ import { FiscalYearsIpcHandlers } from './fiscal-years/ipcHandlers.js'
 import { ReportsIpcHandlers } from './reports/ipcHandlers.js'
 import LicenseManager from './license/license.js'
 import { LicenseIpcHandlers } from './license/ipcHandlers.js'
-import { setToken } from './config/authManager.js'
+import { setToken, clearToken } from './config/authManager.js'
 import { setOnSessionExpired, setOnServerDown } from './config/apiFetch.js'
 
 const require = createRequire(import.meta.url)
@@ -345,7 +345,9 @@ function saveRuntimeConfig(config) {
 
 function normalizeRuntimeConfig(inputConfig) {
   const source = inputConfig && typeof inputConfig === 'object' ? inputConfig : {}
-  const mode = source?.mode === 'client' ? 'client' : 'server'
+  const mode = IS_CLOUD_BUILD
+    ? 'client'
+    : (source?.mode === 'client' ? 'client' : 'server')
   const profiles = source?.profiles && typeof source.profiles === 'object' ? source.profiles : {}
   const existingServerProfile = profiles?.server && typeof profiles.server === 'object' ? profiles.server : {}
   const existingClientProfile = profiles?.client && typeof profiles.client === 'object' ? profiles.client : {}
@@ -1144,7 +1146,10 @@ ipcMain.handle('setup:get-config', async () => {
     success: true,
     config: effectiveConfig,
     defaults: {
-      mode: 'server',
+      mode: IS_CLOUD_BUILD ? 'client' : 'server',
+      defaultServerUrl: IS_CLOUD_BUILD
+        ? (process.env.CLOUD_DEFAULT_SERVER_URL || 'https://mltplc.com').replace(/\/+$/, '')
+        : null,
       dbDirectory: defaultDir,
       dbFileName: DB_FILE_NAME,
       port: 4000,
@@ -1155,6 +1160,13 @@ ipcMain.handle('setup:get-config', async () => {
 
 ipcMain.handle('startup:select-mode', async (_event, payload) => {
   const selectedMode = payload?.mode === 'client' ? 'client' : 'server'
+  if (IS_CLOUD_BUILD && selectedMode === 'server') {
+    return {
+      success: false,
+      code: 'CLOUD_CLIENT_ONLY',
+      error: 'This app connects to the cloud service only. Local server mode is not available.'
+    }
+  }
   console.log('[startup] select-mode', selectedMode)
 
   const loaded = runtimeConfig || loadRuntimeConfig()
@@ -1231,6 +1243,13 @@ ipcMain.handle('app:quit', async () => {
 
 ipcMain.handle('setup:save-config', async (_event, payload) => {
   const mode = payload?.mode === 'client' ? 'client' : 'server'
+  if (IS_CLOUD_BUILD && mode === 'server') {
+    return {
+      success: false,
+      code: 'CLOUD_CLIENT_ONLY',
+      error: 'Local server setup is not available in the cloud client.'
+    }
+  }
   const base = { setupCompleted: true, mode }
   const loaded = runtimeConfig || loadRuntimeConfig()
   if (mode === 'server') {
@@ -1388,6 +1407,16 @@ ipcMain.handle('client:connect', async (_event, payload) => {
   return { success: true, config }
 })
 
+
+ipcMain.handle('auth:set-token', async (_event, token) => {
+  if (token) setToken(String(token))
+  return { success: true }
+})
+
+ipcMain.handle('auth:clear-token', async () => {
+  clearToken()
+  return { success: true }
+})
 
 ipcMain.handle('auth:login', async (event, credentials) => {
   // Silently attach this installation's client_code (tenant identifier) for

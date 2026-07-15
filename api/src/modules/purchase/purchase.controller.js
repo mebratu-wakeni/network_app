@@ -7,30 +7,23 @@ export class PurchaseController {
     this.service = service
   }
 
-  /**
-   * 1.1 GET /api/purchases/products
-   */
   getProducts = async (req, res, next) => {
     try {
       const { search, limit } = req.query
-      const products = await this.service.getProducts({
+      const products = await this.service.getProducts(req.tenantId, {
         search: search || undefined,
         limit: limit ? parseInt(limit, 10) : undefined
       })
-
       res.json({ ok: true, products })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 1.2 GET /api/purchases/suppliers
-   */
   getSuppliers = async (req, res, next) => {
     try {
       const { search, limit } = req.query
-      const suppliers = await this.service.getSuppliers({
+      const suppliers = await this.service.getSuppliers(req.tenantId, {
         search: search || undefined,
         limit: limit ? parseInt(limit, 10) : undefined
       })
@@ -40,12 +33,9 @@ export class PurchaseController {
     }
   }
 
-  /**
-   * 1.3 GET /api/purchases/settings/withhold-percentage
-   */
-  getWithholdPercentage = async (_req, res, next) => {
+  getWithholdPercentage = async (req, res, next) => {
     try {
-      const result = await this.service.getWithholdPercentage()
+      const result = await this.service.getWithholdPercentage(req.tenantId)
       res.json({
         ok: true,
         withhold_percentage: result.withhold_percentage,
@@ -56,44 +46,25 @@ export class PurchaseController {
     }
   }
 
-  /**
-   * 2.1 POST /api/purchases/orders
-   */
   createOrder = async (req, res, next) => {
     try {
       const body = req.validBody || req.body
       const user = req.user || null
-      const order = await this.service.createOrder(body, user)
-
-      res.status(201).json({
-        ok: true,
-        purchase_order: order
-      })
+      const order = await this.service.createOrder(body, user, req.tenantId)
+      res.status(201).json({ ok: true, purchase_order: order })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 2.2 GET /api/purchases/orders
-   */
   listOrders = async (req, res, next) => {
     try {
       const {
-        limit,
-        offset,
-        search,
-        status,
-        supplier_id,
-        payment_mode,
-        date_from,
-        date_to,
-        has_outstanding_balance,
-        sort_by,
-        order_by
+        limit, offset, search, status, supplier_id, payment_mode,
+        date_from, date_to, has_outstanding_balance, sort_by, order_by
       } = req.query
 
-      const result = await this.service.listOrders({
+      const result = await this.service.listOrders(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 20,
         offset: offset ? parseInt(offset, 10) : 0,
         search: search || undefined,
@@ -102,7 +73,7 @@ export class PurchaseController {
         payment_mode: payment_mode || undefined,
         date_from: date_from || undefined,
         date_to: date_to || undefined,
-        has_outstanding_balance: has_outstanding_balance,
+        has_outstanding_balance,
         sort_by: sort_by || undefined,
         order_by: order_by || undefined
       })
@@ -118,25 +89,16 @@ export class PurchaseController {
         outstanding_balance: Number(o.outstanding_balance || 0)
       }))
 
-      res.json({
-        ok: true,
-        orders,
-        total: result.total,
-        stats: result.stats
-      })
+      res.json({ ok: true, orders, total: result.total, stats: result.stats })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 2.3 GET /api/purchases/orders/:id
-   */
   getOrderDetails = async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10)
-      const full = await this.service.getOrderDetails(id)
-
+      const full = await this.service.getOrderDetails(req.tenantId, id)
       const order = {
         id: full.order.id,
         receipt_number: full.order.receipt_no,
@@ -170,11 +132,7 @@ export class PurchaseController {
           payment_mode: p.payment_method,
           payment_date: p.payment_date,
           cheque_details: p.payment_method === 'cheque'
-            ? {
-                bank_name: p.bank_name,
-                cheque_number: p.cheque_no,
-                cheque_date: p.cheque_date
-              }
+            ? { bank_name: p.bank_name, cheque_number: p.cheque_no, cheque_date: p.cheque_date }
             : null,
           remaining_balance_after: null,
           created_at: p.created_at
@@ -182,36 +140,28 @@ export class PurchaseController {
         total_paid: full.order.total_paid,
         outstanding_balance: full.order.outstanding_balance
       }
-
       res.json({ ok: true, order })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 2.4 GET /api/purchases/orders/:id/receipt
-   */
   getOrderReceipt = async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10)
-      const receipt = await this.service.getOrderReceipt(id)
+      const receipt = await this.service.getOrderReceipt(req.tenantId, id)
       res.json({ ok: true, receipt })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 2.7 POST /api/purchases/orders/:id/pay
-   */
   payOrder = async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10)
       const body = req.validBody || req.body
       const user = req.user || null
-      const result = await this.service.payOrder(id, body, user)
-
+      const result = await this.service.payOrder(req.tenantId, id, body, user)
       res.json({
         ok: true,
         payment: {
@@ -227,16 +177,12 @@ export class PurchaseController {
     }
   }
 
-  /**
-   * 2.6 POST /api/purchases/orders/:id/reverse
-   */
   reverseOrder = async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10)
       const body = req.validBody || req.body
       const user = req.user || null
-      const result = await this.service.reverseOrder(id, body, user)
-
+      const result = await this.service.reverseOrder(req.tenantId, id, body, user)
       res.json({
         ok: true,
         reversed_order: {
@@ -250,15 +196,11 @@ export class PurchaseController {
     }
   }
 
-  /**
-   * 4.1 POST /api/purchases/import
-   */
   bulkImport = async (req, res, next) => {
     try {
       const body = req.validBody || req.body
       const user = req.user || null
-      const result = await this.service.bulkImport(body, user)
-
+      const result = await this.service.bulkImport(req.tenantId, body, user)
       res.json({
         ok: true,
         success: result.summary.failed === 0,
@@ -274,11 +216,7 @@ export class PurchaseController {
           receipt_no: r.receipt_no,
           inventory_id: r.inventory_id
         })).concat(
-          result.failed.map(r => ({
-            success: false,
-            index: r.index,
-            error: r.error
-          }))
+          result.failed.map(r => ({ success: false, index: r.index, error: r.error }))
         )
       })
     } catch (err) {
@@ -286,16 +224,11 @@ export class PurchaseController {
     }
   }
 
-  /**
-   * POST /api/purchases/import-from-spreadsheet
-   * Bulk import orders from spreadsheet payload (supplier/product names resolved to IDs).
-   */
   importFromSpreadsheet = async (req, res, next) => {
     try {
       const body = req.validBody || req.body
       const user = req.user || null
-      const result = await this.service.importFromSpreadsheet(body, user)
-
+      const result = await this.service.importFromSpreadsheet(body, user, req.tenantId)
       res.json({
         ok: true,
         success: result.summary.failed === 0,
@@ -305,37 +238,27 @@ export class PurchaseController {
           purchase_order_id: r.purchase_order_id,
           receipt_number: r.receipt_number
         })),
-        failed: result.failed.map(r => ({
-          index: r.index,
-          error: r.error
-        }))
+        failed: result.failed.map(r => ({ index: r.index, error: r.error }))
       })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * POST /api/purchases/hold-orders
-   * Create hold order: full current-order snapshot for UI restore.
-   */
   createHoldOrder = async (req, res, next) => {
     try {
       const body = req.validBody || req.body
       const user = req.user || null
-      const hold_order = await this.service.createHoldOrder(body, user)
+      const hold_order = await this.service.createHoldOrder(req.tenantId, body, user)
       res.status(201).json({ ok: true, hold_order })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * GET /api/purchases/export — export purchase orders to CSV
-   */
   exportPurchaseOrder = async (req, res, next) => {
     try {
-      const csvContent = await this.service.exportPurchaseOrder()
+      const csvContent = await this.service.exportPurchaseOrder(req.tenantId)
       res.setHeader('Content-Type', 'text/csv')
       res.setHeader('Content-Disposition', `attachment; filename="purchase_orders_export_${new Date().toISOString().split('T')[0]}.csv"`)
       res.send(csvContent)
@@ -344,14 +267,11 @@ export class PurchaseController {
     }
   }
 
-  /**
-   * 3.1 GET /api/purchases/hold-orders
-   */
   listHoldOrders = async (req, res, next) => {
     try {
       const { limit, offset, search, sort_by, order_by, filter } = req.query
       const filterValue = filter === 'all' || filter === 'archived' ? filter : 'active'
-      const result = await this.service.listHoldOrders({
+      const result = await this.service.listHoldOrders(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 20,
         offset: offset ? parseInt(offset, 10) : 0,
         search: search || undefined,
@@ -359,7 +279,6 @@ export class PurchaseController {
         order_by: order_by || undefined,
         filter: filterValue
       })
-
       const hold_orders = result.hold_orders.map(h => ({
         id: h.id,
         hold_order_number: `HOLD-${h.id.toString().padStart(4, '0')}`,
@@ -376,58 +295,36 @@ export class PurchaseController {
         })(),
         created_at: h.created_at
       }))
-
-      res.json({
-        ok: true,
-        hold_orders,
-        total: result.total
-      })
+      res.json({ ok: true, hold_orders, total: result.total })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 3.2 GET /api/purchases/hold-orders/:id
-   */
   getHoldOrder = async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10)
-      const hold = await this.service.getHoldOrder(id)
+      const hold = await this.service.getHoldOrder(req.tenantId, id)
       res.json({ ok: true, hold_order: hold })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 3.3 DELETE /api/purchases/hold-orders/:id
-   */
   archiveHoldOrder = async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10)
-      await this.service.archiveHoldOrder(id)
+      await this.service.archiveHoldOrder(req.tenantId, id)
       res.json({ ok: true, message: 'Hold order archived successfully' })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 5.1 GET /api/purchases/stats
-   * (Reuses listOrders stats with broad limit.)
-   */
   getStats = async (req, res, next) => {
     try {
-      const {
-        date_from,
-        date_to,
-        supplier_id,
-        payment_mode,
-        status
-      } = req.query
-
-      const { stats, period_summary } = await this.service.listOrders({
+      const { date_from, date_to, supplier_id, payment_mode, status } = req.query
+      const { stats, period_summary } = await this.service.listOrders(req.tenantId, {
         limit: 1000,
         offset: 0,
         date_from: date_from || undefined,
@@ -436,21 +333,16 @@ export class PurchaseController {
         payment_mode: payment_mode || undefined,
         status: status || undefined
       })
-
       res.json({ ok: true, stats, period_summary })
     } catch (err) {
       next(err)
     }
   }
 
-  /**
-   * 6.1 GET /api/purchases/orders/:id/payments
-   */
   getPaymentHistory = async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10)
-      const result = await this.service.getPaymentHistory(id)
-
+      const result = await this.service.getPaymentHistory(req.tenantId, id)
       res.json({
         ok: true,
         payments: result.payments.map(p => ({
@@ -468,23 +360,10 @@ export class PurchaseController {
     }
   }
 
-  /**
-   * Receipt-specific APIs (from extended design)
-   */
   listReceipts = async (req, res, next) => {
     try {
-      const {
-        limit,
-        offset,
-        search,
-        voided,
-        date_from,
-        date_to,
-        sort_by,
-        order_by
-      } = req.query
-
-      const result = await this.service.listReceipts({
+      const { limit, offset, search, voided, date_from, date_to, sort_by, order_by } = req.query
+      const result = await this.service.listReceipts(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 20,
         offset: offset ? parseInt(offset, 10) : 0,
         search: search || undefined,
@@ -494,12 +373,7 @@ export class PurchaseController {
         sort_by: sort_by || undefined,
         order_by: order_by || undefined
       })
-
-      res.json({
-        ok: true,
-        receipts: result.receipts,
-        total: result.total
-      })
+      res.json({ ok: true, receipts: result.receipts, total: result.total })
     } catch (err) {
       next(err)
     }
@@ -508,7 +382,7 @@ export class PurchaseController {
   getReceiptByNo = async (req, res, next) => {
     try {
       const { receipt_no } = req.params
-      const receipt = await this.service.getReceiptByNo(receipt_no)
+      const receipt = await this.service.getReceiptByNo(req.tenantId, receipt_no)
       res.json({ ok: true, receipt })
     } catch (err) {
       next(err)
@@ -518,19 +392,14 @@ export class PurchaseController {
   voidReceipt = async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10)
-      const receipt = await this.service.voidReceipt(id)
+      const receipt = await this.service.voidReceipt(req.tenantId, id)
       res.json({
         ok: true,
         message: 'Receipt voided successfully',
-        receipt: {
-          id: receipt.id,
-          receipt_no: receipt.receipt_no,
-          voided: receipt.voided
-        }
+        receipt: { id: receipt.id, receipt_no: receipt.receipt_no, voided: receipt.voided }
       })
     } catch (err) {
       next(err)
     }
   }
 }
-

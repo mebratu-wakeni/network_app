@@ -143,7 +143,7 @@ function bulkModalShell(viewModel, delegator, handleClose, defaultDate, onApplie
 
     const selectCustomer = (c) => {
       props.setLocalState('bulk-customer-id', c.id);
-      props.setLocalState('bulk-display-name', c.name || c.full_name || `Customer #${c.id}`);
+      props.setLocalState('bulk-display-name', c.name || c.full_name || 'Customer');
       props.setLocalState('bulk-search', '');
       props.setLocalState('bulk-dd-open', false);
       loadOutstanding(c.id);
@@ -169,7 +169,7 @@ function bulkModalShell(viewModel, delegator, handleClose, defaultDate, onApplie
             delegator,
             class: 'py-2.5',
           }, [
-            Row({ class: 'font-medium text-slate-900' }, c.name || c.full_name || `Partner #${c.id}`),
+            Row({ class: 'font-medium text-slate-900' }, c.name || c.full_name || 'Customer'),
             c.phone || c.contact_person
               ? Row(
                   { class: 'text-xs text-slate-500' },
@@ -503,7 +503,7 @@ function bulkModalShell(viewModel, delegator, handleClose, defaultDate, onApplie
                 { tagType: 'tbody' },
                 previewLines.map((row) =>
                   Row({ tagType: 'tr', key: row.id, class: 'border-t border-slate-100 text-slate-800' }, [
-                    Row({ tagType: 'td', class: 'px-4 py-2.5 font-medium' }, row.receipt_no || `#${row.id}`),
+                    Row({ tagType: 'td', class: 'px-4 py-2.5 font-medium' }, row.receipt_no || '—'),
                     Row({ tagType: 'td', class: 'px-4 py-2.5 text-slate-600' }, formatDateDDMMYYYY(row.order_date)),
                     Row({ tagType: 'td', class: 'px-4 py-2.5 text-right tabular-nums text-slate-600' }, [
                       `Br ${financeFormat(row.outstanding_balance)}`,
@@ -536,7 +536,7 @@ function bulkModalShell(viewModel, delegator, handleClose, defaultDate, onApplie
                 { tagType: 'tbody' },
                 orders.map((row) =>
                   Row({ tagType: 'tr', key: row.id, class: 'border-t border-slate-100' }, [
-                    Row({ tagType: 'td', class: 'px-4 py-2.5 font-medium text-slate-900' }, row.receipt_no || `#${row.id}`),
+                    Row({ tagType: 'td', class: 'px-4 py-2.5 font-medium text-slate-900' }, row.receipt_no || '—'),
                     Row({ tagType: 'td', class: 'px-4 py-2.5 text-right tabular-nums text-slate-600' }, `Br ${financeFormat(row.outstanding_balance)}`),
                     Row({ tagType: 'td', class: 'px-4 py-2' }, [
                       Input({

@@ -14,6 +14,7 @@ import {
 } from './dashboardConfig.js';
 import { formatCurrency, formatCount } from './dashboardFormatters.js';
 import { today, weekBounds } from '../utils/DateUtils.js';
+import { displayErrorText } from '../utils/userErrorMessage.js';
 
 const CARD_HEADER_CLASS = 'flex flex-row items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50/50';
 const CARD_TITLE_CLASS = 'text-base font-semibold text-gray-800 whitespace-nowrap';
@@ -147,7 +148,7 @@ export function DashboardUI(props) {
     const vm = p.viewModel;
     const dashboard = vm.getDashboard();
     const loading = vm.getState('loading');
-    const error = vm.getState('error');
+    const error = displayErrorText(vm.getState('error'));
 
     const t = today();
     const { from: weekFrom, to: weekTo } = weekBounds();

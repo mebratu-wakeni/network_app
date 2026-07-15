@@ -10,6 +10,7 @@ import Drawer from '../shared/ExampleDrawer.js'
 import { Card, CardHeader, CardBody } from '../utils/Card.js'
 import { SettingsVM } from './SettingsVM.js'
 import { navigationVM } from '../navigation/NavigationVM.js'
+import { displayErrorText } from '../utils/userErrorMessage.js'
 
 const SETTINGS_TABS = [
   { key: 'general', label: 'General', icon: 'settings-outline' },
@@ -22,7 +23,7 @@ function GeneralTab(props) {
   const vm = props.viewModel
   const form = vm.getState('form') || {}
   const loading = vm.getState('loading')
-  const error = vm.getState('error')
+  const error = displayErrorText(vm.getState('error'))
   const success = vm.getState('success')
 
   const handleChange = (key) => (e) => vm.updateField(key, e.target?.value ?? '')
@@ -146,7 +147,7 @@ function FiscalYearTab(props) {
   const closingYear = vm.getState('close-fiscal-year-loading')
   const reopeningYear = vm.getState('reopen-fiscal-year-loading')
   const creating = vm.getState('create-fiscal-year-loading')
-  const error = vm.getState('fiscal-years-error')
+  const error = displayErrorText(vm.getState('fiscal-years-error'))
 
   const currentYear = new Date().getFullYear()
   const defaultStart = `${currentYear}-01-01`
@@ -320,7 +321,15 @@ function FiscalYearTab(props) {
               Row({ class: 'text-lg font-semibold text-indigo-800' }, `${currentFy.fiscal_year} (${formatDateDDMMYYYY(currentFy.start_date)} – ${formatDateDDMMYYYY(currentFy.end_date)})`)
             ])
           ])
-        : null,
+        : !loading
+          ? Row({ class: 'p-4 rounded-lg border border-amber-200 bg-amber-50 flex items-start gap-3' }, [
+              Row({ tagType: 'ion-icon', attributes: { name: 'information-circle-outline' }, class: 'text-2xl text-amber-600 flex-shrink-0' }),
+              Row({ class: 'flex-1 text-sm text-amber-900' }, [
+                Row({ class: 'font-medium mb-1' }, 'No fiscal year is active yet'),
+                'Create a fiscal year below before recording sales, purchases, or other transactions.'
+              ])
+            ])
+          : null,
 
       Row({ class: 'flex flex-col flex-1 min-h-0' }, [
         Row({ class: 'flex flex-col gap-3 mb-3' }, [

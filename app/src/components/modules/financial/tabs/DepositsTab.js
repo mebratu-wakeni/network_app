@@ -7,6 +7,7 @@ import { showAlert, showConfirmation } from '../../../utils/ModalHelpers'
 import { IonIcon, IconButton } from '../../../utils/Icon'
 import { ActionDropdown, ActionItem } from '../../../utils/Action'
 import { formatDateDDMMYYYY } from '../../../utils/DateUtils'
+import { displayErrorText } from '../../../utils/userErrorMessage.js'
 import Drawer from '../../../shared/ExampleDrawer'
 import { Card, CardBody, CardHeader, CardFooter } from '../../../utils/Card'
 
@@ -75,7 +76,7 @@ export function DepositsTab(props) {
   const paginationLimit = tableConfig.limit || 20
   const paginationOffset = tableConfig.offset || 0
   const loading = vm.getState('loading')
-  const error = vm.getState('error')
+  const error = displayErrorText(vm.getState('error'))
   const drawerDepositId = vm.getState('drawer-deposit-id')
   const showDepositDrawer = vm.getState('show-deposit-drawer')
   const selectedDeposit = vm.getState('selected-deposit')
@@ -119,10 +120,11 @@ export function DepositsTab(props) {
 
   const handleReverseDeposit = async (d) => {
     props.setLocalState('depositActionId', null)
+    const depositRef = d.reference_no || `${DEPOSIT_TYPE_LABELS[d.type] || d.type} · ${d.deposit_date || '—'}`
     try {
       const confirmed = await showConfirmation({
         title: 'Reverse Deposit',
-        message: `Reverse deposit #${d.id} (${DEPOSIT_TYPE_LABELS[d.type] || d.type}, Br ${financeFormat(d.amount)})? This will create reversing ledger entries.`,
+        message: `Reverse deposit ${depositRef} (Br ${financeFormat(d.amount)})? This will create reversing ledger entries.`,
         variant: 'warning'
       })
       if (!confirmed) return

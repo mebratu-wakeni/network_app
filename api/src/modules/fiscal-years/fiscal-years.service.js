@@ -10,15 +10,11 @@ export class FiscalYearsService {
     this.ledgerHelper = new LedgerHelper(knex)
   }
 
-  async listAll() {
-    return this.repository.listAll()
+  async listAll(tenantId) {
+    return this.repository.listAll(tenantId)
   }
 
-  /**
-   * Create a fiscal year with custom start and end dates.
-   * Supports any calendar (Gregorian, Ethiopian, etc.).
-   */
-  async createFiscalYear({ fiscal_year, start_date, end_date }) {
+  async createFiscalYear(tenantId, { fiscal_year, start_date, end_date }) {
     const yearNum = Number(fiscal_year)
     if (!Number.isInteger(yearNum) || yearNum < 1900 || yearNum > 2100) {
       const err = new Error('Invalid fiscal year. Must be between 1900 and 2100.')
@@ -42,14 +38,13 @@ export class FiscalYearsService {
       err.status = 400
       throw err
     }
-    const existing = await this.repository.getByYear(yearNum)
+    const existing = await this.repository.getByYear(tenantId, yearNum)
     if (existing) {
       const err = new Error(`Fiscal year ${yearNum} already exists`)
       err.status = 400
       throw err
     }
-    // Option A: only one open fiscal year is allowed at any time.
-    const openYear = await this.repository.getAnyOpen()
+    const openYear = await this.repository.getAnyOpen(tenantId)
     if (openYear) {
       const err = new Error(
         `Cannot create fiscal year ${yearNum}: fiscal year ${openYear.fiscal_year} is currently open. Close it first.`
@@ -57,37 +52,27 @@ export class FiscalYearsService {
       err.status = 400
       throw err
     }
-    const overlaps = await this.repository.hasOverlappingDates(start_date, end_date)
+    const overlaps = await this.repository.hasOverlappingDates(tenantId, start_date, end_date)
     if (overlaps) {
       const err = new Error('Date range overlaps with an existing fiscal year')
       err.status = 400
       throw err
     }
-    return this.repository.create({ fiscal_year: yearNum, start_date, end_date })
+    return this.repository.create(tenantId, { fiscal_year: yearNum, start_date, end_date })
   }
 
-  /**
-   * Get current open fiscal year.
-   * Returns the year that contains today and is open, or the latest open year if before year start.
-   */
-  async getCurrent() {
-    let row = await this.repository.getCurrent()
+  async getCurrent(tenantId) {
+    let row = await this.repository.getCurrent(tenantId)
     if (!row) {
-      row = await this.repository.getLatestOpen()
+      row = await this.repository.getLatestOpen(tenantId)
     }
     return row
   }
 
-  /** Temporary (Revenue/Expense) account codes – close to Retained Earnings (4200). */
   static REVENUE_CODES = ['5100', '5200']
   static EXPENSE_CODES = ['6100', '6200', '6300']
 
-  /**
-   * Close a fiscal year: close Revenue and Expense to Retained Earnings (4200).
-   * Does NOT post entries for permanent accounts (Assets, Liabilities, other Equity);
-   * their balances carry forward naturally in the ledger.
-   */
-  async closeFiscalYear(year, userId) {
+  async closeFiscalYear(tenantId, year, userId) {
     const yearNum = Number(year)
     if (!Number.isInteger(yearNum) || yearNum < 1900 || yearNum > 2100) {
       const err = new Error('Invalid fiscal year')
@@ -95,7 +80,7 @@ export class FiscalYearsService {
       throw err
     }
 
-    const fy = await this.repository.getByYear(yearNum)
+    const fy = await this.repository.getByYear(tenantId, yearNum)
     if (!fy) {
       const err = new Error(`Fiscal year ${yearNum} not found`)
       err.status = 404
@@ -121,14 +106,13 @@ export class FiscalYearsService {
     const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100
 
     return this.knex.transaction(async (trx) => {
-      const balances = await this.repository.getClosingBalances(endDate, trx)
+      const balances = await this.repository.getClosingBalances(tenantId, endDate, trx)
       const balanceMap = Object.fromEntries(balances.map((b) => [b.account_code, round2(b.balance)]))
 
       const entries = []
       let totalRevenue = 0
       let totalExpenses = 0
 
-      // Close Revenue (5100, 5200): credit-normal, balance negative. DR to zero.
       for (const code of FiscalYearsService.REVENUE_CODES) {
         const bal = balanceMap[code] ?? 0
         if (Math.abs(bal) < 0.01) continue
@@ -142,7 +126,6 @@ export class FiscalYearsService {
         })
       }
 
-      // Close Expenses (6100, 6200, 6300): debit-normal, balance positive. CR to zero.
       for (const code of FiscalYearsService.EXPENSE_CODES) {
         const bal = balanceMap[code] ?? 0
         if (Math.abs(bal) < 0.01) continue
@@ -177,6 +160,7 @@ export class FiscalYearsService {
       if (entries.length > 0) {
         await this.ledgerHelper.postGLTransaction(
           {
+            tenant_id: tenantId,
             transaction_date: nextYearStart,
             reference_no: `FY-CLOSE-${yearNum}`,
             reference_table: 'fiscal_years',
@@ -192,7 +176,7 @@ export class FiscalYearsService {
 
       const [closedRow] = await this.knex('fiscal_years')
         .transacting(trx)
-        .where({ fiscal_year: yearNum })
+        .where({ tenant_id: tenantId, fiscal_year: yearNum })
         .update({
           status: 'closed',
           closed_at: trx.fn.now(),
@@ -209,10 +193,7 @@ export class FiscalYearsService {
     })
   }
 
-  /**
-   * Reopen a closed fiscal year: reverse closing ledger entries and set status to open.
-   */
-  async reopenFiscalYear(year, userId) {
+  async reopenFiscalYear(tenantId, year, userId) {
     const yearNum = Number(year)
     if (!Number.isInteger(yearNum) || yearNum < 1900 || yearNum > 2100) {
       const err = new Error('Invalid fiscal year')
@@ -220,7 +201,7 @@ export class FiscalYearsService {
       throw err
     }
 
-    const fy = await this.repository.getByYear(yearNum)
+    const fy = await this.repository.getByYear(tenantId, yearNum)
     if (!fy) {
       const err = new Error(`Fiscal year ${yearNum} not found`)
       err.status = 404
@@ -231,8 +212,7 @@ export class FiscalYearsService {
       err.status = 400
       throw err
     }
-    // Option A: cannot reopen while another year is open
-    const openYear = await this.repository.getAnyOpen()
+    const openYear = await this.repository.getAnyOpen(tenantId)
     if (openYear) {
       const err = new Error(
         `Cannot reopen fiscal year ${yearNum}: fiscal year ${openYear.fiscal_year} is currently open. Close it first.`
@@ -246,6 +226,7 @@ export class FiscalYearsService {
     return this.knex.transaction(async (trx) => {
       await this.ledgerHelper.reverseFiscalYearClosing(
         {
+          tenantId,
           fiscalYearId: fy.id,
           transactionDate: today,
           reason: 'Reopen fiscal year',
@@ -257,7 +238,7 @@ export class FiscalYearsService {
 
       const [reopenedRow] = await this.knex('fiscal_years')
         .transacting(trx)
-        .where({ fiscal_year: yearNum })
+        .where({ tenant_id: tenantId, fiscal_year: yearNum })
         .update({
           status: 'open',
           closed_at: null,
@@ -275,17 +256,14 @@ export class FiscalYearsService {
     })
   }
 
-  /**
-   * Delete a fiscal year. Only allowed if open. With transactions, use force=true to override.
-   */
-  async deleteFiscalYear(year, force = false) {
+  async deleteFiscalYear(tenantId, year, force = false) {
     const yearNum = Number(year)
     if (!Number.isInteger(yearNum) || yearNum < 1900 || yearNum > 2100) {
       const err = new Error('Invalid fiscal year')
       err.status = 400
       throw err
     }
-    const fy = await this.repository.getByYear(yearNum)
+    const fy = await this.repository.getByYear(tenantId, yearNum)
     if (!fy) {
       const err = new Error(`Fiscal year ${yearNum} not found`)
       err.status = 404
@@ -296,7 +274,7 @@ export class FiscalYearsService {
       err.status = 400
       throw err
     }
-    const counts = await this.repository.getTransactionCountsInRange(fy.start_date, fy.end_date)
+    const counts = await this.repository.getTransactionCountsInRange(tenantId, fy.start_date, fy.end_date)
     const hasTx = counts.ledger + counts.deposits + counts.expenses + counts.purchases + counts.sales > 0
     if (hasTx && !force) {
       const parts = []
@@ -310,7 +288,7 @@ export class FiscalYearsService {
       err.details = { counts }
       throw err
     }
-    const ok = await this.repository.delete(yearNum)
+    const ok = await this.repository.delete(tenantId, yearNum)
     if (!ok) {
       const err = new Error('Failed to delete fiscal year')
       err.status = 500
@@ -319,12 +297,9 @@ export class FiscalYearsService {
     return { success: true }
   }
 
-  /**
-   * Get report summary for a closed fiscal year
-   */
-  async getReport(year) {
+  async getReport(tenantId, year) {
     const yearNum = Number(year)
-    const fy = await this.repository.getByYear(yearNum)
+    const fy = await this.repository.getByYear(tenantId, yearNum)
     if (!fy) {
       const err = new Error(`Fiscal year ${yearNum} not found`)
       err.status = 404
@@ -335,6 +310,6 @@ export class FiscalYearsService {
       err.status = 400
       throw err
     }
-    return this.repository.getReport(yearNum)
+    return this.repository.getReport(tenantId, yearNum)
   }
 }

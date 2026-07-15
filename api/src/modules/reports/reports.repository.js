@@ -9,23 +9,20 @@ export class ReportsRepository {
     this.ledgerHelper = new LedgerHelper(knex)
   }
 
-  /**
-   * Get chart of accounts ordered by account_code
-   */
-  async getChartOfAccounts() {
+  async getChartOfAccounts(tenantId) {
     const rows = await this.knex('chart_of_accounts')
-      .where({ is_active: true })
+      .where({ tenant_id: tenantId, is_active: true })
       .orderBy('account_code', 'asc')
     return rows
   }
 
-  /**
-   * Chart of accounts for financial reports: include inactive rows that still have ledger activity
-   * so statement lines are not silently dropped (which breaks the balance sheet identity).
-   */
-  async getChartOfAccountsForReporting() {
-    const codesWithLedger = await this.knex('account_ledger').distinct('account_code').pluck('account_code')
+  async getChartOfAccountsForReporting(tenantId) {
+    const codesWithLedger = await this.knex('account_ledger')
+      .where({ tenant_id: tenantId })
+      .distinct('account_code')
+      .pluck('account_code')
     const rows = await this.knex('chart_of_accounts')
+      .where({ tenant_id: tenantId })
       .where(function includeActiveOrUsed() {
         this.where({ is_active: true }).orWhereIn('account_code', codesWithLedger)
       })
@@ -33,28 +30,20 @@ export class ReportsRepository {
     return rows
   }
 
-  /**
-   * Get closing balance per account as of a date.
-   * Delegates to LedgerHelper.getClosingBalances (computed from debit/credit).
-   */
-  async getClosingBalances(asOfDate) {
-    return this.ledgerHelper.getClosingBalances(asOfDate)
+  async getClosingBalances(tenantId, asOfDate) {
+    return this.ledgerHelper.getClosingBalances(asOfDate, null, tenantId)
   }
 
-  /**
-   * Get period activity (sum of debit, credit) per account in date range.
-   * Groups by account_code only so all activity for the same account is summed,
-   * regardless of account_name variations (e.g. from chart updates over time).
-   */
-  async getPeriodActivity(dateFrom, dateTo) {
+  async getPeriodActivity(tenantId, dateFrom, dateTo) {
     const rows = await this.knex('account_ledger')
+      .where({ tenant_id: tenantId })
+      .whereBetween('transaction_date', [dateFrom, dateTo])
       .select(
         'account_code',
         this.knex.raw('MAX(account_name) as account_name'),
         this.knex.raw('COALESCE(SUM(debit), 0) as total_debit'),
         this.knex.raw('COALESCE(SUM(credit), 0) as total_credit')
       )
-      .whereBetween('transaction_date', [dateFrom, dateTo])
       .groupBy('account_code')
 
     return rows.map((r) => ({

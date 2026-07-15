@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:cloud": "VITE_CLOUD_MODE=true vite",
+    "dev:cloud": "vite --mode cloud",
     "build": "vite build && electron-builder",
     "build:cloud": "vite build --mode cloud && electron-builder --config electron-builder.cloud.json5",
     "preview": "vite preview",

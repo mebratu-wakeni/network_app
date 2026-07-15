@@ -24,7 +24,7 @@ export function SalesOrderDetailsDrawer(props) {
 
   const order = selectedPayload.order;
   const items = selectedPayload.items || [];
-  const orderRef = order.receipt_no || `SO${order.id}`;
+  const orderRef = order.receipt_no || '—';
   const outstanding = Number(order.outstanding_balance ?? (order.received_amount != null ? (Number(order.received_amount) - Number(order.amount_paid ?? 0)) : 0));
 
   const headerTitles = {

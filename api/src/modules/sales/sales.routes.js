@@ -3,7 +3,7 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate, requireRules, requireAnyRule } from '../../middleware/auth.js'
+import { authenticate, requireRules, requireAnyRule, requireTenant } from '../../middleware/auth.js'
 import { SalesRepository } from './sales.repository.js'
 import { SalesService } from './sales.service.js'
 import { SalesController } from './sales.controller.js'
@@ -22,7 +22,7 @@ const service = new SalesService(repository)
 const controller = new SalesController(service)
 
 const router = Router()
-router.use(authenticate)
+router.use(authenticate, requireTenant)
 
 router.get('/settings/withhold-percentage', requireAnyRule(['CanCreateSale', 'CanSeeSale']), controller.getWithholdPercentage)
 

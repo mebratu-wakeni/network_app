@@ -13,6 +13,7 @@ import ModalContent from "./CreateUserModal";
 import Drawer from "../shared/ExampleDrawer";
 import { formatUTCDate } from "../shared/TimeConverters.js";
 import GeneralTabContent from "./tabs/GeneralTab.js";    
+import { displayErrorText } from "../utils/userErrorMessage.js";
 import RolesTab from "./tabs/RolesTab.js";
 import RulesTab from "./tabs/RulesTab.js";
 import { getInitials } from "../utils/Avatar";
@@ -43,7 +44,7 @@ const UsersTable = () => {
     const userList = props.viewModel.getState('user-list');
     const loading = props.viewModel.getState('loading');
     const loadingMore = false;//props.viewModel.getState('loading-more');
-    const error = props.viewModel.getState('error');
+    const error = displayErrorText(props.viewModel.getState('error'));
     const exportNotice = props.viewModel.getState('export-notice');
     const selectedUser = props.viewModel.getState('selected-user');
     const selectedUserId = 1; //props.viewModel.getState('selected-user-id');

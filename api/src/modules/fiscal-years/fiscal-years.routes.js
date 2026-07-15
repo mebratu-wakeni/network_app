@@ -3,7 +3,7 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate } from '../../middleware/auth.js'
+import { authenticate, requireTenant } from '../../middleware/auth.js'
 import { FiscalYearsRepository } from './fiscal-years.repository.js'
 import { FiscalYearsService } from './fiscal-years.service.js'
 import { FiscalYearsController } from './fiscal-years.controller.js'
@@ -13,7 +13,7 @@ const service = new FiscalYearsService(repository, knex)
 const controller = new FiscalYearsController(service)
 
 const router = Router()
-router.use(authenticate)
+router.use(authenticate, requireTenant)
 
 router.get('/', controller.list)
 router.get('/current', controller.getCurrent)

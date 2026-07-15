@@ -31,17 +31,16 @@ export class UsersService {
   }
 
   /**
-   * Find user by id (throws if not found)
+   * Find user by id within tenant (throws if not found)
    * Excludes password_hash from response
    */
-  async getById(id) {
-    const user = await this.repository.findById(id)
+  async getById(tenantId, id) {
+    const user = await this.repository.findByIdForTenant(tenantId, id)
     if (!user) {
       const error = new Error('User not found')
       error.status = 404
       throw error
     }
-    // Remove password hash before returning
     const { password_hash, ...userWithoutPassword } = user
     return userWithoutPassword
   }
@@ -52,7 +51,6 @@ export class UsersService {
   async create(tenantId, input) {
     const { username, email, password, display_name } = input
 
-    // Check if username already exists within this tenant
     const existingUsername = await this.repository.findByUsername(tenantId, username)
     if (existingUsername) {
       const error = new Error('Username already taken')
@@ -60,7 +58,6 @@ export class UsersService {
       throw error
     }
 
-    // If email provided, ensure it's unique within this tenant
     if (email) {
       const existingEmail = await this.repository.findByEmail(tenantId, email)
       if (existingEmail) {
@@ -70,10 +67,8 @@ export class UsersService {
       }
     }
 
-    // Hash password
     const password_hash = await this.hashPassword(password)
 
-    // Create user
     const [created] = await this.repository.create({
       tenant_id: tenantId,
       username,
@@ -83,7 +78,6 @@ export class UsersService {
       is_active: true
     })
 
-    // Don't return password hash
     delete created.password_hash
     return created
   }
@@ -91,14 +85,13 @@ export class UsersService {
   /**
    * Update user (excludes password - use separate endpoint for password change)
    */
-  async update(id, input) {
-
+  async update(tenantId, id, input) {
     const updateData = {}
     if (input.display_name !== undefined) updateData.display_name = input.display_name
     if (input.is_active !== undefined) updateData.is_active = input.is_active
-    if (input.email !== undefined) updateData.email = input.email;
+    if (input.email !== undefined) updateData.email = input.email
 
-    const [updated] = await this.repository.update(id, updateData)
+    const [updated] = await this.repository.update(tenantId, id, updateData)
     if (!updated) {
       const error = new Error('User not found')
       error.status = 404
@@ -110,12 +103,11 @@ export class UsersService {
   /**
    * Get user with roles and rules
    */
-  async getUserWithPermissions(userId) {
-    const user = await this.getById(userId)
+  async getUserWithPermissions(tenantId, userId) {
+    const user = await this.getById(tenantId, userId)
     const roles = await this.repository.getUserRoles(userId)
     const directRules = await this.repository.getUserRules(userId)
-    
-    // Get rules from all roles
+
     const roleRulePromises = roles.map(role => this.repository.getRoleRules(role.id))
     const roleRulesArrays = await Promise.all(roleRulePromises)
     const roleRules = roleRulesArrays.flat()
@@ -130,22 +122,18 @@ export class UsersService {
 
   /**
    * Get user's roles and rules formatted as requested
-   * Returns: { roles: { roleName: [ruleKeys] }, directlyAssignedRules: [ruleKeys] }
    */
-  async getUserRolesAndRules(userId) {
-    // Verify user exists
-    await this.getById(userId)
+  async getUserRolesAndRules(tenantId, userId) {
+    await this.getById(tenantId, userId)
 
-    const allRoles = await this.repository.getAllRoles();
-    const allRules = await this.repository.getAllRules();
-    // Get user's roles and directly assigned rules in parallel
+    const allRoles = await this.repository.getAllRoles()
+    const allRules = await this.repository.getAllRules()
     const [userRoles, directRules] = await Promise.all([
       this.repository.getUserRoles(userId),
       this.repository.getUserRules(userId)
     ])
-    
-    // Get rules for each role in parallel
-    const roleRulePromises = userRoles.map(role => 
+
+    const roleRulePromises = userRoles.map(role =>
       this.repository.getRoleRules(role.id).then(rules => ({
         roleName: role.name,
         ruleKeys: rules.map(rule => rule.key)
@@ -153,27 +141,22 @@ export class UsersService {
     )
     const rolesWithRulesArray = await Promise.all(roleRulePromises)
 
-    // Convert array to object format
     const rolesWithRules = {}
     for (const { roleName, ruleKeys } of rolesWithRulesArray) {
       rolesWithRules[roleName] = ruleKeys
     }
 
-    // Get directly assigned rule keys
-    const directlyAssignedRules = directRules.map(rule => rule.key)
-
-
     const roles = []
     const rules = []
 
-    for ( const role of allRoles ) {
+    for (const role of allRoles) {
       roles.push({
         role,
         isAssigned: userRoles.map(rl => rl.id).includes(role.id)
       })
     }
 
-    for (const rule of allRules ) {
+    for (const rule of allRules) {
       rules.push({
         rule,
         roles: await this.repository.getRuleRoles(rule.id),
@@ -181,32 +164,20 @@ export class UsersService {
       })
     }
 
-    
-
-
-
     return {
       roles,
       rules: rules.map(rt => ({
         ...rt,
         roles: rt.roles.filter(rr => {
-          return roles.filter(r =>  r.isAssigned).map(ar => ar.role.id).includes(rr.id)
+          return roles.filter(r => r.isAssigned).map(ar => ar.role.id).includes(rr.id)
         })
       }))
     }
   }
 
-  /**
-   * Assign role to user
-   * @param {number} userId - User ID
-   * @param {Object} input - Either { roleName: string } or { roleId: number }
-   * @returns {Object} Assigned role information
-   */
-  async assignRoleToUser(userId, input) {
-    // Verify user exists
-    await this.getById(userId)
+  async assignRoleToUser(tenantId, userId, input) {
+    await this.getById(tenantId, userId)
 
-    // Find role by name or id
     let role
     if (input.roleName) {
       role = await this.repository.findRoleByName(input.roleName)
@@ -228,30 +199,21 @@ export class UsersService {
       throw error
     }
 
-    // Assign role to user
     const inserted = await this.repository.assignRoleToUser(userId, role.id)
-    
+
     return {
       role: {
         id: role.id,
         name: role.name,
         description: role.description
       },
-      assigned: inserted > 0 // true if newly assigned, false if already existed
+      assigned: inserted > 0
     }
   }
 
-  /**
-   * Remove role from user
-   * @param {number} userId - User ID
-   * @param {Object} input - Either { roleName: string } or { roleId: number }
-   * @returns {Object} Removed role information
-   */
-  async removeRoleFromUser(userId, input) {
-    // Verify user exists
-    await this.getById(userId)
+  async removeRoleFromUser(tenantId, userId, input) {
+    await this.getById(tenantId, userId)
 
-    // Find role by name or id
     let role
     if (input.roleName) {
       role = await this.repository.findRoleByName(input.roleName)
@@ -273,30 +235,21 @@ export class UsersService {
       throw error
     }
 
-    // Remove role from user
     const deleted = await this.repository.removeRoleFromUser(userId, role.id)
-    
+
     return {
       role: {
         id: role.id,
         name: role.name,
         description: role.description
       },
-      removed: deleted > 0 // true if removed, false if not assigned
+      removed: deleted > 0
     }
   }
 
-  /**
-   * Assign rule to user
-   * @param {number} userId - User ID
-   * @param {Object} input - Either { ruleKey: string } or { ruleId: number }
-   * @returns {Object} Assigned rule information
-   */
-  async assignRuleToUser(userId, input) {
-    // Verify user exists
-    await this.getById(userId)
+  async assignRuleToUser(tenantId, userId, input) {
+    await this.getById(tenantId, userId)
 
-    // Find rule by key or id
     let rule
     if (input.ruleKey) {
       rule = await this.repository.findRuleByKey(input.ruleKey)
@@ -318,52 +271,36 @@ export class UsersService {
       throw error
     }
 
-    // Assign rule to user
     const inserted = await this.repository.assignRuleToUser(userId, rule.id)
-    
+
     return {
       rule: {
         id: rule.id,
         key: rule.key,
         description: rule.description
       },
-      assigned: inserted > 0 // true if newly assigned, false if already existed
+      assigned: inserted > 0
     }
   }
 
-
-  // remove user 
-
-  // services/users.service.js
-  async deleteUser(id) {
+  async deleteUser(tenantId, id) {
     try {
-      return await this.repository.deleteUser(id);
+      return await this.repository.deleteUser(tenantId, id)
     } catch (error) {
-      // Re-throw known domain errors
       if (error.code === 'USER_NOT_FOUND') {
-        throw error;
+        throw error
       }
 
-      // Wrap unknown errors
-      const wrapped = new Error('Failed to delete user');
-      wrapped.cause = error;
-      wrapped.code = 'DELETE_USER_FAILED';
-      throw wrapped;
+      const wrapped = new Error('Failed to delete user')
+      wrapped.cause = error
+      wrapped.code = 'DELETE_USER_FAILED'
+      throw wrapped
     }
   }
 
+  async removeRuleFromUser(tenantId, userId, input) {
+    await this.getById(tenantId, userId)
 
-  /**
-   * Remove rule from user
-   * @param {number} userId - User ID
-   * @param {Object} input - Either { ruleKey: string } or { ruleId: number }
-   * @returns {Object} Removed rule information
-   */
-  async removeRuleFromUser(userId, input) {
-    // Verify user exists
-    await this.getById(userId)
-
-    // Find rule by key or id
     let rule
     if (input.ruleKey) {
       rule = await this.repository.findRuleByKey(input.ruleKey)
@@ -385,23 +322,22 @@ export class UsersService {
       throw error
     }
 
-    // Remove rule from user
     const deleted = await this.repository.removeRuleFromUser(userId, rule.id)
-    
+
     return {
       rule: {
         id: rule.id,
         key: rule.key,
         description: rule.description
       },
-      removed: deleted > 0 // true if removed, false if not assigned
+      removed: deleted > 0
     }
   }
 
   async getUsersList(tenantId, searchQuery, tableConfig) {
     const users = await this.repository.getUsersList(tenantId, searchQuery || '', tableConfig)
     const total = await this.repository.getUsersListCount(tenantId, searchQuery || '')
-    
+
     return {
       users,
       total,
@@ -410,7 +346,6 @@ export class UsersService {
   }
 
   async updateProfile(tenantId, userId, profileData) {
-    // Check if username is being updated and if it's unique within this tenant
     if (profileData.username) {
       const existing = await this.repository.findByUsername(tenantId, profileData.username)
       if (existing && existing.id !== userId) {
@@ -420,36 +355,47 @@ export class UsersService {
       }
     }
 
-    // Check if email is being updated and if it's unique within this tenant
     if (profileData.email) {
       const existing = await this.repository.findByEmail(tenantId, profileData.email)
-      const emailTaken  = existing && parseInt(existing.id) !== userId;
+      const emailTaken = existing && parseInt(existing.id) !== userId
       if (emailTaken) {
         const error = new Error('Email already registered')
         error.status = 409
         throw error
       }
     }
-   
 
-    return await this.repository.updateProfile(userId, profileData)
+    const updated = await this.repository.updateProfile(tenantId, userId, profileData)
+    if (!updated) {
+      const error = new Error('User not found')
+      error.status = 404
+      throw error
+    }
+    return updated
   }
 
-  async updateUserProfile(userId, userData) {
-    return await this.repository.updateUserProfile(userId, userData);
+  async updateUserProfile(tenantId, userId, userData) {
+    const updated = await this.repository.updateUserProfile(tenantId, userId, userData)
+    if (!updated) {
+      const error = new Error('User not found')
+      error.status = 404
+      throw error
+    }
+    return updated
   }
 
-  async updateAvatar(userId, avatarData) {
-    return await this.repository.updateAvatar(userId, avatarData)
+  async updateAvatar(tenantId, userId, avatarData) {
+    const updated = await this.repository.updateAvatar(tenantId, userId, avatarData)
+    if (!updated) {
+      const error = new Error('User not found')
+      error.status = 404
+      throw error
+    }
+    return updated
   }
 
-  /**
-   * Remove avatar from user
-   * Returns user data and avatar key (for file deletion in controller)
-   */
-  async removeAvatar(userId) {
-    // Verify user exists and get current avatar key
-    const user = await this.repository.findById(userId)
+  async removeAvatar(tenantId, userId) {
+    const user = await this.repository.findByIdForTenant(tenantId, userId)
     if (!user) {
       const error = new Error('User not found')
       error.status = 404
@@ -457,28 +403,24 @@ export class UsersService {
     }
 
     const avatarKey = user.avatar_key || null
-    
-    // Remove avatar from database
-    const updatedUser = await this.repository.removeAvatar(userId)
-    
+    const updatedUser = await this.repository.removeAvatar(tenantId, userId)
+
     return {
       user: updatedUser,
-      avatarKey // Return key so controller can delete the file
+      avatarKey
     }
   }
 
-  async changePassword(userId, passwordData) {
+  async changePassword(tenantId, userId, passwordData) {
     const { currentPassword, newPassword } = passwordData
 
-    // Get user to verify current password
-    const user = await this.repository.findById(userId)
+    const user = await this.repository.findByIdForTenant(tenantId, userId)
     if (!user) {
       const error = new Error('User not found')
       error.status = 404
       throw error
     }
 
-    // Verify current password
     const isCurrentPasswordValid = await this.verifyPassword(currentPassword, user.password_hash)
     if (!isCurrentPasswordValid) {
       const error = new Error('Current password is incorrect')
@@ -486,24 +428,13 @@ export class UsersService {
       throw error
     }
 
-    // Hash new password
     const newPasswordHash = await this.hashPassword(newPassword)
-
-    // Update password
-    return await this.repository.changePassword(userId, newPasswordHash)
+    return await this.repository.changePassword(tenantId, userId, newPasswordHash)
   }
 
-  /**
-   * Toggle user active status
-   * @param {number} userId - User ID
-   * @returns {Object} Updated user (without password hash)
-   */
-  async toggleUserStatus(userId) {
-    const updatedUser = await this.repository.toggleUserStatus(userId)
-    
-    // Remove password hash if present
+  async toggleUserStatus(tenantId, userId) {
+    const updatedUser = await this.repository.toggleUserStatus(tenantId, userId)
     const { password_hash, ...userWithoutPassword } = updatedUser
     return userWithoutPassword
   }
 }
-

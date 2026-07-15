@@ -49,7 +49,7 @@ export class InventoriesController {
         }
       })
 
-      const result = await this.service.bulkImport(transformedStockItems, {
+      const result = await this.service.bulkImport(req.tenantId, transformedStockItems, {
         purchase_date: purchase_date || purchaseDate,
         acquisition_type: acquisition_type || acquisitionType,
         reason,
@@ -137,7 +137,7 @@ export class InventoriesController {
         return res.status(400).json({ ok: false, error: 'No data rows in CSV' })
       }
 
-      const result = await this.service.bulkImport(validItems, {
+      const result = await this.service.bulkImport(req.tenantId, validItems, {
         purchase_date,
         acquisition_type,
         reason,
@@ -195,7 +195,7 @@ export class InventoriesController {
       const params = req.body || {}
       const { limit, offset, search, filter, sortBy, orderBy } = params
 
-      const result = await this.service.findAll({
+      const result = await this.service.findAll(req.tenantId, {
         limit: limit || 10,
         offset: offset || 0,
         search: search || '',
@@ -227,7 +227,7 @@ export class InventoriesController {
       if (!productId) {
         return res.status(400).json({ ok: false, error: 'Valid product ID is required' })
       }
-      const items = await this.service.findInventoriesByProduct(productId)
+      const items = await this.service.findInventoriesByProduct(req.tenantId, productId)
       res.json({ ok: true, success: true, items: items || [] })
     } catch (error) {
       console.error('[InventoriesController] List by product error:', error)
@@ -244,7 +244,7 @@ export class InventoriesController {
       const params = req.query || {}
       const { limit, offset, search, filter, sortBy, orderBy } = params
       
-      const csvContent = await this.service.exportToCSV({
+      const csvContent = await this.service.exportToCSV(req.tenantId, {
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
         search: search || '',
@@ -273,7 +273,7 @@ export class InventoriesController {
       const { id } = req.params
       const updateData = req.validBody
 
-      const updated = await this.service.update(parseInt(id, 10), updateData)
+      const updated = await this.service.update(req.tenantId, parseInt(id, 10), updateData)
 
       res.json({
         ok: true,
@@ -296,7 +296,7 @@ export class InventoriesController {
       const adjustmentData = req.validBody
       const userId = req.user?.id || null
 
-      const updated = await this.service.adjustStock(parseInt(id, 10), adjustmentData, userId)
+      const updated = await this.service.adjustStock(req.tenantId, parseInt(id, 10), adjustmentData, userId)
 
       res.json({
         ok: true,
@@ -318,7 +318,7 @@ export class InventoriesController {
       const borrowData = req.validBody
       const userId = req.user?.id || null
 
-      const result = await this.service.createBorrowFrom(borrowData, userId)
+      const result = await this.service.createBorrowFrom(req.tenantId, borrowData, userId)
 
       res.json({
         ok: true,
@@ -338,7 +338,7 @@ export class InventoriesController {
   getBorrowToReturnHistory = async (req, res, next) => {
     try {
       const { id } = req.params
-      const history = await this.service.getBorrowToReturnHistory(parseInt(id, 10))
+      const history = await this.service.getBorrowToReturnHistory(req.tenantId, parseInt(id, 10))
 
       res.json({
         ok: true,
@@ -360,7 +360,7 @@ export class InventoriesController {
       const returnData = req.validBody
       const userId = req.user?.id || null
 
-      const result = await this.service.processBorrowToReturn(returnData, userId)
+      const result = await this.service.processBorrowToReturn(req.tenantId, returnData, userId)
 
       res.json({
         ok: true,
@@ -395,7 +395,7 @@ export class InventoriesController {
       if (!inventoryId) {
         return res.status(400).json({ ok: false, error: 'Valid inventory ID is required' })
       }
-      const status = await this.service.getBorrowFromReturnStatus({ borrowedInventoryId: inventoryId })
+      const status = await this.service.getBorrowFromReturnStatus(req.tenantId, { borrowedInventoryId: inventoryId })
       res.json({ ok: true, success: true, ...status })
     } catch (error) {
       console.error('[InventoriesController] Get borrow from return status error:', error)
@@ -418,9 +418,9 @@ export class InventoriesController {
         ? parseInt(req.query.borrowedInventoryId, 10) 
         : null
       
-      const status = await this.service.getBorrowFromReturnStatus({ 
+      const status = await this.service.getBorrowFromReturnStatus(req.tenantId, {
         borrowFromId,
-        borrowedInventoryId 
+        borrowedInventoryId
       })
       res.json({ ok: true, success: true, ...status })
     } catch (error) {
@@ -438,7 +438,7 @@ export class InventoriesController {
       const returnData = req.validBody
       const userId = req.user?.id || null
 
-      const result = await this.service.processBorrowFromReturn(returnData, userId)
+      const result = await this.service.processBorrowFromReturn(req.tenantId, returnData, userId)
 
       res.json({
         ok: true,

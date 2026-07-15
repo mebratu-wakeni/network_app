@@ -15,10 +15,10 @@ export class InventoriesRepository {
    * Get the last balance for a product from bin cards
    * Returns the most recent balance for the product, or 0 if no transactions exist
    */
-  async getLastProductBalance(productId, trx = null) {
+  async getLastProductBalance(tenantId, productId, trx = null) {
     const db = trx || this.knex
     const lastTransaction = await db('bin_cards')
-      .where({ product_id: productId })
+      .where({ tenant_id: tenantId, product_id: productId })
       .orderBy('transaction_date', 'desc')
       .orderBy('id', 'desc')
       .select('balance')
@@ -32,7 +32,7 @@ export class InventoriesRepository {
    * @param {Object} params - Transaction parameters
    * @returns {Object} Created bin card transaction
    */
-  async createBinCardTransaction(params, trx = null) {
+  async createBinCardTransaction(tenantId, params, trx = null) {
     const {
       productId,
       inventoryId,
@@ -62,6 +62,7 @@ export class InventoriesRepository {
 
     const [binCard] = await db('bin_cards')
       .insert({
+        tenant_id: tenantId,
         product_id: productId,
         inventory_id: inventoryId,
         batch_no: batchNo || null,
@@ -90,15 +91,16 @@ export class InventoriesRepository {
   /**
    * Find product by product code
    */
-  async findProductByCode(productCode) {
-    return this.knex('products').where({ product_code: productCode }).first()
+  async findProductByCode(tenantId, productCode) {
+    return this.knex('products').where({ tenant_id: tenantId, product_code: productCode }).first()
   }
 
   /**
    * Find product by name
    */
-  async findProductByName(name) {
+  async findProductByName(tenantId, name) {
     return this.knex('products')
+      .where({ tenant_id: tenantId })
       .whereRaw('LOWER(name) = LOWER(?)', [name])
       .first()
   }
@@ -107,11 +109,11 @@ export class InventoriesRepository {
    * Get default category id for auto-created products (supplies or first category).
    * @param {Object} trx - Optional knex transaction
    */
-  async getDefaultCategoryId(trx = null) {
+  async getDefaultCategoryId(tenantId, trx = null) {
     const db = trx || this.knex
-    const byName = await db('categories').whereRaw('LOWER(name) = ?', ['supplies']).select('id').first()
+    const byName = await db('categories').where({ tenant_id: tenantId }).whereRaw('LOWER(name) = ?', ['supplies']).select('id').first()
     if (byName) return byName.id
-    const first = await db('categories').select('id').limit(1).first()
+    const first = await db('categories').where({ tenant_id: tenantId }).select('id').limit(1).first()
     return first ? first.id : null
   }
 
@@ -119,11 +121,11 @@ export class InventoriesRepository {
    * Get default unit id for auto-created products (bottle or first unit).
    * @param {Object} trx - Optional knex transaction
    */
-  async getDefaultUnitId(trx = null) {
+  async getDefaultUnitId(tenantId, trx = null) {
     const db = trx || this.knex
-    const byName = await db('units').whereRaw('LOWER(name) = ?', ['bottle']).select('id').first()
+    const byName = await db('units').where({ tenant_id: tenantId }).whereRaw('LOWER(name) = ?', ['bottle']).select('id').first()
     if (byName) return byName.id
-    const first = await db('units').select('id').limit(1).first()
+    const first = await db('units').where({ tenant_id: tenantId }).select('id').limit(1).first()
     return first ? first.id : null
   }
 
@@ -131,12 +133,13 @@ export class InventoriesRepository {
    * Resolve category id by name; create category when missing.
    * Falls back to default category when name is not provided.
    */
-  async resolveCategoryId(categoryName, trx = null) {
+  async resolveCategoryId(tenantId, categoryName, trx = null) {
     const db = trx || this.knex
     const normalized = String(categoryName || '').trim()
-    if (!normalized) return this.getDefaultCategoryId(trx)
+    if (!normalized) return this.getDefaultCategoryId(tenantId, trx)
 
     const existing = await db('categories')
+      .where({ tenant_id: tenantId })
       .whereRaw('LOWER(name) = LOWER(?)', [normalized])
       .select('id')
       .first()
@@ -144,6 +147,7 @@ export class InventoriesRepository {
 
     const [created] = await db('categories')
       .insert({
+        tenant_id: tenantId,
         name: normalized,
         created_at: db.fn.now(),
         last_updated: db.fn.now()
@@ -156,12 +160,13 @@ export class InventoriesRepository {
    * Resolve unit id by name; create unit when missing.
    * Falls back to default unit when name is not provided.
    */
-  async resolveUnitId(unitName, trx = null) {
+  async resolveUnitId(tenantId, unitName, trx = null) {
     const db = trx || this.knex
     const normalized = String(unitName || '').trim()
-    if (!normalized) return this.getDefaultUnitId(trx)
+    if (!normalized) return this.getDefaultUnitId(tenantId, trx)
 
     const existing = await db('units')
+      .where({ tenant_id: tenantId })
       .whereRaw('LOWER(name) = LOWER(?)', [normalized])
       .select('id')
       .first()
@@ -169,6 +174,7 @@ export class InventoriesRepository {
 
     const [created] = await db('units')
       .insert({
+        tenant_id: tenantId,
         name: normalized,
         created_at: db.fn.now(),
         last_updated: db.fn.now()
@@ -181,9 +187,10 @@ export class InventoriesRepository {
    * Get next available product code (PRD0001, PRD0002, ...) for auto-created products.
    * @param {Object} trx - Optional knex transaction
    */
-  async getNextProductCode(trx = null) {
+  async getNextProductCode(tenantId, trx = null) {
     const db = trx || this.knex
     const products = await db('products')
+      .where({ tenant_id: tenantId })
       .select('product_code')
       .whereNotNull('product_code')
       .where('product_code', 'like', 'PRD%')
@@ -204,10 +211,10 @@ export class InventoriesRepository {
    * Find existing inventory record by product and variation details
    * Checks for existing record with same product_id, batch_no, expiry_date, purchase_price
    */
-  async findExistingInventory(productId, batchNo, expiryDate, purchasePrice, trx = null) {
+  async findExistingInventory(tenantId, productId, batchNo, expiryDate, purchasePrice, trx = null) {
     const db = trx || this.knex
     let query = db('inventories')
-      .where({ product_id: productId })
+      .where({ tenant_id: tenantId, product_id: productId })
       .where({ purchase_price: purchasePrice })
 
     if (batchNo) {
@@ -230,7 +237,7 @@ export class InventoriesRepository {
    * Extracts the numeric part from inventory_code pattern 'I###XXXX'
    * where ### is the variation number and XXXX is the 4-digit product code
    */
-  async getMaxVariationNumber(productCode, trx = null) {
+  async getMaxVariationNumber(tenantId, productCode, trx = null) {
     const db = trx || this.knex
     // Extract 4 digits from product code (e.g., 'PRD0011' -> '0011')
     const productCodeDigits = this.extractProductCodeDigits(productCode)
@@ -240,7 +247,11 @@ export class InventoriesRepository {
 
     // Find all inventory codes for this product that match pattern 'I###XXXX'
     const inventories = await db('inventories')
-      .join('products', 'inventories.product_id', 'products.id')
+      .join('products', function () {
+        this.on('inventories.product_id', 'products.id')
+          .andOn('inventories.tenant_id', 'products.tenant_id')
+      })
+      .where('inventories.tenant_id', tenantId)
       .where('products.product_code', productCode)
       .where('inventories.inventory_code', 'like', `I%${productCodeDigits}`)
       .select('inventories.inventory_code')
@@ -288,13 +299,13 @@ export class InventoriesRepository {
    * Generate inventory code for a product variation
    * Format: 'I###XXXX' where ### is variation number (001, 002, etc.) and XXXX is 4-digit product code
    */
-  async generateInventoryCode(productCode, trx = null) {
+  async generateInventoryCode(tenantId, productCode, trx = null) {
     const productCodeDigits = this.extractProductCodeDigits(productCode)
     if (!productCodeDigits) {
       throw new Error(`Invalid product code format: ${productCode}`)
     }
 
-    const maxVariation = await this.getMaxVariationNumber(productCode, trx)
+    const maxVariation = await this.getMaxVariationNumber(tenantId, productCode, trx)
     const nextVariation = maxVariation + 1
     
     // Format variation number as 3-digit string (001, 002, ..., 999)
@@ -306,9 +317,10 @@ export class InventoriesRepository {
   /**
    * Max numeric suffix of PRD#### codes (used to allocate sequential codes during stock import).
    */
-  async _getMaxPrdCodeNumber (trx = null) {
+  async _getMaxPrdCodeNumber (tenantId, trx = null) {
     const db = trx || this.knex
     const products = await db('products')
+      .where({ tenant_id: tenantId })
       .select('product_code')
       .whereNotNull('product_code')
       .where('product_code', 'like', 'PRD%')
@@ -328,7 +340,7 @@ export class InventoriesRepository {
   /**
    * Latest bin-card balance per product (single batched lookup for bulk import).
    */
-  async getLatestBalancesForProducts (productIds, trx = null) {
+  async getLatestBalancesForProducts (tenantId, productIds, trx = null) {
     const db = trx || this.knex
     const map = new Map()
     if (!productIds || productIds.length === 0) return map
@@ -339,11 +351,13 @@ export class InventoriesRepository {
       const latest = db
         .select('product_id', db.raw('MAX(id) AS mid'))
         .from('bin_cards')
+        .where({ tenant_id: tenantId })
         .whereIn('product_id', chunk)
         .groupBy('product_id')
         .as('latest')
 
       const rows = await db('bin_cards as b')
+        .where('b.tenant_id', tenantId)
         .join(latest, function () {
           this.on('b.product_id', '=', 'latest.product_id')
             .andOn('b.id', '=', 'latest.mid')
@@ -363,7 +377,7 @@ export class InventoriesRepository {
    * Preflight (missing required fields) returns per-row failures without touching the DB.
    * @returns {Object} - { successful: [], failed: [], summary: {...} }
    */
-  async bulkImport (stockItems, options = {}) {
+  async bulkImport (tenantId, stockItems, options = {}) {
     const successful = []
     const purchaseDate = options.purchase_date || new Date().toISOString().split('T')[0]
     const reason = (options.reason || 'Bulk Import').trim()
@@ -404,13 +418,13 @@ export class InventoriesRepository {
 
     for (let i = 0; i < codes.length; i += QUERY_CHUNK) {
       const chunk = codes.slice(i, i + QUERY_CHUNK)
-      const rows = await this.knex('products').whereIn('product_code', chunk).select('*')
+      const rows = await this.knex('products').where({ tenant_id: tenantId }).whereIn('product_code', chunk).select('*')
       for (const r of rows) productByCode.set(r.product_code, r)
     }
     for (let i = 0; i < names.length; i += QUERY_CHUNK) {
       const chunk = names.slice(i, i + QUERY_CHUNK)
       const lowered = chunk.map((n) => n.toLowerCase())
-      const rows = await this.knex('products').whereRaw(
+      const rows = await this.knex('products').where({ tenant_id: tenantId }).whereRaw(
         `LOWER(TRIM(name)) IN (${lowered.map(() => '?').join(',')})`,
         lowered
       ).select('*')
@@ -445,8 +459,8 @@ export class InventoriesRepository {
       }
 
       if (!product) {
-        const categoryId = await this.resolveCategoryId(item.category, trx)
-        const unitId = await this.resolveUnitId(item.unit, trx)
+        const categoryId = await this.resolveCategoryId(tenantId, item.category, trx)
+        const unitId = await this.resolveUnitId(tenantId, item.unit, trx)
         if (categoryId == null || unitId == null) {
           throw new Error('Cannot auto-create product: no categories or units in database. Import products first or add a category and unit.')
         }
@@ -459,6 +473,7 @@ export class InventoriesRepository {
           if (!productCode) productCode = allocProductCode()
           const createdRows = await trx('products')
             .insert({
+              tenant_id: tenantId,
               name: item.product_name.trim(),
               product_code: productCode,
               category_id: categoryId,
@@ -484,6 +499,7 @@ export class InventoriesRepository {
       let existing = invKeyCache.has(ik) ? invKeyCache.get(ik) : null
       if (!existing) {
         existing = await this.findExistingInventory(
+          tenantId,
           product.id,
           batchNo,
           expiryDate,
@@ -502,7 +518,7 @@ export class InventoriesRepository {
         inventoryId = existing.id
 
         await trx('inventories')
-          .where({ id: existing.id })
+          .where({ id: existing.id, tenant_id: tenantId })
           .update({
             quantity: trx.raw('quantity + ?', [quantityAdded]),
             last_updated: trx.fn.now()
@@ -512,6 +528,7 @@ export class InventoriesRepository {
 
         const insertedRows = await trx('inventories')
           .insert({
+            tenant_id: tenantId,
             product_id: product.id,
             inventory_code: inventoryCode,
             batch_no: batchNo,
@@ -529,7 +546,7 @@ export class InventoriesRepository {
           .returning('*')
 
         const insertedRaw = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows
-        const insertedRow = insertedRaw?.id != null ? insertedRaw : await trx('inventories').where({ id: insertedRaw }).first()
+        const insertedRow = insertedRaw?.id != null ? insertedRaw : await trx('inventories').where({ id: insertedRaw, tenant_id: tenantId }).first()
         inventoryId = insertedRow.id
         invKeyCache.set(ik, insertedRow)
       }
@@ -538,11 +555,11 @@ export class InventoriesRepository {
       if (balanceByProduct.has(product.id)) {
         openingBalance = balanceByProduct.get(product.id)
       } else {
-        openingBalance = await this.getLastProductBalance(product.id, trx)
+        openingBalance = await this.getLastProductBalance(tenantId, product.id, trx)
         balanceByProduct.set(product.id, openingBalance)
       }
 
-      const binCard = await this.createBinCardTransaction({
+      const binCard = await this.createBinCardTransaction(tenantId, {
         productId: product.id,
         inventoryId,
         batchNo,
@@ -559,6 +576,7 @@ export class InventoriesRepository {
 
       if (isInitialStock) {
         await this.ledgerHelper.recordInitialStockImport({
+          tenant_id: tenantId,
           inventoryId,
           quantity: quantityAdded,
           unitCost: purchasePrice,
@@ -581,7 +599,7 @@ export class InventoriesRepository {
 
     try {
       await this.knex.transaction(async (trx) => {
-        let nextPrdNum = await this._getMaxPrdCodeNumber(trx)
+        let nextPrdNum = await this._getMaxPrdCodeNumber(tenantId, trx)
         const allocProductCode = () => {
           nextPrdNum++
           return `PRD${String(nextPrdNum).padStart(4, '0')}`
@@ -594,7 +612,7 @@ export class InventoriesRepository {
             throw new Error(`Invalid product code format: ${productCode}`)
           }
           if (!variationNext.has(productCode)) {
-            const max = await this.getMaxVariationNumber(productCode, trx)
+            const max = await this.getMaxVariationNumber(tenantId, productCode, trx)
             variationNext.set(productCode, max + 1)
           }
           const v = variationNext.get(productCode)
@@ -604,7 +622,7 @@ export class InventoriesRepository {
         }
 
         const knownIds = [...new Set([...productByCode.values(), ...productByNameLower.values()].map((p) => p.id))]
-        const balanceByProduct = await this.getLatestBalancesForProducts(knownIds, trx)
+        const balanceByProduct = await this.getLatestBalancesForProducts(tenantId, knownIds, trx)
         const invKeyCache = new Map()
 
         const ctx = {
@@ -668,7 +686,7 @@ export class InventoriesRepository {
    * Out of stock = count of products with zero total quantity.
    * @returns {Object} Statistics object matching frontend expectations
    */
-  async calculateConstantStats() {
+  async calculateConstantStats(tenantId) {
     const today = new Date()
     const todayStr = today.toISOString().split('T')[0]
     const DEFAULT_EXPIRY_THRESHOLD = InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD
@@ -677,6 +695,7 @@ export class InventoriesRepository {
 
     // Product-level totals: total quantity per product (sum across batches)
     const productTotals = await this.knex('inventories')
+      .where({ tenant_id: tenantId })
       .select('product_id')
       .sum('quantity as total_quantity')
       .groupBy('product_id')
@@ -692,13 +711,17 @@ export class InventoriesRepository {
     })
 
     const allInventory = await this.knex('inventories')
+      .where('inventories.tenant_id', tenantId)
       .select(
         'inventories.quantity',
         'inventories.purchase_price',
         'inventories.expiry_date',
         'products.expiry_threshold'
       )
-      .leftJoin('products', 'inventories.product_id', 'products.id')
+      .leftJoin('products', function () {
+        this.on('inventories.product_id', 'products.id')
+          .andOn('inventories.tenant_id', 'products.tenant_id')
+      })
 
     let total = 0
     let expiringSoon = 0
@@ -740,7 +763,7 @@ export class InventoriesRepository {
     const borrowFromTableExists = await this.knex.schema.hasTable('borrow_from_inventories')
     if (borrowFromTableExists) {
       const borrowFromCount = await this.knex('borrow_from_inventories')
-        .where('status', 'active')
+        .where({ tenant_id: tenantId, status: 'active' })
         .count('id as total')
         .first()
       borrowedFrom = parseInt(borrowFromCount?.total || 0, 10)
@@ -749,7 +772,7 @@ export class InventoriesRepository {
     const borrowToTableExists = await this.knex.schema.hasTable('borrow_to_inventories')
     if (borrowToTableExists) {
       const borrowToCount = await this.knex('borrow_to_inventories')
-        .where('status', 'active')
+        .where({ tenant_id: tenantId, status: 'active' })
         .count('id as total')
         .first()
       borrowedTo = parseInt(borrowToCount?.total || 0, 10)
@@ -777,7 +800,7 @@ export class InventoriesRepository {
    * @param {Object} params - { limit, offset, search, sortBy, orderBy, includeReturned }
    * @returns {Object} - { stock, total }
    */
-  async findBorrowedFrom(params = {}) {
+  async findBorrowedFrom(tenantId, params = {}) {
     const { 
       limit = 10, 
       offset = 0, 
@@ -794,6 +817,7 @@ export class InventoriesRepository {
     }
 
     let query = this.knex('borrow_from_inventories')
+      .where('borrow_from_inventories.tenant_id', tenantId)
       .select(
         'borrow_from_inventories.*',
         'borrow_from_inventories.inventory_id',
@@ -805,9 +829,18 @@ export class InventoriesRepository {
         'units.name as unit',
         'customers.name as partner_name'
       )
-      .leftJoin('products', 'borrow_from_inventories.product_id', 'products.id')
-      .leftJoin('categories', 'products.category_id', 'categories.id')
-      .leftJoin('units', 'products.unit_id', 'units.id')
+      .leftJoin('products', function () {
+        this.on('borrow_from_inventories.product_id', 'products.id')
+          .andOn('borrow_from_inventories.tenant_id', 'products.tenant_id')
+      })
+      .leftJoin('categories', function () {
+        this.on('products.category_id', 'categories.id')
+          .andOn('products.tenant_id', 'categories.tenant_id')
+      })
+      .leftJoin('units', function () {
+        this.on('products.unit_id', 'units.id')
+          .andOn('products.tenant_id', 'units.tenant_id')
+      })
       .leftJoin('customers', 'borrow_from_inventories.partner_id', 'customers.id')
     
     // Filter: show all statuses if includeReturned=true, otherwise exclude fully 'returned'
@@ -866,6 +899,7 @@ export class InventoriesRepository {
       
       if (inventoryIds.length > 0) {
         const returnRows = await this.knex('borrow_from_returns')
+          .where({ tenant_id: tenantId })
           .whereIn('borrowed_inventory_id', inventoryIds)
           .select('borrowed_inventory_id', 'quantity_returned')
         
@@ -934,7 +968,7 @@ export class InventoriesRepository {
    * @param {Object} params - { limit, offset, search, sortBy, orderBy, includeReturned }
    * @returns {Object} - { stock, total }
    */
-  async findBorrowedTo(params = {}) {
+  async findBorrowedTo(tenantId, params = {}) {
     const { 
       limit = 10, 
       offset = 0, 
@@ -951,6 +985,7 @@ export class InventoriesRepository {
     }
 
     let query = this.knex('borrow_to_inventories')
+      .where('borrow_to_inventories.tenant_id', tenantId)
       .select(
         'borrow_to_inventories.*',
         'borrow_to_inventories.status',
@@ -963,11 +998,23 @@ export class InventoriesRepository {
         'inventories.inventory_code as source_inventory_code',
         'inventories.id as source_inventory_id'
       )
-      .leftJoin('products', 'borrow_to_inventories.product_id', 'products.id')
-      .leftJoin('categories', 'products.category_id', 'categories.id')
-      .leftJoin('units', 'products.unit_id', 'units.id')
+      .leftJoin('products', function () {
+        this.on('borrow_to_inventories.product_id', 'products.id')
+          .andOn('borrow_to_inventories.tenant_id', 'products.tenant_id')
+      })
+      .leftJoin('categories', function () {
+        this.on('products.category_id', 'categories.id')
+          .andOn('products.tenant_id', 'categories.tenant_id')
+      })
+      .leftJoin('units', function () {
+        this.on('products.unit_id', 'units.id')
+          .andOn('products.tenant_id', 'units.tenant_id')
+      })
       .leftJoin('customers', 'borrow_to_inventories.partner_id', 'customers.id')
-      .leftJoin('inventories', 'borrow_to_inventories.source_inventory_id', 'inventories.id')
+      .leftJoin('inventories', function () {
+        this.on('borrow_to_inventories.source_inventory_id', 'inventories.id')
+          .andOn('borrow_to_inventories.tenant_id', 'inventories.tenant_id')
+      })
     
     // Filter: show all statuses if includeReturned=true, otherwise exclude fully 'returned'
     if (!includeReturned) {
@@ -1025,6 +1072,7 @@ export class InventoriesRepository {
       
       if (borrowToIds.length > 0) {
         const returnRows = await this.knex('borrow_to_returns')
+          .where({ tenant_id: tenantId })
           .whereIn('borrow_to_inventory_id', borrowToIds)
           .select('borrow_to_inventory_id', 'quantity_returned')
         
@@ -1094,7 +1142,7 @@ export class InventoriesRepository {
    * @param {Object} params - { limit, offset, search, filter, sortBy, orderBy }
    * @returns {Object} - { stock, total, stats }
    */
-  async findAll(params = {}) {
+  async findAll(tenantId, params = {}) {
     const { 
       limit = 10, 
       offset = 0, 
@@ -1105,11 +1153,11 @@ export class InventoriesRepository {
     } = params
 
     // Calculate constant stats from ALL inventory items (regardless of filter)
-    const constantStats = await this.calculateConstantStats()
+    const constantStats = await this.calculateConstantStats(tenantId)
 
     // Handle borrowed-from filter - fetch directly from borrow_from_inventories table
     if (filter === 'borrowed-from') {
-      const result = await this.findBorrowedFrom({ limit, offset, search, sortBy, orderBy })
+      const result = await this.findBorrowedFrom(tenantId, { limit, offset, search, sortBy, orderBy })
       return {
         stock: result.stock,
         total: result.total,
@@ -1119,7 +1167,7 @@ export class InventoriesRepository {
 
     // Handle borrowed-to filter - fetch directly from borrow_to_inventories table
     if (filter === 'borrowed-to') {
-      const result = await this.findBorrowedTo({ limit, offset, search, sortBy, orderBy })
+      const result = await this.findBorrowedTo(tenantId, { limit, offset, search, sortBy, orderBy })
       return {
         stock: result.stock,
         total: result.total,
@@ -1129,6 +1177,7 @@ export class InventoriesRepository {
 
     // Subquery: total quantity per product (sum across all batches)
     const productTotalsSubquery = this.knex('inventories')
+      .where({ tenant_id: tenantId })
       .select('product_id')
       .sum('quantity as product_total')
       .groupBy('product_id')
@@ -1137,6 +1186,7 @@ export class InventoriesRepository {
     // Base query with joins for product, category, unit, and product total quantity
     // Exclude zero-quantity rows so the stock table only shows batches that have stock
     let query = this.knex('inventories')
+      .where('inventories.tenant_id', tenantId)
       .select(
         'inventories.*',
         'products.product_code',
@@ -1147,9 +1197,18 @@ export class InventoriesRepository {
         'units.name as unit',
         'product_totals.product_total'
       )
-      .leftJoin('products', 'inventories.product_id', 'products.id')
-      .leftJoin('categories', 'products.category_id', 'categories.id')
-      .leftJoin('units', 'products.unit_id', 'units.id')
+      .leftJoin('products', function () {
+        this.on('inventories.product_id', 'products.id')
+          .andOn('inventories.tenant_id', 'products.tenant_id')
+      })
+      .leftJoin('categories', function () {
+        this.on('products.category_id', 'categories.id')
+          .andOn('products.tenant_id', 'categories.tenant_id')
+      })
+      .leftJoin('units', function () {
+        this.on('products.unit_id', 'units.id')
+          .andOn('products.tenant_id', 'units.tenant_id')
+      })
       .leftJoin(productTotalsSubquery, 'inventories.product_id', 'product_totals.product_id')
       .where('inventories.quantity', '>', 0)
 
@@ -1266,7 +1325,7 @@ export class InventoriesRepository {
    * @param {number} productId
    * @returns {Promise<Array<{ id, inventoryCode, productCode, name, batchNumber, expiryDate, unitCost, quantity, location }>>}
    */
-  async findInventoriesByProduct(productId) {
+  async findInventoriesByProduct(tenantId, productId) {
     const id = Number(productId)
     if (!id) return []
     const rows = await this.knex('inventories')
@@ -1281,8 +1340,11 @@ export class InventoriesRepository {
         'products.product_code',
         'products.name as product_name'
       )
-      .leftJoin('products', 'inventories.product_id', 'products.id')
-      .where('inventories.product_id', id)
+      .leftJoin('products', function () {
+        this.on('inventories.product_id', 'products.id')
+          .andOn('inventories.tenant_id', 'products.tenant_id')
+      })
+      .where({ 'inventories.tenant_id': tenantId, 'inventories.product_id': id })
       .where('inventories.quantity', '>', 0)
       .orderBy('inventories.id', 'asc')
     return rows.map(r => ({
@@ -1364,7 +1426,7 @@ export class InventoriesRepository {
    * @param {Object} updateData - Fields to update (snake_case format)
    * @returns {Object} Updated inventory record
    */
-  async updateById(inventoryId, updateData) {
+  async updateById(tenantId, inventoryId, updateData) {
     // Transform camelCase to snake_case for database fields
     // Database columns are snake_case: expiry_date, batch_no, purchase_price, selling_price
     const transformedData = {}
@@ -1411,7 +1473,7 @@ export class InventoriesRepository {
     transformedData.last_updated = this.knex.fn.now()
 
     const [updated] = await this.knex('inventories')
-      .where({ id: inventoryId })
+      .where({ id: inventoryId, tenant_id: tenantId })
       .update(transformedData)
       .returning('*')
 
@@ -1429,7 +1491,7 @@ export class InventoriesRepository {
    * @param {number} userId - User ID performing the adjustment
    * @returns {Object} Updated inventory record
    */
-  async adjustStockQuantity(inventoryId, adjustmentData, userId = null) {
+  async adjustStockQuantity(tenantId, inventoryId, adjustmentData, userId = null) {
     const {
       adjustmentType,
       amount,
@@ -1444,7 +1506,7 @@ export class InventoriesRepository {
 
     // Get current inventory record
     const inventory = await this.knex('inventories')
-      .where({ id: inventoryId })
+      .where({ id: inventoryId, tenant_id: tenantId })
       .first()
 
     if (!inventory) {
@@ -1453,7 +1515,7 @@ export class InventoriesRepository {
 
     // Get product info for bin card
     const product = await this.knex('products')
-      .where({ id: inventory.product_id })
+      .where({ id: inventory.product_id, tenant_id: tenantId })
       .first()
 
     if (!product) {
@@ -1463,7 +1525,7 @@ export class InventoriesRepository {
     // Wrap all operations in a transaction for atomicity
     return await this.knex.transaction(async (trx) => {
       // Get last balance for this product (same transaction — avoids pool deadlock)
-      const openingBalance = await this.getLastProductBalance(product.id, trx)
+      const openingBalance = await this.getLastProductBalance(tenantId, product.id, trx)
 
       // Calculate quantity change
       let quantityIn = 0
@@ -1504,14 +1566,14 @@ export class InventoriesRepository {
 
       // Update inventory quantity
       const [updated] = await trx('inventories')
-        .where({ id: inventoryId })
+        .where({ id: inventoryId, tenant_id: tenantId })
         .update({
           quantity: newQuantity
         })
         .returning('*')
 
       // Create bin card transaction
-      await this.createBinCardTransaction({
+      await this.createBinCardTransaction(tenantId, {
         productId: product.id,
         inventoryId: inventoryId,
         batchNo: inventory.batch_no,
@@ -1537,6 +1599,7 @@ export class InventoriesRepository {
         if (borrowToTableExists) {
           const [borrowToRecord] = await trx('borrow_to_inventories')
             .insert({
+              tenant_id: tenantId,
               product_id: product.id,
               partner_id: partnerIdValue,
               source_inventory_id: inventoryId,
@@ -1565,6 +1628,7 @@ export class InventoriesRepository {
         const refNo = `ADJ-${inventoryId}-${Date.now()}`
         if (quantityIn > 0) {
           await this.ledgerHelper.recordStockAdjustmentAdd({
+            tenant_id: tenantId,
             inventoryId,
             quantity: quantityIn,
             unitCost,
@@ -1577,6 +1641,7 @@ export class InventoriesRepository {
         } else if (quantityOut > 0) {
           if (isBorrowTo && partnerIdValue) {
             await this.ledgerHelper.recordStockAdjustmentSubtractBorrowTo({
+              tenant_id: tenantId,
               inventoryId,
               quantity: quantityOut,
               unitCost,
@@ -1590,6 +1655,7 @@ export class InventoriesRepository {
             }, trx)
           } else {
             await this.ledgerHelper.recordStockAdjustmentSubtract({
+              tenant_id: tenantId,
               inventoryId,
               quantity: quantityOut,
               unitCost,
@@ -1617,7 +1683,7 @@ export class InventoriesRepository {
    * @param {number} userId - User ID creating the record
    * @returns {Object} Created borrow_from_inventories record with inventory info
    */
-  async createBorrowFromInventory(borrowData, userId = null) {
+  async createBorrowFromInventory(tenantId, borrowData, userId = null) {
     const {
       partnerId,
       partner_id,
@@ -1656,7 +1722,7 @@ export class InventoriesRepository {
     return await this.knex.transaction(async (trx) => {
       // 1. Get product information to generate inventory code
       const product = await trx('products')
-        .where({ id: productIdValue })
+        .where({ id: productIdValue, tenant_id: tenantId })
         .first()
 
       if (!product) {
@@ -1665,6 +1731,7 @@ export class InventoriesRepository {
 
       // 2. Check if inventory record already exists with same variation
       const existing = await this.findExistingInventory(
+        tenantId,
         productIdValue,
         batchNoValue,
         expiryDateValue,
@@ -1685,18 +1752,19 @@ export class InventoriesRepository {
         
         // Update quantity (add to existing)
         await trx('inventories')
-          .where({ id: existing.id })
+          .where({ id: existing.id, tenant_id: tenantId })
           .update({
             quantity: trx.raw('quantity + ?', [quantityAdded]),
             last_updated: trx.fn.now()
           })
       } else {
         // Generate new inventory code
-        inventoryCode = await this.generateInventoryCode(product.product_code, trx)
+        inventoryCode = await this.generateInventoryCode(tenantId, product.product_code, trx)
         
         // Insert new inventory record
         const [inserted] = await trx('inventories')
           .insert({
+            tenant_id: tenantId,
             product_id: productIdValue,
             inventory_code: inventoryCode,
             batch_no: batchNoValue,
@@ -1719,6 +1787,7 @@ export class InventoriesRepository {
       // 3. Create borrow_from_inventories record (link to inventory for return-status / returns)
       const [borrowFromRecord] = await trx('borrow_from_inventories')
         .insert({
+          tenant_id: tenantId,
           product_id: productIdValue,
           partner_id: partnerIdValue,
           inventory_id: inventoryId,
@@ -1741,7 +1810,7 @@ export class InventoriesRepository {
         .returning('*')
 
       // 4. Get opening balance for bin card transaction (use trx — avoid nested pool connections)
-      const openingBalance = await this.getLastProductBalance(productIdValue, trx)
+      const openingBalance = await this.getLastProductBalance(tenantId, productIdValue, trx)
 
       // 5. Create bin card transaction for this borrow from (within transaction)
       const finalQuantityIn = quantityAdded
@@ -1751,6 +1820,7 @@ export class InventoriesRepository {
 
       await trx('bin_cards')
         .insert({
+          tenant_id: tenantId,
           product_id: productIdValue,
           inventory_id: inventoryId,
           batch_no: batchNoValue || null,
@@ -1780,6 +1850,7 @@ export class InventoriesRepository {
             : borrowFromRecord
         await this.ledgerHelper.recordBorrowFrom(
           {
+            tenant_id: tenantId,
             inventoryId,
             borrowFromId,
             quantity: quantityValue,
@@ -1808,14 +1879,14 @@ export class InventoriesRepository {
    * @param {number} borrowToInventoryId - ID from borrow_to_inventories table
    * @returns {Array} Array of return records
    */
-  async getBorrowToReturnHistory(borrowToInventoryId) {
+  async getBorrowToReturnHistory(tenantId, borrowToInventoryId) {
     const tableExists = await this.knex.schema.hasTable('borrow_to_returns')
     if (!tableExists) {
       return []
     }
 
     return await this.knex('borrow_to_returns')
-      .where('borrow_to_inventory_id', borrowToInventoryId)
+      .where({ tenant_id: tenantId, borrow_to_inventory_id: borrowToInventoryId })
       .orderBy('returned_date', 'desc')
       .orderBy('id', 'desc')
   }
@@ -1828,7 +1899,7 @@ export class InventoriesRepository {
    * @param {number} userId - User ID processing the return
    * @returns {Object} Created return record with inventory info
    */
-  async processBorrowToReturn(returnData, userId = null) {
+  async processBorrowToReturn(tenantId, returnData, userId = null) {
     const {
       borrowToInventoryId,
       borrow_to_inventory_id,
@@ -1882,7 +1953,7 @@ export class InventoriesRepository {
     return await this.knex.transaction(async (trx) => {
       // 1. Get the borrow_to_inventory record
       const borrowToRecord = await trx('borrow_to_inventories')
-        .where({ id: borrowToId })
+        .where({ id: borrowToId, tenant_id: tenantId })
         .first()
 
       if (!borrowToRecord) {
@@ -1922,7 +1993,7 @@ export class InventoriesRepository {
 
       // 3. Check how much has already been returned
       const previousReturns = await trx('borrow_to_returns')
-        .where('borrow_to_inventory_id', borrowToId)
+        .where({ tenant_id: tenantId, borrow_to_inventory_id: borrowToId })
         .sum('quantity_returned as total_returned')
         .first()
 
@@ -1936,7 +2007,7 @@ export class InventoriesRepository {
 
       // 4. Get product information
       const product = await trx('products')
-        .where({ id: borrowToRecord.product_id })
+        .where({ id: borrowToRecord.product_id, tenant_id: tenantId })
         .first()
 
       if (!product) {
@@ -1945,18 +2016,19 @@ export class InventoriesRepository {
 
       // Get partner name for notes
       const partner = await trx('customers')
-        .where({ id: borrowToRecord.partner_id })
+        .where({ id: borrowToRecord.partner_id, tenant_id: tenantId })
         .first()
 
       const partnerName = partner?.name || `Partner ID: ${borrowToRecord.partner_id}`
 
       // 5. Process each return item (create inventory, bin card, return record)
       const returnRecords = []
-      let currentOpeningBalance = await this.getLastProductBalance(borrowToRecord.product_id, trx)
+      let currentOpeningBalance = await this.getLastProductBalance(tenantId, borrowToRecord.product_id, trx)
 
       for (const item of itemsToProcess) {
         // Find or create inventory record for this batch/expiry combination
         const existing = await this.findExistingInventory(
+          tenantId,
           item.product_id,
           item.batch_no,
           item.expiry_date,
@@ -1973,7 +2045,7 @@ export class InventoriesRepository {
           inventoryCode = existing.inventory_code
           
           await trx('inventories')
-            .where({ id: existing.id })
+            .where({ id: existing.id, tenant_id: tenantId })
             .update({
               quantity: trx.raw('quantity + ?', [item.quantity_returned]),
               location: item.location || existing.location, // Update location if provided
@@ -1981,11 +2053,12 @@ export class InventoriesRepository {
             })
         } else {
           // Create new inventory record
-          inventoryCode = await this.generateInventoryCode(product.product_code, trx)
+          inventoryCode = await this.generateInventoryCode(tenantId, product.product_code, trx)
           
           // Insert new inventory record
           const [inserted] = await trx('inventories')
             .insert({
+              tenant_id: tenantId,
               product_id: item.product_id,
               inventory_code: inventoryCode,
               batch_no: item.batch_no || null,
@@ -2014,6 +2087,7 @@ export class InventoriesRepository {
         // Create borrow_to_returns record
         const [returnRecord] = await trx('borrow_to_returns')
           .insert({
+            tenant_id: tenantId,
             borrow_to_inventory_id: borrowToId,
             quantity_returned: item.quantity_returned,
             returned_date: returnDate,
@@ -2030,6 +2104,7 @@ export class InventoriesRepository {
         // Create bin card entry referencing the return record
         await trx('bin_cards')
           .insert({
+            tenant_id: tenantId,
             product_id: item.product_id,
             inventory_id: inventoryId,
             batch_no: item.batch_no || null,
@@ -2055,6 +2130,7 @@ export class InventoriesRepository {
         const ledgerTableExists = await trx.schema.hasTable('account_ledger')
         if (ledgerTableExists) {
           await this.ledgerHelper.recordReturnBorrowedTo({
+            tenant_id: tenantId,
             inventoryId,
             returnId: returnRecord.id,
             quantity: item.quantity_returned,
@@ -2086,7 +2162,7 @@ export class InventoriesRepository {
       }
 
       await trx('borrow_to_inventories')
-        .where({ id: borrowToId })
+        .where({ id: borrowToId, tenant_id: tenantId })
         .update({
           status: newStatus,
           last_updated: trx.fn.now()
@@ -2116,7 +2192,7 @@ export class InventoriesRepository {
    * @param {Object} opts - { borrowFromId?: number, borrowedInventoryId?: number }
    * @returns {Promise<{ totalBorrowed: number, totalReturned: number, remaining: number }>}
    */
-  async getBorrowFromReturnStatus(opts = {}) {
+  async getBorrowFromReturnStatus(tenantId, opts = {}) {
     // Require borrowFromId - frontend should always provide this
     const borrowFromId = opts.borrowFromId != null ? Number(opts.borrowFromId) : null
     if (!borrowFromId) {
@@ -2124,7 +2200,9 @@ export class InventoriesRepository {
     }
 
     // Get borrow record directly by ID
-    const borrowRecord = await this.knex('borrow_from_inventories').where('id', borrowFromId).first()
+    const borrowRecord = await this.knex('borrow_from_inventories')
+      .where({ id: borrowFromId, tenant_id: tenantId })
+      .first()
     if (!borrowRecord) {
       throw new Error('Borrow-from record not found')
     }
@@ -2147,7 +2225,7 @@ export class InventoriesRepository {
       if (inventoryId) {
         // Primary method: Query by inventory_id from borrow_from_inventories
         const returnRows = await this.knex('borrow_from_returns')
-          .where('borrowed_inventory_id', inventoryId)
+          .where({ tenant_id: tenantId, borrowed_inventory_id: inventoryId })
         
         totalReturned = returnRows.reduce((sum, r) => {
           const qty = parseInt(r.quantity_returned || 0, 10)
@@ -2180,7 +2258,7 @@ export class InventoriesRepository {
    * @param {string} [returnData.note]
    * @returns {Object} borrowReturnIds, isSettled, obligationUnitCost, totalQuantityReturned, processedReturns (per line)
    */
-  async processBorrowFromReturn(returnData, userId = null) {
+  async processBorrowFromReturn(tenantId, returnData, userId = null) {
     const {
       borrowedInventoryId,
       borrowed_inventory_id,
@@ -2210,7 +2288,7 @@ export class InventoriesRepository {
 
     return await this.knex.transaction(async (trx) => {
       const borrowedInventory = await trx('inventories')
-        .where('id', borrowed_inventory_id_value)
+        .where({ id: borrowed_inventory_id_value, tenant_id: tenantId })
         .first()
 
       if (!borrowedInventory) {
@@ -2219,7 +2297,7 @@ export class InventoriesRepository {
 
       const processedReturns = []
       for (const returnItem of normalizedReturnItems) {
-        const result = await this.processBorrowReturn(trx, {
+        const result = await this.processBorrowReturn(tenantId, trx, {
           borrowed_inventory_id: borrowed_inventory_id_value,
           returning_inventory_id: returnItem.returning_inventory_id,
           quantity_returned: returnItem.quantity_returned,
@@ -2231,7 +2309,7 @@ export class InventoriesRepository {
       }
 
       const finalBorrow = await trx('borrow_from_inventories')
-        .where('inventory_id', borrowed_inventory_id_value)
+        .where({ inventory_id: borrowed_inventory_id_value, tenant_id: tenantId })
         .orderBy('id', 'desc')
         .first()
 
@@ -2256,7 +2334,7 @@ export class InventoriesRepository {
    * Settlement uses obligation cost C_b from `borrow_from_inventories.unit_cost`; physical out at returning lot `purchase_price`.
    * Does not adjust borrowed inventory cost or COGS.
    */
-  async processBorrowReturn(trx, borrowReturnData) {
+  async processBorrowReturn(tenantId, trx, borrowReturnData) {
     const {
       borrowed_inventory_id,
       returning_inventory_id,
@@ -2278,7 +2356,7 @@ export class InventoriesRepository {
 
     try {
       const borrowedInventory = await trx('inventories')
-        .where('id', borrowed_inventory_id)
+        .where({ id: borrowed_inventory_id, tenant_id: tenantId })
         .first()
 
       if (!borrowedInventory) {
@@ -2286,7 +2364,7 @@ export class InventoriesRepository {
       }
 
       const returningInventory = await trx('inventories')
-        .where('id', returning_inventory_id)
+        .where({ id: returning_inventory_id, tenant_id: tenantId })
         .first()
 
       if (!returningInventory) {
@@ -2300,18 +2378,18 @@ export class InventoriesRepository {
       }
 
       const borrowReturns = await trx('borrow_from_returns')
-        .where('borrowed_inventory_id', borrowed_inventory_id)
+        .where({ tenant_id: tenantId, borrowed_inventory_id })
         .orderBy('id', 'desc')
 
       let originalBorrowRecord = await trx('borrow_from_inventories')
-        .where('inventory_id', borrowed_inventory_id)
+        .where({ inventory_id: borrowed_inventory_id, tenant_id: tenantId })
         .whereIn('status', ['active', 'partially_returned'])
         .orderBy('id', 'desc')
         .first()
 
       if (!originalBorrowRecord) {
         originalBorrowRecord = await trx('borrow_from_inventories')
-          .where('product_id', borrowedInventory.product_id)
+          .where({ tenant_id: tenantId, product_id: borrowedInventory.product_id })
           .where('unit_cost', borrowedInventory.purchase_price)
           .where(function () {
             if (borrowedInventory.batch_no) {
@@ -2359,6 +2437,7 @@ export class InventoriesRepository {
 
       const insertResult = await trx('borrow_from_returns')
         .insert({
+          tenant_id: tenantId,
           borrowed_inventory_id,
           returning_inventory_id,
           estimated_price: returningUnitCost,
@@ -2382,24 +2461,25 @@ export class InventoriesRepository {
       const isBorrowFullyReturned = totalReturnedAfter >= totalBorrowedQuantity
 
       await trx('borrow_from_inventories')
-        .where('id', originalBorrowRecord.id)
+        .where({ id: originalBorrowRecord.id, tenant_id: tenantId })
         .update({
           status: isBorrowFullyReturned ? 'returned' : 'partially_returned',
           last_updated: trx.fn.now()
         })
 
       await trx('inventories')
-        .where('id', returning_inventory_id)
+        .where({ id: returning_inventory_id, tenant_id: tenantId })
         .update({
           quantity: trx.raw('quantity - ?', [quantityToReturn]),
           last_updated: trx.fn.now()
         })
 
-      const openingBalance = await this.getLastProductBalance(returningInventory.product_id, trx)
+      const openingBalance = await this.getLastProductBalance(tenantId, returningInventory.product_id, trx)
       const balanceAfter = openingBalance - quantityToReturn
 
       await trx('bin_cards')
         .insert({
+          tenant_id: tenantId,
           product_id: returningInventory.product_id,
           inventory_id: returning_inventory_id,
           transaction_type: 'issued',
@@ -2428,6 +2508,7 @@ export class InventoriesRepository {
         const referenceNo = `BR-${String(returned_on).replace(/-/g, '')}-${borrowReturnId}`
         glEntries = await this.ledgerHelper.recordBorrowReturnSettlement(
           {
+            tenant_id: tenantId,
             borrowReturnId,
             borrowedInventoryId: borrowed_inventory_id,
             obligationUnitCost,

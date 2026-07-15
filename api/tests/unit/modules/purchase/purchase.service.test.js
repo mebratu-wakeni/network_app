@@ -1,13 +1,15 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as fiscalGuard from '../../../../src/services/fiscal-year.guard.js'
 import { PurchaseService } from '../../../../src/modules/purchase/purchase.service.js'
 
 function makeRepository(overrides = {}) {
   return {
+    knex: {},
     findProducts: vi.fn().mockResolvedValue([]),
     findSuppliers: vi.fn().mockResolvedValue([]),
     getWithholdPercentageSetting: vi.fn().mockResolvedValue(2),
     generateNextReceiptNumber: vi.fn().mockResolvedValue('PO000123'),
-    createOrderWithItemsAndReceipt: vi.fn().mockImplementation(async ({ order }) => ({
+    createOrderWithItemsAndReceipt: vi.fn().mockImplementation(async (_tenantId, { order }) => ({
       order: {
         id: 1,
         receipt_no: order.receipt_no,
@@ -22,6 +24,10 @@ function makeRepository(overrides = {}) {
 }
 
 describe('PurchaseService', () => {
+  beforeEach(() => {
+    vi.spyOn(fiscalGuard, 'assertFiscalYearOpen').mockResolvedValue({ fiscal_year: 2026 })
+  })
+
   it('creates cash order with full payment and withhold amount', async () => {
     const repository = makeRepository()
     const service = new PurchaseService(repository)
@@ -35,18 +41,22 @@ describe('PurchaseService', () => {
         withhold_percentage: 10,
         notes: 'cash purchase'
       },
-      { id: 7, full_name: 'Tester' }
+      { id: 7, full_name: 'Tester' },
+      1
     )
 
     expect(result.receipt_number).toBe('PO000123')
     expect(result.subtotal).toBe(100)
     expect(result.withhold_amount).toBe(10)
     expect(result.net_amount).toBe(90)
+    expect(fiscalGuard.assertFiscalYearOpen).toHaveBeenCalledWith(repository.knex, 1, '2026-02-01')
     expect(repository.createOrderWithItemsAndReceipt).toHaveBeenCalledWith(
+      1,
       expect.objectContaining({
         order: expect.objectContaining({
           payment_status: 'paid',
-          amount_paid: 90
+          amount_paid: 90,
+          fiscal_year: 2026
         })
       }),
       7
@@ -66,10 +76,12 @@ describe('PurchaseService', () => {
         first_payment: 25,
         withhold_percentage: 0
       },
-      { id: 3 }
+      { id: 3 },
+      1
     )
 
     expect(repository.createOrderWithItemsAndReceipt).toHaveBeenCalledWith(
+      1,
       expect.objectContaining({
         order: expect.objectContaining({
           payment_status: 'partial',

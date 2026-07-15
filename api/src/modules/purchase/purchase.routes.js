@@ -4,7 +4,7 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate, requireRules } from '../../middleware/auth.js'
+import { authenticate, requireRules, requireTenant } from '../../middleware/auth.js'
 import { PurchaseRepository } from './purchase.repository.js'
 import { PurchaseService } from './purchase.service.js'
 import { PurchaseController } from './purchase.controller.js'
@@ -24,8 +24,8 @@ const controller = new PurchaseController(service)
 
 const router = Router()
 
-// All purchase routes require authentication
-router.use(authenticate)
+// All purchase routes require authentication and tenant context
+router.use(authenticate, requireTenant)
 
 /**
  * Section 1: Lookup / settings

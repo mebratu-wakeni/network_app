@@ -60,3 +60,7 @@ __MACOSX/
 *.njsproj
 *.sln
 *.sw?
+
+# Local deployment artifacts (not for version control)
+masatech-deploy.tar.gz
+masatech-db-init*.sql

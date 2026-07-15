@@ -9,60 +9,45 @@ export class FiscalYearsRepository {
     this.ledgerHelper = new LedgerHelper(knex)
   }
 
-  /**
-   * List all fiscal years, ordered by fiscal_year descending
-   */
-  async listAll() {
-    const rows = await this.knex('fiscal_years')
+  async listAll(tenantId) {
+    return this.knex('fiscal_years')
+      .where({ tenant_id: tenantId })
       .select('*')
       .orderBy('fiscal_year', 'desc')
-    return rows
   }
 
-  /**
-   * Get fiscal year by year number
-   */
-  async getByYear(year) {
-    return this.knex('fiscal_years').where({ fiscal_year: Number(year) }).first()
+  async getByYear(tenantId, year) {
+    return this.knex('fiscal_years')
+      .where({ tenant_id: tenantId, fiscal_year: Number(year) })
+      .first()
   }
 
-  /**
-   * Get current open fiscal year (today's date falls within start_date..end_date and status=open)
-   */
-  async getCurrent() {
+  async getCurrent(tenantId) {
     const today = new Date().toISOString().split('T')[0]
-    const row = await this.knex('fiscal_years')
+    return this.knex('fiscal_years')
+      .where({ tenant_id: tenantId })
       .where('start_date', '<=', today)
       .where('end_date', '>=', today)
       .where('status', 'open')
       .first()
-    return row
   }
 
-  /**
-   * Get the latest open fiscal year if no current exists (e.g. before start of year)
-   */
-  async getLatestOpen() {
+  async getLatestOpen(tenantId) {
     return this.knex('fiscal_years')
-      .where('status', 'open')
+      .where({ tenant_id: tenantId, status: 'open' })
       .orderBy('fiscal_year', 'desc')
       .first()
   }
 
-  /**
-   * Return ANY open fiscal year (used to enforce the single-open-year rule).
-   * Returns null if all years are closed or no years exist.
-   */
-  async getAnyOpen() {
-    return this.knex('fiscal_years').where('status', 'open').first()
+  async getAnyOpen(tenantId) {
+    return this.knex('fiscal_years')
+      .where({ tenant_id: tenantId, status: 'open' })
+      .first()
   }
 
-  /**
-   * Check if any fiscal year overlaps with the given date range.
-   * Overlap: existing.start <= new.end AND existing.end >= new.start
-   */
-  async hasOverlappingDates(start_date, end_date, excludeYear = null) {
+  async hasOverlappingDates(tenantId, start_date, end_date, excludeYear = null) {
     let q = this.knex('fiscal_years')
+      .where({ tenant_id: tenantId })
       .where('start_date', '<=', end_date)
       .where('end_date', '>=', start_date)
     if (excludeYear != null) {
@@ -72,16 +57,14 @@ export class FiscalYearsRepository {
     return !!row
   }
 
-  /**
-   * Get transaction counts in date range (for error messages)
-   */
-  async getTransactionCountsInRange(start_date, end_date) {
+  async getTransactionCountsInRange(tenantId, start_date, end_date) {
+    const tenantFilter = { tenant_id: tenantId }
     const [[ledger], [deps], [exps], [pos], [sos]] = await Promise.all([
-      this.knex('account_ledger').whereBetween('transaction_date', [start_date, end_date]).count('* as c'),
-      this.knex('deposits').whereBetween('deposit_date', [start_date, end_date]).where((b) => b.where('is_reversed', false).orWhereNull('is_reversed')).count('* as c'),
-      this.knex('expenses').whereBetween('paid_on', [start_date, end_date]).count('* as c'),
-      this.knex('purchase_orders').whereBetween('order_date', [start_date, end_date]).count('* as c'),
-      this.knex('sales_orders').whereBetween('order_date', [start_date, end_date]).count('* as c')
+      this.knex('account_ledger').where(tenantFilter).whereBetween('transaction_date', [start_date, end_date]).count('* as c'),
+      this.knex('deposits').where(tenantFilter).whereBetween('deposit_date', [start_date, end_date]).where((b) => b.where('is_reversed', false).orWhereNull('is_reversed')).count('* as c'),
+      this.knex('expenses').where(tenantFilter).whereBetween('paid_on', [start_date, end_date]).count('* as c'),
+      this.knex('purchase_orders').where(tenantFilter).whereBetween('order_date', [start_date, end_date]).count('* as c'),
+      this.knex('sales_orders').where(tenantFilter).whereBetween('order_date', [start_date, end_date]).count('* as c')
     ])
     return {
       ledger: Number(ledger?.c || 0),
@@ -92,30 +75,22 @@ export class FiscalYearsRepository {
     }
   }
 
-  /**
-   * Check if any transactions exist in the given date range (ledger, deposits, expenses, etc.)
-   */
-  async hasTransactionsInRange(start_date, end_date) {
-    const counts = await this.getTransactionCountsInRange(start_date, end_date)
+  async hasTransactionsInRange(tenantId, start_date, end_date) {
+    const counts = await this.getTransactionCountsInRange(tenantId, start_date, end_date)
     return counts.ledger + counts.deposits + counts.expenses + counts.purchases + counts.sales > 0
   }
 
-  /**
-   * Delete a fiscal year
-   */
-  async delete(year) {
+  async delete(tenantId, year) {
     const deleted = await this.knex('fiscal_years')
-      .where({ fiscal_year: Number(year) })
+      .where({ tenant_id: tenantId, fiscal_year: Number(year) })
       .delete()
     return deleted > 0
   }
 
-  /**
-   * Create a fiscal year with custom start and end dates
-   */
-  async create({ fiscal_year, start_date, end_date }) {
+  async create(tenantId, { fiscal_year, start_date, end_date }) {
     const [row] = await this.knex('fiscal_years')
       .insert({
+        tenant_id: tenantId,
         fiscal_year: Number(fiscal_year),
         start_date,
         end_date,
@@ -125,12 +100,9 @@ export class FiscalYearsRepository {
     return row
   }
 
-  /**
-   * Update fiscal year - close it
-   */
-  async closeFiscalYear(year, userId) {
+  async closeFiscalYear(tenantId, year, userId) {
     const [updated] = await this.knex('fiscal_years')
-      .where({ fiscal_year: Number(year) })
+      .where({ tenant_id: tenantId, fiscal_year: Number(year) })
       .update({
         status: 'closed',
         closed_at: this.knex.fn.now(),
@@ -141,35 +113,38 @@ export class FiscalYearsRepository {
     return updated
   }
 
-  /**
-   * Get summary report for a fiscal year (for closed years)
-   */
-  async getReport(year) {
-    const fy = await this.getByYear(year)
+  async getReport(tenantId, year) {
+    const fy = await this.getByYear(tenantId, year)
     if (!fy) return null
     const start = fy.start_date
     const end = fy.end_date
+    const tenantFilter = { tenant_id: tenantId }
 
     const [deposits] = await this.knex('deposits')
+      .where(tenantFilter)
       .whereBetween('deposit_date', [start, end])
       .where((b) => b.where('is_reversed', false).orWhereNull('is_reversed'))
       .sum('amount as total')
     const [expenses] = await this.knex('expenses')
+      .where(tenantFilter)
       .whereBetween('paid_on', [start, end])
       .sum('amount as total')
     const [purchases] = await this.knex('purchase_orders')
+      .where(tenantFilter)
       .whereBetween('order_date', [start, end])
       .count('* as count')
       .sum('total_amount as total')
     const [sales] = await this.knex('sales_orders')
+      .where(tenantFilter)
       .whereBetween('order_date', [start, end])
       .count('* as count')
       .sum('total_amount as total')
     const [ledgerRows] = await this.knex('account_ledger')
+      .where(tenantFilter)
       .whereBetween('transaction_date', [start, end])
       .count('* as count')
 
-    const closingBalances = await this.getClosingBalances(end)
+    const closingBalances = await this.getClosingBalances(tenantId, end)
 
     return {
       fiscal_year: fy,
@@ -184,11 +159,30 @@ export class FiscalYearsRepository {
     }
   }
 
-  /**
-   * Get ending balance per account as of a given date.
-   * Delegates to LedgerHelper.getClosingBalances (computed from debit/credit).
-   */
-  async getClosingBalances(asOfDate, trx = null) {
-    return this.ledgerHelper.getClosingBalances(asOfDate, trx)
+  async getClosingBalances(tenantId, asOfDate, trx = null) {
+    const db = trx || this.knex
+    const dateStr = typeof asOfDate === 'string' && asOfDate.length >= 10
+      ? asOfDate.slice(0, 10)
+      : asOfDate instanceof Date
+        ? asOfDate.toISOString().slice(0, 10)
+        : String(asOfDate || '').slice(0, 10)
+
+    if (!dateStr || dateStr.length < 10) return []
+
+    const rows = await db('account_ledger')
+      .where({ tenant_id: tenantId })
+      .where('transaction_date', '<=', dateStr)
+      .select(
+        'account_code',
+        db.raw('MAX(account_name) as account_name'),
+        db.raw('COALESCE(SUM(debit - credit), 0) as balance')
+      )
+      .groupBy('account_code')
+
+    return rows.map((r) => ({
+      account_code: r.account_code,
+      account_name: r.account_name,
+      balance: parseFloat(r.balance || 0)
+    }))
   }
 }

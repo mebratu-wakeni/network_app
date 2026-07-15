@@ -14,6 +14,9 @@ import { fileURLToPath } from 'url'
 import knexModule from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { InventoriesRepository } from '../../../../src/modules/inventory/inventories.repository.js'
+import { seedDefaultChartOfAccountsForTenant } from '../../../helpers/testDb.js'
+
+const TENANT_ID = 1
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -42,9 +45,17 @@ describe('borrow-from / borrow-return GL (full settlement)', () => {
     db = makeDb()
     await db.migrate.latest()
     await db.seed.run()
-    await db('categories').insert({ name: 'TestCat', sync_status: 'pending' })
-    await db('units').insert({ name: 'UnitT', sync_status: 'pending' })
+    await db('tenants').insert({
+      id: TENANT_ID,
+      client_code: 'TEST',
+      business_name: 'Test Pharmacy',
+      status: 'active'
+    })
+    await seedDefaultChartOfAccountsForTenant(db, TENANT_ID)
+    await db('categories').insert({ tenant_id: TENANT_ID, name: 'TestCat', sync_status: 'pending' })
+    await db('units').insert({ tenant_id: TENANT_ID, name: 'UnitT', sync_status: 'pending' })
     await db('customers').insert({
+      tenant_id: TENANT_ID,
       name: 'Supplier Partner',
       customer_type: 'supplier',
       sync_status: 'pending'
@@ -62,6 +73,7 @@ describe('borrow-from / borrow-return GL (full settlement)', () => {
     const repo = new InventoriesRepository(db)
 
     const importResult = await repo.bulkImport(
+      TENANT_ID,
       [
         {
           product_name: 'Product A',
@@ -87,6 +99,7 @@ describe('borrow-from / borrow-return GL (full settlement)', () => {
     expect(opening4300).toBeCloseTo(-96, 2)
 
     const borrowRow = await repo.createBorrowFromInventory(
+      TENANT_ID,
       {
         partnerId: supplier.id,
         productId,
@@ -106,6 +119,7 @@ describe('borrow-from / borrow-return GL (full settlement)', () => {
 
     // Step 3: mixed lots — batch y first then batch x (stress non–contract-cost first)
     await repo.processBorrowFromReturn(
+      TENANT_ID,
       {
         borrowedInventoryId: invYId,
         returnItems: [
@@ -119,6 +133,7 @@ describe('borrow-from / borrow-return GL (full settlement)', () => {
 
     // Step 4: remaining 4 from batch y
     await repo.processBorrowFromReturn(
+      TENANT_ID,
       {
         borrowedInventoryId: invYId,
         returnItems: [{ inventory_id: invYId, quantity: 4 }],

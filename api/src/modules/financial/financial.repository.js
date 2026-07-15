@@ -14,12 +14,12 @@ export class FinancialRepository {
   }
 
   // ---------- Expenses ----------
-  async createExpense(data, userId = null) {
+  async createExpense(tenantId, data, userId = null) {
     return this.knex.transaction(async (trx) => {
       if (data.payment_method === 'cash' && data.amount > 0) {
         const hasLedger = await trx.schema.hasTable('account_ledger')
         if (hasLedger) {
-          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx, tenantId)
           const cashBalance = Number(balances['1100'] ?? 0)
           if (cashBalance < data.amount) {
             const err = new Error(`Insufficient cash balance. Current: ${cashBalance.toFixed(2)}. Required: ${data.amount.toFixed(2)}.`)
@@ -31,6 +31,7 @@ export class FinancialRepository {
 
       const [row] = await trx('expenses')
         .insert({
+          tenant_id: tenantId,
           customer_id: data.customer_id ?? null,
           category: data.category,
           paid_on: data.paid_on,
@@ -53,6 +54,7 @@ export class FinancialRepository {
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
         await this.ledgerHelper.recordExpense({
+          tenant_id: tenantId,
           expenseId: row.id,
           amount: Number(row.amount),
           paymentMethod: row.payment_method,
@@ -67,15 +69,17 @@ export class FinancialRepository {
     })
   }
 
-  async listExpenses({ limit = 50, offset = 0, date_from, date_to, category }) {
-    let base = this.knex('expenses')
+  async listExpenses(tenantId, { limit = 50, offset = 0, date_from, date_to, category }) {
+    let base = this.knex('expenses').where({ 'expenses.tenant_id': tenantId })
     if (date_from) base = base.where('paid_on', '>=', date_from)
     if (date_to) base = base.where('paid_on', '<=', date_to)
     if (category) base = base.where('category', category)
 
     const totalResult = await base.clone().count('* as c').first()
     const rows = await base
-      .leftJoin('customers', 'expenses.customer_id', 'customers.id')
+      .leftJoin('customers', function () {
+        this.on('expenses.customer_id', 'customers.id').andOn('expenses.tenant_id', 'customers.tenant_id')
+      })
       .select('expenses.*', 'customers.name as customer_name')
       .orderBy('expenses.paid_on', 'desc')
       .orderBy('expenses.id', 'desc')
@@ -85,19 +89,23 @@ export class FinancialRepository {
     return { expenses: rows, total: Number(totalResult?.c || 0) }
   }
 
-  async getExpenseById(id) {
-    const row = await this.knex('expenses').where('expenses.id', id)
-      .leftJoin('customers', 'expenses.customer_id', 'customers.id')
+  async getExpenseById(tenantId, id) {
+    const row = await this.knex('expenses')
+      .where({ 'expenses.id': id, 'expenses.tenant_id': tenantId })
+      .leftJoin('customers', function () {
+        this.on('expenses.customer_id', 'customers.id').andOn('expenses.tenant_id', 'customers.tenant_id')
+      })
       .select('expenses.*', 'customers.name as customer_name')
       .first()
     return row
   }
 
   // ---------- Deposits ----------
-  async createDeposit(data, userId = null) {
+  async createDeposit(tenantId, data, userId = null) {
     return this.knex.transaction(async (trx) => {
       const [row] = await trx('deposits')
         .insert({
+          tenant_id: tenantId,
           deposit_date: data.deposit_date,
           fiscal_year: data.fiscal_year ?? null,
           type: data.type || 'deposit',
@@ -113,12 +121,12 @@ export class FinancialRepository {
 
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
-        // Chart of accounts: 4300 Opening Balance, 4100 Owner's Capital, 5200 Other Revenue
         const revenueTypes = ['donation', 'grant', 'interest_income', 'other_revenue']
         const accountCode = data.type === 'initial_seed' ? '4300'
           : revenueTypes.includes(data.type) ? '5200'
           : '4100'
         await this.ledgerHelper.recordDeposit({
+          tenant_id: tenantId,
           depositId: row.id,
           amount: Number(row.amount),
           accountCode,
@@ -133,8 +141,11 @@ export class FinancialRepository {
     })
   }
 
-  async listDeposits({ limit = 50, offset = 0, date_from, date_to, type, include_reversed = false }) {
-    let q = this.knex('deposits').orderBy('deposit_date', 'desc').orderBy('id', 'desc')
+  async listDeposits(tenantId, { limit = 50, offset = 0, date_from, date_to, type, include_reversed = false }) {
+    let q = this.knex('deposits')
+      .where({ tenant_id: tenantId })
+      .orderBy('deposit_date', 'desc')
+      .orderBy('id', 'desc')
     if (!include_reversed) q = q.where((builder) => builder.where('is_reversed', false).orWhereNull('is_reversed'))
 
     if (date_from) q = q.where('deposit_date', '>=', date_from)
@@ -147,8 +158,10 @@ export class FinancialRepository {
     return { deposits: rows, total: Number(totalResult?.c || 0) }
   }
 
-  async getDepositStats({ date_from, date_to }) {
-    let q = this.knex('deposits').select('type')
+  async getDepositStats(tenantId, { date_from, date_to }) {
+    let q = this.knex('deposits')
+      .where({ tenant_id: tenantId })
+      .select('type')
       .select(this.knex.raw('COUNT(*) as count'))
       .select(this.knex.raw('COALESCE(SUM(amount), 0) as value'))
       .groupBy('type')
@@ -170,17 +183,18 @@ export class FinancialRepository {
     return stats
   }
 
-  async getDepositById(id) {
-    return this.knex('deposits').where({ id }).first()
+  async getDepositById(tenantId, id) {
+    return this.knex('deposits').where({ id, tenant_id: tenantId }).first()
   }
 
-  async updateDeposit(id, data, userId = null) {
+  async updateDeposit(tenantId, id, data, userId = null) {
     return this.knex.transaction(async (trx) => {
-      const existing = await trx('deposits').where({ id }).first()
+      const existing = await trx('deposits').where({ id, tenant_id: tenantId }).first()
       if (!existing) return null
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
         await this.ledgerHelper.reverseDeposit({
+          tenant_id: tenantId,
           depositId: id,
           transactionDate: data.deposit_date || existing.deposit_date,
           reason: 'Edit deposit',
@@ -192,9 +206,10 @@ export class FinancialRepository {
         : revenueTypes.includes(data.type || existing.type) ? '5200'
         : '4100'
       const [row] = await trx('deposits')
-        .where({ id })
+        .where({ id, tenant_id: tenantId })
         .update({
           deposit_date: data.deposit_date ?? existing.deposit_date,
+          fiscal_year: data.fiscal_year ?? existing.fiscal_year,
           type: data.type ?? existing.type,
           amount: data.amount != null ? data.amount : existing.amount,
           description: data.description !== undefined ? data.description : existing.description,
@@ -205,6 +220,7 @@ export class FinancialRepository {
         .returning('*')
       if (hasLedger && row) {
         await this.ledgerHelper.recordDeposit({
+          tenant_id: tenantId,
           depositId: row.id,
           amount: Number(row.amount),
           accountCode,
@@ -218,9 +234,9 @@ export class FinancialRepository {
     })
   }
 
-  async reverseDeposit(id, userId = null) {
+  async reverseDeposit(tenantId, id, userId = null) {
     return this.knex.transaction(async (trx) => {
-      const existing = await trx('deposits').where({ id }).first()
+      const existing = await trx('deposits').where({ id, tenant_id: tenantId }).first()
       if (!existing) return null
       if (existing.is_reversed) {
         const err = new Error('Deposit is already reversed')
@@ -230,6 +246,7 @@ export class FinancialRepository {
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
         await this.ledgerHelper.reverseDeposit({
+          tenant_id: tenantId,
           depositId: id,
           transactionDate: new Date().toISOString().split('T')[0],
           reason: 'Reversed by user',
@@ -237,7 +254,7 @@ export class FinancialRepository {
         }, trx)
       }
       const [row] = await trx('deposits')
-        .where({ id })
+        .where({ id, tenant_id: tenantId })
         .update({ is_reversed: true, last_updated: trx.fn.now() })
         .returning('*')
       return row
@@ -245,12 +262,12 @@ export class FinancialRepository {
   }
 
   // ---------- Cash Loans Receivable ----------
-  async createCashLoanReceivable(data, userId = null) {
+  async createCashLoanReceivable(tenantId, data, userId = null) {
     return this.knex.transaction(async (trx) => {
       if (data.amount > 0) {
         const hasLedger = await trx.schema.hasTable('account_ledger')
         if (hasLedger) {
-          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx, tenantId)
           const cashBalance = Number(balances['1100'] ?? 0)
           if (cashBalance < data.amount) {
             const err = new Error(`Insufficient cash balance. Current: ${cashBalance.toFixed(2)}. Required: ${data.amount.toFixed(2)}.`)
@@ -262,9 +279,11 @@ export class FinancialRepository {
 
       const [row] = await trx('cash_loans_receivable')
         .insert({
+          tenant_id: tenantId,
           partner_id: data.partner_id,
           amount: data.amount,
           lent_date: data.lent_date,
+          fiscal_year: data.fiscal_year ?? null,
           expected_return_date: data.expected_return_date || null,
           notes: data.notes || null,
           reference_no: data.reference_no || null,
@@ -277,6 +296,7 @@ export class FinancialRepository {
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
         await this.ledgerHelper.recordCashLoanReceivable({
+          tenant_id: tenantId,
           loanId: row.id,
           amount: Number(row.amount),
           transactionDate: row.lent_date,
@@ -290,9 +310,12 @@ export class FinancialRepository {
     })
   }
 
-  async listCashLoansReceivable({ limit = 50, offset = 0, status }) {
+  async listCashLoansReceivable(tenantId, { limit = 50, offset = 0, status }) {
     let q = this.knex('cash_loans_receivable as clr')
-      .leftJoin('customers as c', 'clr.partner_id', 'c.id')
+      .where('clr.tenant_id', tenantId)
+      .leftJoin('customers as c', function () {
+        this.on('clr.partner_id', 'c.id').andOn('clr.tenant_id', 'c.tenant_id')
+      })
       .select('clr.*', 'c.name as partner_name')
       .orderBy('clr.lent_date', 'desc')
 
@@ -302,6 +325,7 @@ export class FinancialRepository {
     const rows = await q.limit(limit).offset(offset)
 
     let sumQ = this.knex('cash_loans_receivable')
+      .where({ tenant_id: tenantId })
       .select(this.knex.raw(`
         COALESCE(
           SUM(
@@ -324,10 +348,10 @@ export class FinancialRepository {
     }
   }
 
-  async recordCashLoanReceivableReturn(loanId, amount, returnDate, userId = null) {
+  async recordCashLoanReceivableReturn(tenantId, loanId, amount, returnDate, userId = null) {
     return this.knex.transaction(async (trx) => {
       const hasLedger = await trx.schema.hasTable('account_ledger')
-      const loan = await trx('cash_loans_receivable').where({ id: loanId }).first()
+      const loan = await trx('cash_loans_receivable').where({ id: loanId, tenant_id: tenantId }).first()
       if (!loan) {
         const err = new Error('Loan not found')
         err.status = 404
@@ -343,7 +367,7 @@ export class FinancialRepository {
       const newStatus = newReturned >= Number(loan.amount) - 0.01 ? 'returned' : 'partially_returned'
 
       await trx('cash_loans_receivable')
-        .where({ id: loanId })
+        .where({ id: loanId, tenant_id: tenantId })
         .update({
           returned_amount: newReturned,
           status: newStatus,
@@ -352,6 +376,7 @@ export class FinancialRepository {
 
       if (hasLedger && amount > 0) {
         await this.ledgerHelper.recordCashLoanReceivableReturn({
+          tenant_id: tenantId,
           loanId,
           returnAmount: amount,
           transactionDate: returnDate,
@@ -366,12 +391,14 @@ export class FinancialRepository {
   }
 
   // ---------- Cash Loans Payable ----------
-  async createCashLoanPayable(data, userId = null) {
+  async createCashLoanPayable(tenantId, data, userId = null) {
     const [row] = await this.knex('cash_loans_payable')
       .insert({
+        tenant_id: tenantId,
         partner_id: data.partner_id,
         amount: data.amount,
         borrowed_date: data.borrowed_date,
+        fiscal_year: data.fiscal_year ?? null,
         expected_repay_date: data.expected_repay_date || null,
         notes: data.notes || null,
         reference_no: data.reference_no || null,
@@ -384,6 +411,7 @@ export class FinancialRepository {
     const hasLedger = await this.knex.schema.hasTable('account_ledger')
     if (hasLedger) {
       await this.ledgerHelper.recordCashLoanPayable({
+        tenant_id: tenantId,
         loanId: row.id,
         amount: Number(row.amount),
         transactionDate: row.borrowed_date,
@@ -396,9 +424,12 @@ export class FinancialRepository {
     return row
   }
 
-  async listCashLoansPayable({ limit = 50, offset = 0, status }) {
+  async listCashLoansPayable(tenantId, { limit = 50, offset = 0, status }) {
     let q = this.knex('cash_loans_payable as clp')
-      .leftJoin('customers as c', 'clp.partner_id', 'c.id')
+      .where('clp.tenant_id', tenantId)
+      .leftJoin('customers as c', function () {
+        this.on('clp.partner_id', 'c.id').andOn('clp.tenant_id', 'c.tenant_id')
+      })
       .select('clp.*', 'c.name as partner_name')
       .orderBy('clp.borrowed_date', 'desc')
 
@@ -410,9 +441,9 @@ export class FinancialRepository {
     return { loans: rows, total: Number(totalResult?.c || 0) }
   }
 
-  async recordCashLoanPayableRepayment(loanId, amount, repayDate, userId = null) {
+  async recordCashLoanPayableRepayment(tenantId, loanId, amount, repayDate, userId = null) {
     return this.knex.transaction(async (trx) => {
-      const loan = await trx('cash_loans_payable').where({ id: loanId }).first()
+      const loan = await trx('cash_loans_payable').where({ id: loanId, tenant_id: tenantId }).first()
       if (!loan) {
         const err = new Error('Loan not found')
         err.status = 404
@@ -426,7 +457,7 @@ export class FinancialRepository {
 
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger && amount > 0) {
-        const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+        const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx, tenantId)
         const cashBalance = Number(balances['1100'] ?? 0)
         if (cashBalance < amount) {
           const err = new Error(`Insufficient cash balance for repayment.`)
@@ -439,7 +470,7 @@ export class FinancialRepository {
       const newStatus = newRepaid >= Number(loan.amount) - 0.01 ? 'repaid' : 'partially_repaid'
 
       await trx('cash_loans_payable')
-        .where({ id: loanId })
+        .where({ id: loanId, tenant_id: tenantId })
         .update({
           repaid_amount: newRepaid,
           status: newStatus,
@@ -448,6 +479,7 @@ export class FinancialRepository {
 
       if (hasLedger && amount > 0) {
         await this.ledgerHelper.recordCashLoanPayableRepayment({
+          tenant_id: tenantId,
           repaymentAmount: amount,
           transactionDate: repayDate,
           description: `Cash loan payable repayment - Loan #${loanId}`,
@@ -461,18 +493,22 @@ export class FinancialRepository {
   }
 
   // ---------- Trade Receivables (from sales) ----------
-  async getTradeReceivablesSummary() {
+  async getTradeReceivablesSummary(tenantId) {
     const hasSales = await this.knex.schema.hasTable('sales_orders')
     if (!hasSales) return { orders: [], total_outstanding: 0 }
 
     const spSub = this.knex('sales_payments')
+      .where({ tenant_id: tenantId })
       .select('sales_order_id')
       .sum({ total_paid: 'amount' })
       .groupBy('sales_order_id')
       .as('sp')
 
     const rows = await this.knex('sales_orders as so')
-      .leftJoin('customers as c', 'so.customer_id', 'c.id')
+      .where('so.tenant_id', tenantId)
+      .leftJoin('customers as c', function () {
+        this.on('so.customer_id', 'c.id').andOn('so.tenant_id', 'c.tenant_id')
+      })
       .leftJoin(spSub, 'so.id', 'sp.sales_order_id')
       .where('so.status', 'completed')
       .where('so.is_reversed', false)
@@ -512,18 +548,22 @@ export class FinancialRepository {
   }
 
   // ---------- Trade Payables (from purchases) ----------
-  async getTradePayablesSummary() {
+  async getTradePayablesSummary(tenantId) {
     const hasPurchase = await this.knex.schema.hasTable('purchase_orders')
     if (!hasPurchase) return { orders: [], total_outstanding: 0 }
 
     const ppSub = this.knex('purchase_payments')
+      .where({ tenant_id: tenantId })
       .select('purchase_order_id')
       .sum({ total_paid: 'amount' })
       .groupBy('purchase_order_id')
       .as('pp')
 
     const rows = await this.knex('purchase_orders as po')
-      .leftJoin('customers as c', 'po.supplier_id', 'c.id')
+      .where('po.tenant_id', tenantId)
+      .leftJoin('customers as c', function () {
+        this.on('po.supplier_id', 'c.id').andOn('po.tenant_id', 'c.tenant_id')
+      })
       .leftJoin(ppSub, 'po.id', 'pp.purchase_order_id')
       .where('po.status', 'completed')
       .select(
@@ -560,18 +600,17 @@ export class FinancialRepository {
   }
 
   // ---------- Withhold Receivables (from sales) ----------
-  /**
-   * List sales orders with withhold for settlement.
-   * Status: '' (all), 'confirmed_unsettled', 'unconfirmed', 'settled'
-   */
-  async listWithholdReceivables({ limit = 50, offset = 0, status }) {
+  async listWithholdReceivables(tenantId, { limit = 50, offset = 0, status }) {
     const hasSales = await this.knex.schema.hasTable('sales_orders')
     if (!hasSales) {
       return { orders: [], total: 0, stats: { total_unsettled: 0, count_confirmed_unsettled: 0, count_unconfirmed: 0, count_settled: 0 } }
     }
 
     let base = this.knex('sales_orders as so')
-      .leftJoin('customers as c', 'so.customer_id', 'c.id')
+      .where('so.tenant_id', tenantId)
+      .leftJoin('customers as c', function () {
+        this.on('so.customer_id', 'c.id').andOn('so.tenant_id', 'c.tenant_id')
+      })
       .where('so.status', 'completed')
       .where('so.is_reversed', false)
       .whereRaw('coalesce(so.withhold_amount, 0) > 0.009')
@@ -600,8 +639,8 @@ export class FinancialRepository {
     const totalResult = await base.clone().clearSelect().clearOrder().count('so.id as c').first()
     const rows = await base.limit(limit).offset(offset)
 
-    // Stats: all with withhold_amount > 0
     const statsRows = await this.knex('sales_orders as so')
+      .where('so.tenant_id', tenantId)
       .where('so.status', 'completed')
       .where('so.is_reversed', false)
       .whereRaw('coalesce(so.withhold_amount, 0) > 0.009')
@@ -651,12 +690,8 @@ export class FinancialRepository {
     }
   }
 
-  /**
-   * Create withhold receivable settlement for given sales orders.
-   * Validates all orders are confirmed and unsettled; creates settlement + items; posts GL; updates withhold_settled.
-   */
-  async createWithholdReceivableSettlement(data, userId = null) {
-    const { settlement_date, sales_order_ids, reference_no, notes } = data
+  async createWithholdReceivableSettlement(tenantId, data, userId = null) {
+    const { settlement_date, fiscal_year, sales_order_ids, reference_no, notes } = data
 
     const hasSettlements = await this.knex.schema.hasTable('withhold_receivable_settlements')
     if (!hasSettlements) {
@@ -673,6 +708,7 @@ export class FinancialRepository {
       }
 
       const orders = await trx('sales_orders')
+        .where({ tenant_id: tenantId })
         .whereIn('id', sales_order_ids)
         .where('status', 'completed')
         .where('is_reversed', false)
@@ -696,7 +732,9 @@ export class FinancialRepository {
 
       const [settlement] = await trx('withhold_receivable_settlements')
         .insert({
+          tenant_id: tenantId,
           settlement_date: settlement_date || new Date().toISOString().split('T')[0],
+          fiscal_year: fiscal_year ?? null,
           total_amount: totalAmount,
           reference_no: reference_no || null,
           notes: notes || null,
@@ -707,6 +745,7 @@ export class FinancialRepository {
 
       for (const o of orders) {
         await trx('withhold_receivable_settlement_items').insert({
+          tenant_id: tenantId,
           settlement_id: settlement.id,
           sales_order_id: o.id,
           withhold_amount: Number(o.withhold_amount || 0)
@@ -714,12 +753,14 @@ export class FinancialRepository {
       }
 
       await trx('sales_orders')
+        .where({ tenant_id: tenantId })
         .whereIn('id', sales_order_ids)
         .update({ withhold_settled: true, last_updated: trx.fn.now() })
 
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger && totalAmount > 0) {
         await this.ledgerHelper.recordWithholdReceivableSettlement({
+          tenant_id: tenantId,
           settlementId: settlement.id,
           totalAmount,
           transactionDate: settlement.settlement_date,
@@ -738,18 +779,17 @@ export class FinancialRepository {
   }
 
   // ---------- Withhold Payables (from purchases) ----------
-  /**
-   * List purchase orders with withhold for settlement.
-   * Purchase has withhold_settled only (no confirmation step); status: '' (all), 'unsettled', 'settled'
-   */
-  async listWithholdPayables({ limit = 50, offset = 0, status }) {
+  async listWithholdPayables(tenantId, { limit = 50, offset = 0, status }) {
     const hasPurchase = await this.knex.schema.hasTable('purchase_orders')
     if (!hasPurchase) {
       return { orders: [], total: 0, stats: { total_unsettled: 0, count_unsettled: 0, count_settled: 0 } }
     }
 
     let base = this.knex('purchase_orders as po')
-      .leftJoin('customers as c', 'po.supplier_id', 'c.id')
+      .where('po.tenant_id', tenantId)
+      .leftJoin('customers as c', function () {
+        this.on('po.supplier_id', 'c.id').andOn('po.tenant_id', 'c.tenant_id')
+      })
       .where('po.status', 'completed')
       .whereRaw('coalesce(po.withhold_amount, 0) > 0.009')
 
@@ -774,6 +814,7 @@ export class FinancialRepository {
     const rows = await base.limit(limit).offset(offset)
 
     const statsRows = await this.knex('purchase_orders as po')
+      .where('po.tenant_id', tenantId)
       .where('po.status', 'completed')
       .whereRaw('coalesce(po.withhold_amount, 0) > 0.009')
       .select('po.withhold_settled', 'po.withhold_amount')
@@ -806,8 +847,8 @@ export class FinancialRepository {
     }
   }
 
-  async createWithholdPayableSettlement(data, userId = null) {
-    const { settlement_date, purchase_order_ids, reference_no, notes } = data
+  async createWithholdPayableSettlement(tenantId, data, userId = null) {
+    const { settlement_date, fiscal_year, purchase_order_ids, reference_no, notes } = data
 
     const hasSettlements = await this.knex.schema.hasTable('withhold_payable_settlements')
     if (!hasSettlements) {
@@ -824,6 +865,7 @@ export class FinancialRepository {
       }
 
       const orders = await trx('purchase_orders')
+        .where({ tenant_id: tenantId })
         .whereIn('id', purchase_order_ids)
         .where('status', 'completed')
         .whereRaw('coalesce(withhold_amount, 0) > 0.009')
@@ -843,10 +885,9 @@ export class FinancialRepository {
         throw err
       }
 
-      // Cash balance safeguard: withhold payable settlement pays cash to tax authority
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger && totalAmount > 0) {
-        const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+        const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx, tenantId)
         const cashBalance = Number(balances['1100'] ?? 0)
         if (cashBalance < totalAmount) {
           const err = new Error(
@@ -859,7 +900,9 @@ export class FinancialRepository {
 
       const [settlement] = await trx('withhold_payable_settlements')
         .insert({
+          tenant_id: tenantId,
           settlement_date: settlement_date || new Date().toISOString().split('T')[0],
+          fiscal_year: fiscal_year ?? null,
           total_amount: totalAmount,
           reference_no: reference_no || null,
           notes: notes || null,
@@ -870,6 +913,7 @@ export class FinancialRepository {
 
       for (const o of orders) {
         await trx('withhold_payable_settlement_items').insert({
+          tenant_id: tenantId,
           settlement_id: settlement.id,
           purchase_order_id: o.id,
           withhold_amount: Number(o.withhold_amount || 0)
@@ -877,11 +921,13 @@ export class FinancialRepository {
       }
 
       await trx('purchase_orders')
+        .where({ tenant_id: tenantId })
         .whereIn('id', purchase_order_ids)
         .update({ withhold_settled: true, last_updated: trx.fn.now() })
 
       if (hasLedger && totalAmount > 0) {
         await this.ledgerHelper.recordWithholdPayableSettlement({
+          tenant_id: tenantId,
           settlementId: settlement.id,
           totalAmount,
           transactionDate: settlement.settlement_date,

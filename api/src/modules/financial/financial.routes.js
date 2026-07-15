@@ -3,7 +3,7 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate } from '../../middleware/auth.js'
+import { authenticate, requireTenant } from '../../middleware/auth.js'
 import { FinancialRepository } from './financial.repository.js'
 import { FinancialService } from './financial.service.js'
 import { FinancialController } from './financial.controller.js'
@@ -13,7 +13,7 @@ const service = new FinancialService(repository)
 const controller = new FinancialController(service)
 
 const router = Router()
-router.use(authenticate)
+router.use(authenticate, requireTenant)
 
 // Expenses
 router.post('/expenses', controller.createExpense)

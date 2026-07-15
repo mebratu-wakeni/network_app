@@ -13,35 +13,36 @@ export class PurchaseRepository {
   /**
    * Helper: Get last product balance for bin card
    */
-  async getLastProductBalance(productId, trx = null) {
+  async getLastProductBalance(tenantId, productId, trx = null) {
     const db = trx || this.knex
     const lastTransaction = await db('bin_cards')
-      .where({ product_id: productId })
+      .where({ tenant_id: tenantId, product_id: productId })
       .orderBy('transaction_date', 'desc')
       .orderBy('id', 'desc')
       .select('balance')
       .first()
-    
+
     return lastTransaction ? parseInt(lastTransaction.balance, 10) : 0
   }
 
   /**
    * Helper: Generate inventory code
    */
-  async generateInventoryCode(productCode, trx = null) {
+  async generateInventoryCode(tenantId, productCode, trx = null) {
     const db = trx || this.knex
-    
-    // Extract numeric part from product code (e.g., "PRD0001" -> "0001")
+
     const productCodeDigits = productCode.replace(/\D/g, '').slice(-4) || '0000'
-    
-    // Find max variation for this product code pattern
-    const existing = await db('inventories')
-      .leftJoin('products', 'inventories.product_id', 'products.id')
-      .where('products.product_code', 'like', `${productCode}%`)
-      .select('inventories.inventory_code')
-      .orderBy('inventories.id', 'desc')
+
+    const existing = await db('inventories as inv')
+      .leftJoin('products as p', function () {
+        this.on('inv.product_id', 'p.id').andOn('inv.tenant_id', 'p.tenant_id')
+      })
+      .where('inv.tenant_id', tenantId)
+      .where('p.product_code', 'like', `${productCode}%`)
+      .select('inv.inventory_code')
+      .orderBy('inv.id', 'desc')
       .limit(100)
-    
+
     let maxVariation = 0
     existing.forEach(inv => {
       if (inv.inventory_code) {
@@ -52,20 +53,20 @@ export class PurchaseRepository {
         }
       }
     })
-    
+
     const nextVariation = maxVariation + 1
     const variationStr = String(nextVariation).padStart(3, '0')
-    
+
     return `I${variationStr}${productCodeDigits}`
   }
 
   /**
    * Helper: Find existing inventory by product and variation details
    */
-  async findExistingInventory(productId, batchNo, expiryDate, purchasePrice, trx = null) {
+  async findExistingInventory(tenantId, productId, batchNo, expiryDate, purchasePrice, trx = null) {
     const db = trx || this.knex
     let query = db('inventories')
-      .where({ product_id: productId })
+      .where({ tenant_id: tenantId, product_id: productId })
       .where({ purchase_price: purchasePrice })
 
     if (batchNo) {
@@ -88,6 +89,7 @@ export class PurchaseRepository {
    */
   async createBinCardTransaction(params, trx = null) {
     const {
+      tenantId,
       productId,
       inventoryId,
       batchNo,
@@ -107,6 +109,7 @@ export class PurchaseRepository {
 
     const [binCard] = await db('bin_cards')
       .insert({
+        tenant_id: tenantId,
         product_id: productId,
         inventory_id: inventoryId,
         batch_no: batchNo || null,
@@ -135,9 +138,10 @@ export class PurchaseRepository {
   /**
    * Lookup products for dropdown/search
    */
-  async findProducts({ search, limit = 50 }) {
+  async findProducts(tenantId, { search, limit = 50 }) {
     const q = this.knex('products')
-      .select('id', 'product_code', 'name', 'description as category') // category name requires join; keep simple here
+      .where({ tenant_id: tenantId })
+      .select('id', 'product_code', 'name', 'description as category')
       .limit(limit)
 
     if (search) {
@@ -155,8 +159,9 @@ export class PurchaseRepository {
   /**
    * Lookup suppliers (customers with customer_type including 'supplier')
    */
-  async findSuppliers({ search, limit = 50 }) {
+  async findSuppliers(tenantId, { search, limit = 50 }) {
     const q = this.knex('customers')
+      .where({ tenant_id: tenantId })
       .select('id', 'name', 'customer_type', 'contact_person', 'phone', 'email')
       .whereIn('customer_type', ['supplier', 'both'])
       .limit(limit)
@@ -174,11 +179,11 @@ export class PurchaseRepository {
   /**
    * Get withhold percentage from system_settings
    */
-  async getWithholdPercentageSetting() {
+  async getWithholdPercentageSetting(tenantId) {
     const hasTable = await this.knex.schema.hasTable('system_settings')
     if (!hasTable) return null
     const setting = await this.knex('system_settings')
-      .where({ setting_key: 'withhold_percentage' })
+      .where({ tenant_id: tenantId, setting_key: 'withhold_percentage' })
       .first()
 
     if (!setting || setting.setting_value == null || setting.setting_value === '') return null
@@ -191,23 +196,22 @@ export class PurchaseRepository {
    * Create purchase order, items, optional initial payment and receipt snapshot in a transaction.
    * Expects all computed financials (subtotal, withhold, net, payment_status, amount_paid, etc.) in payload.
    */
-  async createOrderWithItemsAndReceipt(payload, userId = null) {
+  async createOrderWithItemsAndReceipt(tenantId, payload, userId = null) {
     return this.knex.transaction(async (trx) => {
       const {
         order,
         items,
-        initialPayment, // optional
-        receiptSnapshot // { snapshot_data, order_meta, order_items, order_payment }
+        initialPayment,
+        receiptSnapshot
       } = payload
 
-      // 0) Cash balance validation: prevent negative cash for cash/cheque purchases
       const netAmount = Number(order.total_amount || 0) - Number(order.withhold_amount || 0)
       const chequeAmount = Number(initialPayment?.amount || 0)
       const cashRequired = order.payment_mode === 'cash' ? netAmount : order.payment_mode === 'cheque' ? chequeAmount : 0
       if (cashRequired > 0) {
         const hasLedger = await trx.schema.hasTable('account_ledger')
         if (hasLedger) {
-          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx, tenantId)
           const cashBalance = Number(balances['1100'] ?? 0)
           if (cashBalance < cashRequired) {
             const err = new Error(
@@ -219,9 +223,9 @@ export class PurchaseRepository {
         }
       }
 
-      // 1) Insert order
       const [insertedOrder] = await trx('purchase_orders')
         .insert({
+          tenant_id: tenantId,
           supplier_id: order.supplier_id,
           order_date: order.order_date,
           fiscal_year: order.fiscal_year ?? null,
@@ -246,8 +250,8 @@ export class PurchaseRepository {
 
       const orderId = insertedOrder.id
 
-      // 2) Insert items
       const itemsToInsert = items.map(it => ({
+        tenant_id: tenantId,
         purchase_order_id: orderId,
         product_id: it.product_id,
         quantity: it.quantity,
@@ -263,11 +267,11 @@ export class PurchaseRepository {
         .insert(itemsToInsert)
         .returning('*')
 
-      // 3) Optional initial payment record
       let paymentRecord = null
       if (initialPayment && initialPayment.amount > 0) {
         const [payment] = await trx('purchase_payments')
           .insert({
+            tenant_id: tenantId,
             purchase_order_id: orderId,
             payment_date: initialPayment.payment_date,
             amount: initialPayment.amount,
@@ -287,9 +291,9 @@ export class PurchaseRepository {
         paymentRecord = payment
       }
 
-      // 4) Insert receipt snapshot (purchase_receipts)
       if (receiptSnapshot) {
         const snapshot = {
+          tenant_id: tenantId,
           receipt_no: insertedOrder.receipt_no,
           purchase_order_id: orderId,
           snapshot_data: typeof receiptSnapshot.snapshot_data === 'string'
@@ -314,20 +318,18 @@ export class PurchaseRepository {
         await trx('purchase_receipts').insert(snapshot)
       }
 
-      // 5) Create inventory records, bin cards, and ledger entries for each item
       const inventoryIds = []
       for (const item of insertedItems) {
-        // Get product details
-        const product = await trx('products').where({ id: item.product_id }).first()
+        const product = await trx('products').where({ id: item.product_id, tenant_id: tenantId }).first()
         if (!product) {
           throw new Error(`Product ${item.product_id} not found`)
         }
 
-        // Find or create inventory record
         const batchNo = items.find(i => i.product_id === item.product_id)?.batch_number || null
         const expiryDate = items.find(i => i.product_id === item.product_id)?.expiry_date || null
-        
+
         let inventory = await this.findExistingInventory(
+          tenantId,
           item.product_id,
           batchNo,
           expiryDate,
@@ -337,19 +339,18 @@ export class PurchaseRepository {
 
         let inventoryId
         if (inventory) {
-          // Update existing inventory quantity
           await trx('inventories')
-            .where({ id: inventory.id })
+            .where({ id: inventory.id, tenant_id: tenantId })
             .update({
               quantity: trx.raw('quantity + ?', [item.quantity]),
               last_updated: trx.fn.now()
             })
           inventoryId = inventory.id
         } else {
-          // Create new inventory record
-          const inventoryCode = await this.generateInventoryCode(product.product_code, trx)
+          const inventoryCode = await this.generateInventoryCode(tenantId, product.product_code, trx)
           const [newInventory] = await trx('inventories')
             .insert({
+              tenant_id: tenantId,
               product_id: item.product_id,
               inventory_code: inventoryCode,
               batch_no: batchNo,
@@ -367,20 +368,19 @@ export class PurchaseRepository {
               sync_status: 'pending'
             })
             .returning('id')
-          
+
           inventoryId = newInventory.id || newInventory
         }
 
-        // Update purchase_order_items with inventory_id
         await trx('purchase_order_items')
-          .where({ id: item.id })
+          .where({ id: item.id, tenant_id: tenantId })
           .update({ inventory_id: inventoryId })
 
         inventoryIds.push(inventoryId)
 
-        // Create bin card entry
-        const openingBalance = await this.getLastProductBalance(item.product_id, trx)
+        const openingBalance = await this.getLastProductBalance(tenantId, item.product_id, trx)
         await this.createBinCardTransaction({
+          tenantId,
           productId: item.product_id,
           inventoryId: inventoryId,
           batchNo: batchNo,
@@ -395,11 +395,11 @@ export class PurchaseRepository {
         }, trx)
       }
 
-      // 6) Create ledger entries based on payment mode (when account_ledger exists)
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
         if (order.payment_mode === 'cash') {
           await this.ledgerHelper.recordPurchaseCash({
+            tenant_id: tenantId,
             purchaseOrderId: orderId,
             totalAmount: order.total_amount,
             withholdAmount: order.withhold_amount || 0,
@@ -410,6 +410,7 @@ export class PurchaseRepository {
           }, trx)
         } else if (order.payment_mode === 'credit') {
           await this.ledgerHelper.recordPurchaseCredit({
+            tenant_id: tenantId,
             purchaseOrderId: orderId,
             totalAmount: order.total_amount,
             withholdAmount: order.withhold_amount || 0,
@@ -421,6 +422,7 @@ export class PurchaseRepository {
           }, trx)
         } else if (order.payment_mode === 'cheque') {
           await this.ledgerHelper.recordPurchaseCheque({
+            tenant_id: tenantId,
             purchaseOrderId: orderId,
             totalAmount: order.total_amount,
             withholdAmount: order.withhold_amount || 0,
@@ -445,9 +447,9 @@ export class PurchaseRepository {
   /**
    * Generate next purchase receipt number (PO000001, PO000002, ...)
    */
-  async generateNextReceiptNumber() {
-    // Get max existing receipt_no that matches PO pattern
+  async generateNextReceiptNumber(tenantId) {
     const row = await this.knex('purchase_orders')
+      .where({ tenant_id: tenantId })
       .where('receipt_no', 'like', 'PO%')
       .orderBy('id', 'desc')
       .select('receipt_no')
@@ -459,7 +461,6 @@ export class PurchaseRepository {
 
     const match = row.receipt_no.match(/^PO(\d{6,})$/)
     if (!match) {
-      // Fallback if pattern changed
       return 'PO000001'
     }
 
@@ -471,10 +472,12 @@ export class PurchaseRepository {
   /**
    * Get purchase order by ID with supplier, items, and payments.
    */
-  async getOrderById(orderId) {
+  async getOrderById(tenantId, orderId) {
     const order = await this.knex('purchase_orders as po')
-      .leftJoin('customers as c', 'po.supplier_id', 'c.id')
-      .where('po.id', orderId)
+      .leftJoin('customers as c', function () {
+        this.on('po.supplier_id', 'c.id').andOn('po.tenant_id', 'c.tenant_id')
+      })
+      .where({ 'po.id': orderId, 'po.tenant_id': tenantId })
       .select(
         'po.*',
         'c.name as supplier_name'
@@ -484,8 +487,10 @@ export class PurchaseRepository {
     if (!order) return null
 
     const items = await this.knex('purchase_order_items as i')
-      .leftJoin('products as p', 'i.product_id', 'p.id')
-      .where('i.purchase_order_id', orderId)
+      .leftJoin('products as p', function () {
+        this.on('i.product_id', 'p.id').andOn('i.tenant_id', 'p.tenant_id')
+      })
+      .where({ 'i.purchase_order_id': orderId, 'i.tenant_id': tenantId })
       .select(
         'i.*',
         'p.product_code',
@@ -493,7 +498,7 @@ export class PurchaseRepository {
       )
 
     const payments = await this.knex('purchase_payments')
-      .where('purchase_order_id', orderId)
+      .where({ purchase_order_id: orderId, tenant_id: tenantId })
       .orderBy('created_at', 'asc')
 
     const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
@@ -521,7 +526,7 @@ export class PurchaseRepository {
    * List orders with filters and computed stats.
    * Returns { orders, total, stats }
    */
-  async listOrders(filters) {
+  async listOrders(tenantId, filters) {
     const {
       limit = 20,
       offset = 0,
@@ -536,10 +541,19 @@ export class PurchaseRepository {
       order_by = 'desc'
     } = filters
 
-    const base = this.knex('purchase_orders as po')
-      .leftJoin('customers as c', 'po.supplier_id', 'c.id')
+    const paymentsSubquery = this.knex('purchase_payments')
+      .where({ tenant_id: tenantId })
+      .select('purchase_order_id')
+      .sum({ total_paid: 'amount' })
+      .groupBy('purchase_order_id')
+      .as('pp')
 
-    // Filters
+    const base = this.knex('purchase_orders as po')
+      .leftJoin('customers as c', function () {
+        this.on('po.supplier_id', 'c.id').andOn('po.tenant_id', 'c.tenant_id')
+      })
+      .where('po.tenant_id', tenantId)
+
     base.where(builder => {
       builder.whereIn('po.status', ['completed', 'archived', 'reversed'])
     })
@@ -575,13 +589,6 @@ export class PurchaseRepository {
       })
     }
 
-    // Subquery for total paid per order
-    const paymentsSubquery = this.knex('purchase_payments')
-      .select('purchase_order_id')
-      .sum({ total_paid: 'amount' })
-      .groupBy('purchase_order_id')
-      .as('pp')
-
     base
       .leftJoin(paymentsSubquery, 'po.id', 'pp.purchase_order_id')
       .select(
@@ -604,7 +611,6 @@ export class PurchaseRepository {
       base.andWhereRaw('(coalesce(po.total_amount,0) - coalesce(po.withhold_amount,0) - coalesce(pp.total_paid,0)) <= 0.009')
     }
 
-    // Total count (without limit/offset)
     const totalResult = await base.clone().clearSelect().clearOrder().countDistinct({ count: 'po.id' }).first()
     const total = Number(totalResult?.count || 0)
 
@@ -612,6 +618,7 @@ export class PurchaseRepository {
     if (date_from && date_to) {
       const periodBase = this.knex('purchase_orders as po')
         .leftJoin(paymentsSubquery, 'po.id', 'pp.purchase_order_id')
+        .where('po.tenant_id', tenantId)
         .where('po.status', 'completed')
         .where('po.order_date', '>=', date_from)
         .where('po.order_date', '<=', date_to)
@@ -624,7 +631,6 @@ export class PurchaseRepository {
       }
     }
 
-    // Sorting & pagination
     const allowedSort = ['order_date', 'id', 'receipt_no', 'net_amount', 'supplier_name']
     const sortColumn = allowedSort.includes(sort_by) ? sort_by : 'order_date'
     const sortDir = order_by === 'asc' ? 'asc' : 'desc'
@@ -641,9 +647,9 @@ export class PurchaseRepository {
       .limit(limit)
       .offset(offset)
 
-    // Stats: static (no list filters) — only completed/archived/reversed orders
     const statsBase = this.knex('purchase_orders as po')
       .leftJoin(paymentsSubquery, 'po.id', 'pp.purchase_order_id')
+      .where('po.tenant_id', tenantId)
       .whereIn('po.status', ['completed', 'archived', 'reversed'])
 
     const statsRows = await statsBase
@@ -709,16 +715,15 @@ export class PurchaseRepository {
    * Also updates purchase_orders.amount_paid and payment_status.
    * Validates against overpayment.
    */
-  async recordPayment(orderId, paymentData, userId = null) {
+  async recordPayment(tenantId, orderId, paymentData, userId = null) {
     return this.knex.transaction(async (trx) => {
-      const order = await trx('purchase_orders').where({ id: orderId }).first()
+      const order = await trx('purchase_orders').where({ id: orderId, tenant_id: tenantId }).first()
       if (!order) {
         const error = new Error('Purchase order not found')
         error.status = 404
         throw error
       }
 
-      // Check if order is already fully paid or reversed
       if (order.status === 'reversed') {
         const error = new Error('Cannot record payment for a reversed order')
         error.status = 400
@@ -729,9 +734,8 @@ export class PurchaseRepository {
       const withholdAmount = Number(order.withhold_amount || 0)
       const netAmount = subtotal - withholdAmount
 
-      // Current paid
       const paymentsAgg = await trx('purchase_payments')
-        .where('purchase_order_id', orderId)
+        .where({ purchase_order_id: orderId, tenant_id: tenantId })
         .sum({ total_paid: 'amount' })
         .first()
 
@@ -739,7 +743,6 @@ export class PurchaseRepository {
       const newTotalPaid = alreadyPaid + paymentData.amount
       const remaining = netAmount - newTotalPaid
 
-      // Validate: prevent overpayment (allow small rounding differences)
       if (remaining < -0.01) {
         const error = new Error(
           `Payment amount exceeds outstanding balance. Outstanding: ${(netAmount - alreadyPaid).toFixed(2)}, Payment: ${paymentData.amount.toFixed(2)}`
@@ -748,18 +751,16 @@ export class PurchaseRepository {
         throw error
       }
 
-      // Validate: payment amount must be positive
       if (paymentData.amount <= 0) {
         const error = new Error('Payment amount must be greater than zero')
         error.status = 400
         throw error
       }
 
-      // Cash balance validation: prevent negative cash for cash payments
       if (paymentData.payment_method === 'cash') {
         const hasLedger = await trx.schema.hasTable('account_ledger')
         if (hasLedger) {
-          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx)
+          const balances = await this.ledgerHelper.getCurrentBalances(['1100'], trx, tenantId)
           const cashBalance = Number(balances['1100'] ?? 0)
           if (cashBalance < paymentData.amount) {
             const err = new Error(
@@ -771,9 +772,9 @@ export class PurchaseRepository {
         }
       }
 
-      // Insert payment row
       const [payment] = await trx('purchase_payments')
         .insert({
+          tenant_id: tenantId,
           purchase_order_id: orderId,
           payment_date: paymentData.payment_date,
           amount: paymentData.amount,
@@ -790,7 +791,6 @@ export class PurchaseRepository {
         })
         .returning('*')
 
-      // Update order: amount_paid = sum total of all payments; payment_status from remaining balance
       let paymentStatus = 'paid'
       if (remaining > 0.009 && newTotalPaid > 0) {
         paymentStatus = 'partial'
@@ -799,9 +799,9 @@ export class PurchaseRepository {
       }
 
       await trx('purchase_orders')
-        .where({ id: orderId })
+        .where({ id: orderId, tenant_id: tenantId })
         .update({
-          amount_paid: newTotalPaid, // sum of all purchase_payments for this order
+          amount_paid: newTotalPaid,
           payment_status: paymentStatus,
           last_updated: trx.fn.now()
         })
@@ -809,6 +809,7 @@ export class PurchaseRepository {
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
         await this.ledgerHelper.recordPurchasePayment({
+          tenant_id: tenantId,
           purchaseOrderId: orderId,
           paymentId: payment.id,
           amount: paymentData.amount,
@@ -822,7 +823,7 @@ export class PurchaseRepository {
 
       return {
         payment,
-        remaining_balance: Math.max(0, remaining) // Ensure non-negative
+        remaining_balance: Math.max(0, remaining)
       }
     })
   }
@@ -830,14 +831,14 @@ export class PurchaseRepository {
   /**
    * Get payment history for an order.
    */
-  async getPaymentHistory(orderId) {
+  async getPaymentHistory(tenantId, orderId) {
     const payments = await this.knex('purchase_payments')
-      .where('purchase_order_id', orderId)
+      .where({ purchase_order_id: orderId, tenant_id: tenantId })
       .orderBy('created_at', 'asc')
 
     const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
 
-    const order = await this.knex('purchase_orders').where({ id: orderId }).first()
+    const order = await this.knex('purchase_orders').where({ id: orderId, tenant_id: tenantId }).first()
 
     const subtotal = Number(order?.total_amount || 0)
     const withholdAmount = Number(order?.withhold_amount || 0)
@@ -853,15 +854,12 @@ export class PurchaseRepository {
 
   /**
    * Reverse purchase order: reverses inventory, bin cards, and ledger entries
-   * @param {number} orderId - Purchase order ID
-   * @param {Object} options - { reason, reverse_inventory, reverse_ledger, userId }
    */
-  async reverseOrder(orderId, options = {}) {
+  async reverseOrder(tenantId, orderId, options = {}) {
     const { reason, reverse_inventory = true, reverse_ledger = true, userId = null } = options
 
     return this.knex.transaction(async (trx) => {
-      // Get order with items
-      const order = await trx('purchase_orders').where({ id: orderId }).first()
+      const order = await trx('purchase_orders').where({ id: orderId, tenant_id: tenantId }).first()
       if (!order) {
         const error = new Error('Purchase order not found')
         error.status = 404
@@ -875,31 +873,28 @@ export class PurchaseRepository {
       }
 
       const items = await trx('purchase_order_items')
-        .where('purchase_order_id', orderId)
+        .where({ purchase_order_id: orderId, tenant_id: tenantId })
         .whereNotNull('inventory_id')
 
-      // Reverse inventory entries
       if (reverse_inventory) {
         for (const item of items) {
           if (!item.inventory_id) continue
 
-          const inventory = await trx('inventories').where({ id: item.inventory_id }).first()
+          const inventory = await trx('inventories').where({ id: item.inventory_id, tenant_id: tenantId }).first()
           if (!inventory) continue
 
-          // Get current balance
-          const openingBalance = await this.getLastProductBalance(item.product_id, trx)
+          const openingBalance = await this.getLastProductBalance(tenantId, item.product_id, trx)
 
-          // Reduce inventory quantity
           const newQuantity = Math.max(0, inventory.quantity - item.quantity)
           await trx('inventories')
-            .where({ id: item.inventory_id })
+            .where({ id: item.inventory_id, tenant_id: tenantId })
             .update({
               quantity: newQuantity,
               last_updated: trx.fn.now()
             })
 
-          // Create reverse bin card entry (issued)
           await trx('bin_cards').insert({
+            tenant_id: tenantId,
             product_id: item.product_id,
             inventory_id: item.inventory_id,
             batch_no: inventory.batch_no,
@@ -926,6 +921,7 @@ export class PurchaseRepository {
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (reverse_ledger && hasLedger) {
         await this.ledgerHelper.reversePurchaseOrder({
+          tenant_id: tenantId,
           purchaseOrderId: orderId,
           transactionDate: new Date().toISOString().split('T')[0],
           reason: reason || 'Order reversal',
@@ -934,9 +930,8 @@ export class PurchaseRepository {
         }, trx)
       }
 
-      // Update order status
       await trx('purchase_orders')
-        .where({ id: orderId })
+        .where({ id: orderId, tenant_id: tenantId })
         .update({
           status: 'reversed',
           last_updated: trx.fn.now()
@@ -952,11 +947,8 @@ export class PurchaseRepository {
 
   /**
    * Bulk import purchases: creates purchase orders from CSV-style data
-   * Creates a single purchase order with multiple items
-   * @param {Object} importData - { purchase_date, supplier_id, payment_mode, withhold_percentage, stock_items }
-   * @param {number} userId - User ID
    */
-  async bulkImportPurchases(importData, userId = null) {
+  async bulkImportPurchases(tenantId, importData, userId = null) {
     const {
       purchase_date,
       supplier_id,
@@ -968,22 +960,21 @@ export class PurchaseRepository {
     const successful = []
     const failed = []
 
-    // Validate all products first
     const validatedItems = []
     for (let i = 0; i < stock_items.length; i++) {
       const item = stock_items[i]
 
       try {
-        // Find product by name or code
         let product = null
         if (item.product_code) {
           product = await this.knex('products')
-            .where({ product_code: item.product_code })
+            .where({ tenant_id: tenantId, product_code: item.product_code })
             .first()
         }
 
         if (!product && item.product_name) {
           product = await this.knex('products')
+            .where({ tenant_id: tenantId })
             .whereRaw('LOWER(name) = LOWER(?)', [item.product_name])
             .first()
         }
@@ -1019,11 +1010,9 @@ export class PurchaseRepository {
       }
     }
 
-    // Create single purchase order with all items
     try {
-      const receiptNo = await this.generateNextReceiptNumber()
+      const receiptNo = await this.generateNextReceiptNumber(tenantId)
 
-      // Calculate totals
       const items = validatedItems.map(v => ({
         product_id: v.product.id,
         quantity: v.quantity,
@@ -1034,11 +1023,10 @@ export class PurchaseRepository {
       }))
 
       const subtotal = items.reduce((sum, it) => sum + it.total_price, 0)
-      const appliedWithhold = withhold_percentage != null ? withhold_percentage : (await this.getWithholdPercentageSetting())
+      const appliedWithhold = withhold_percentage != null ? withhold_percentage : (await this.getWithholdPercentageSetting(tenantId))
       const withholdAmount = appliedWithhold != null ? (subtotal * appliedWithhold) / 100 : 0
       const netAmount = subtotal - withholdAmount
 
-      // Determine payment status
       let amountPaid = 0
       let paymentStatus = 'unpaid'
       if (payment_mode === 'cash') {
@@ -1046,8 +1034,7 @@ export class PurchaseRepository {
         paymentStatus = 'paid'
       }
 
-      // Create order in transaction (reuse createOrderWithItemsAndReceipt logic)
-      const result = await this.createOrderWithItemsAndReceipt({
+      const result = await this.createOrderWithItemsAndReceipt(tenantId, {
         order: {
           supplier_id,
           order_date: purchase_date,
@@ -1071,10 +1058,9 @@ export class PurchaseRepository {
           payment_method: 'cash',
           note: 'Bulk Import'
         } : null,
-        receiptSnapshot: null // Skip receipt snapshot for bulk import
+        receiptSnapshot: null
       }, userId)
 
-      // Mark all items as successful
       validatedItems.forEach(v => {
         successful.push({
           index: v.index,
@@ -1085,7 +1071,6 @@ export class PurchaseRepository {
         })
       })
     } catch (error) {
-      // If order creation fails, mark all items as failed
       validatedItems.forEach(v => {
         failed.push({
           index: v.index,
@@ -1109,16 +1094,18 @@ export class PurchaseRepository {
   /**
    * Simple hold orders list / get / delete
    */
-  async listHoldOrders({ limit = 20, offset = 0, search, sort_by, order_by, filter = 'active' }) {
+  async listHoldOrders(tenantId, { limit = 20, offset = 0, search, sort_by, order_by, filter = 'active' }) {
     const q = this.knex('purchase_hold_orders as h')
-      .leftJoin('customers as c', 'h.supplier_id', 'c.id')
+      .leftJoin('customers as c', function () {
+        this.on('h.supplier_id', 'c.id').andOn('h.tenant_id', 'c.tenant_id')
+      })
+      .where('h.tenant_id', tenantId)
 
     if (filter === 'active') {
       q.where('h.is_archive', false)
     } else if (filter === 'archived') {
       q.where('h.is_archive', true)
     }
-    // filter === 'all': no is_archive filter
 
     if (search) {
       const term = `%${search}%`
@@ -1159,10 +1146,12 @@ export class PurchaseRepository {
     return { hold_orders, total }
   }
 
-  async getHoldOrderById(id) {
+  async getHoldOrderById(tenantId, id) {
     const hold = await this.knex('purchase_hold_orders as h')
-      .leftJoin('customers as c', 'h.supplier_id', 'c.id')
-      .where('h.id', id)
+      .leftJoin('customers as c', function () {
+        this.on('h.supplier_id', 'c.id').andOn('h.tenant_id', 'c.tenant_id')
+      })
+      .where({ 'h.id': id, 'h.tenant_id': tenantId })
       .select('h.*', 'c.name as supplier_name')
       .first()
 
@@ -1171,10 +1160,8 @@ export class PurchaseRepository {
 
   /**
    * Create hold order: full current-order snapshot for UI restore.
-   * @param {Object} snapshot - Validated createHoldOrder payload
-   * @param {Object} user - { id, full_name }
    */
-  async createHoldOrder(snapshot, user) {
+  async createHoldOrder(tenantId, snapshot, user) {
     const itemsJson = typeof snapshot.items === 'string' ? snapshot.items : JSON.stringify(snapshot.items || [])
     const chequeDetailsJson =
       snapshot.cheque_details == null
@@ -1185,6 +1172,7 @@ export class PurchaseRepository {
 
     const [row] = await this.knex('purchase_hold_orders')
       .insert({
+        tenant_id: tenantId,
         supplier_id: snapshot.supplier_id,
         order_date: snapshot.order_date,
         invoice_no: snapshot.invoice_no || null,
@@ -1206,9 +1194,9 @@ export class PurchaseRepository {
     return row
   }
 
-  async archiveHoldOrder(id) {
+  async archiveHoldOrder(tenantId, id) {
     await this.knex('purchase_hold_orders')
-      .where({ id })
+      .where({ id, tenant_id: tenantId })
       .update({
         is_archive: true,
         last_updated: this.knex.fn.now()
@@ -1218,17 +1206,17 @@ export class PurchaseRepository {
   /**
    * Receipt APIs
    */
-  async getReceiptByOrderId(orderId) {
+  async getReceiptByOrderId(tenantId, orderId) {
     const row = await this.knex('purchase_receipts')
-      .where({ purchase_order_id: orderId, voided: false })
+      .where({ tenant_id: tenantId, purchase_order_id: orderId, voided: false })
       .orderBy('generated_at', 'desc')
       .orderBy('id', 'desc')
       .first()
     if (!row) return null
-    return this._enrichReceipt(row)
+    return this._enrichReceipt(tenantId, row)
   }
 
-  async _enrichReceipt(row) {
+  async _enrichReceipt(tenantId, row) {
     let order_meta = {}
     let order_items = []
     let order_payment = {}
@@ -1240,7 +1228,10 @@ export class PurchaseRepository {
     const productIds = [...new Set((order_items || []).map(it => it.product_id).filter(Boolean))]
     let productMap = {}
     if (productIds.length > 0) {
-      const products = await this.knex('products').whereIn('id', productIds).select('id', 'name', 'product_code')
+      const products = await this.knex('products')
+        .where({ tenant_id: tenantId })
+        .whereIn('id', productIds)
+        .select('id', 'name', 'product_code')
       products.forEach(p => { productMap[p.id] = { name: p.name, product_code: p.product_code } })
     }
     const enrichedItems = (order_items || []).map(it => ({
@@ -1256,7 +1247,7 @@ export class PurchaseRepository {
     let supplier_tin = null
     if (order_meta && order_meta.supplier_id) {
       const supplier = await this.knex('customers')
-        .where({ id: order_meta.supplier_id })
+        .where({ id: order_meta.supplier_id, tenant_id: tenantId })
         .select('name', 'address', 'phone', 'contact_person', 'email', 'tin_no')
         .first()
       if (supplier) {
@@ -1271,7 +1262,7 @@ export class PurchaseRepository {
     let encoder_fullname = null
     if (row.purchase_order_id) {
       const order = await this.knex('purchase_orders')
-        .where({ id: row.purchase_order_id })
+        .where({ id: row.purchase_order_id, tenant_id: tenantId })
         .select('encoder_fullname')
         .first()
       encoder_fullname = order ? order.encoder_fullname : null
@@ -1293,14 +1284,15 @@ export class PurchaseRepository {
     }
   }
 
-  async getReceiptByReceiptNo(receiptNo) {
+  async getReceiptByReceiptNo(tenantId, receiptNo) {
     return this.knex('purchase_receipts')
-      .where({ receipt_no: receiptNo })
+      .where({ tenant_id: tenantId, receipt_no: receiptNo })
       .first()
   }
 
-  async listReceipts({ limit = 20, offset = 0, search, voided, date_from, date_to, sort_by, order_by }) {
+  async listReceipts(tenantId, { limit = 20, offset = 0, search, voided, date_from, date_to, sort_by, order_by }) {
     const q = this.knex('purchase_receipts as r')
+      .where('r.tenant_id', tenantId)
 
     if (search) {
       const term = `%${search}%`
@@ -1340,9 +1332,9 @@ export class PurchaseRepository {
     return { receipts, total }
   }
 
-  async voidReceipt(id) {
+  async voidReceipt(tenantId, id) {
     const [receipt] = await this.knex('purchase_receipts')
-      .where({ id })
+      .where({ id, tenant_id: tenantId })
       .update({
         voided: true,
         last_updated: this.knex.fn.now()
@@ -1354,9 +1346,8 @@ export class PurchaseRepository {
 
   /**
    * Export purchase orders (completed). One row per line item; order fields repeated.
-   * Schema: purchase_orders (po), customers (c) as supplier, purchase_order_items (i), products (p), inventories (inv).
    */
-  async exportPurchaseOrder() {
+  async exportPurchaseOrder(tenantId) {
     const rows = await this.knex('purchase_orders as po')
       .select(
         'po.id as order_id',
@@ -1383,12 +1374,20 @@ export class PurchaseRepository {
         'inv.batch_no as batch_number',
         'inv.expiry_date as expiry_date'
       )
-      .leftJoin('customers as c', 'po.supplier_id', 'c.id')
-      .leftJoin('purchase_order_items as i', 'po.id', 'i.purchase_order_id')
-      .leftJoin('products as p', 'i.product_id', 'p.id')
-      .leftJoin('inventories as inv', 'i.inventory_id', 'inv.id')
+      .leftJoin('customers as c', function () {
+        this.on('po.supplier_id', 'c.id').andOn('po.tenant_id', 'c.tenant_id')
+      })
+      .leftJoin('purchase_order_items as i', function () {
+        this.on('po.id', 'i.purchase_order_id').andOn('po.tenant_id', 'i.tenant_id')
+      })
+      .leftJoin('products as p', function () {
+        this.on('i.product_id', 'p.id').andOn('i.tenant_id', 'p.tenant_id')
+      })
+      .leftJoin('inventories as inv', function () {
+        this.on('i.inventory_id', 'inv.id').andOn('i.tenant_id', 'inv.tenant_id')
+      })
+      .where('po.tenant_id', tenantId)
       .where('po.status', 'completed')
     return { export: rows }
   }
 }
-

@@ -1,5 +1,6 @@
 import Modal from "../shared/Modal";
 import { ConfirmationModalContent, AlertModalContent } from "../shared/ConfirmationModal";
+import { formatUserError } from './userErrorMessage.js';
 
 /**
  * Show a confirmation dialog
@@ -58,8 +59,13 @@ export function showAlert(options = {}) {
         resolve();
       };
 
+      const message = options.message != null
+        ? formatUserError(options.message, typeof options.message === 'string' ? options.message : 'Something went wrong. Please try again.')
+        : options.message;
+
       return AlertModalContent({
         ...options,
+        message,
         onClose: handleOk
       }, delegator, wrappedClose);
     });

@@ -8,7 +8,7 @@ export class FinancialController {
 
   createExpense = async (req, res, next) => {
     try {
-      const row = await this.service.createExpense(req.body, req.user)
+      const row = await this.service.createExpense(req.tenantId, req.body, req.user)
       res.status(201).json({ success: true, expense: row })
     } catch (err) {
       next(err)
@@ -19,7 +19,7 @@ export class FinancialController {
     try {
       const { limit, offset, date_from, date_to, category } = req.query
       const validDate = (v) => (v && String(v).trim() !== '' && String(v) !== 'undefined') ? String(v).trim() : null
-      const result = await this.service.listExpenses({
+      const result = await this.service.listExpenses(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 50,
         offset: offset ? parseInt(offset, 10) : 0,
         date_from: validDate(date_from),
@@ -34,7 +34,7 @@ export class FinancialController {
 
   getExpenseById = async (req, res, next) => {
     try {
-      const row = await this.service.getExpenseById(req.params.id)
+      const row = await this.service.getExpenseById(req.tenantId, req.params.id)
       res.json({ success: true, expense: row })
     } catch (err) {
       next(err)
@@ -43,7 +43,7 @@ export class FinancialController {
 
   createDeposit = async (req, res, next) => {
     try {
-      const row = await this.service.createDeposit(req.body, req.user)
+      const row = await this.service.createDeposit(req.tenantId, req.body, req.user)
       res.status(201).json({ success: true, deposit: row })
     } catch (err) {
       next(err)
@@ -54,7 +54,7 @@ export class FinancialController {
     try {
       const { date_from, date_to } = req.query
       const validDate = (v) => (v != null && v !== '' && String(v).trim() !== '' && String(v) !== 'undefined') ? String(v).trim() : null
-      const stats = await this.service.getDepositStats({
+      const stats = await this.service.getDepositStats(req.tenantId, {
         date_from: validDate(date_from),
         date_to: validDate(date_to)
       })
@@ -68,7 +68,7 @@ export class FinancialController {
     try {
       const { limit, offset, date_from, date_to, type } = req.query
       const validDate = (v) => (v != null && v !== '' && String(v).trim() !== '' && String(v) !== 'undefined') ? String(v).trim() : null
-      const result = await this.service.listDeposits({
+      const result = await this.service.listDeposits(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 50,
         offset: offset ? parseInt(offset, 10) : 0,
         date_from: validDate(date_from),
@@ -83,7 +83,7 @@ export class FinancialController {
 
   getDepositById = async (req, res, next) => {
     try {
-      const row = await this.service.getDepositById(req.params.id)
+      const row = await this.service.getDepositById(req.tenantId, req.params.id)
       res.json({ success: true, deposit: row })
     } catch (err) {
       next(err)
@@ -92,7 +92,7 @@ export class FinancialController {
 
   updateDeposit = async (req, res, next) => {
     try {
-      const row = await this.service.updateDeposit(req.params.id, req.body, req.user)
+      const row = await this.service.updateDeposit(req.tenantId, req.params.id, req.body, req.user)
       res.json({ success: true, deposit: row })
     } catch (err) {
       next(err)
@@ -101,7 +101,7 @@ export class FinancialController {
 
   reverseDeposit = async (req, res, next) => {
     try {
-      const row = await this.service.reverseDeposit(req.params.id, req.user)
+      const row = await this.service.reverseDeposit(req.tenantId, req.params.id, req.user)
       res.json({ success: true, deposit: row })
     } catch (err) {
       next(err)
@@ -110,7 +110,7 @@ export class FinancialController {
 
   createCashLoanReceivable = async (req, res, next) => {
     try {
-      const row = await this.service.createCashLoanReceivable(req.body, req.user)
+      const row = await this.service.createCashLoanReceivable(req.tenantId, req.body, req.user)
       res.status(201).json({ success: true, loan: row })
     } catch (err) {
       next(err)
@@ -120,7 +120,7 @@ export class FinancialController {
   listCashLoansReceivable = async (req, res, next) => {
     try {
       const { limit, offset, status } = req.query
-      const result = await this.service.listCashLoansReceivable({
+      const result = await this.service.listCashLoansReceivable(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 50,
         offset: offset ? parseInt(offset, 10) : 0,
         status: status || null
@@ -133,7 +133,7 @@ export class FinancialController {
 
   recordCashLoanReceivableReturn = async (req, res, next) => {
     try {
-      const result = await this.service.recordCashLoanReceivableReturn(req.params.id, req.body, req.user)
+      const result = await this.service.recordCashLoanReceivableReturn(req.tenantId, req.params.id, req.body, req.user)
       res.json({ success: true, ...result })
     } catch (err) {
       next(err)
@@ -142,7 +142,7 @@ export class FinancialController {
 
   createCashLoanPayable = async (req, res, next) => {
     try {
-      const row = await this.service.createCashLoanPayable(req.body, req.user)
+      const row = await this.service.createCashLoanPayable(req.tenantId, req.body, req.user)
       res.status(201).json({ success: true, loan: row })
     } catch (err) {
       next(err)
@@ -152,7 +152,7 @@ export class FinancialController {
   listCashLoansPayable = async (req, res, next) => {
     try {
       const { limit, offset, status } = req.query
-      const result = await this.service.listCashLoansPayable({
+      const result = await this.service.listCashLoansPayable(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 50,
         offset: offset ? parseInt(offset, 10) : 0,
         status: status || null
@@ -165,7 +165,7 @@ export class FinancialController {
 
   recordCashLoanPayableRepayment = async (req, res, next) => {
     try {
-      const result = await this.service.recordCashLoanPayableRepayment(req.params.id, req.body, req.user)
+      const result = await this.service.recordCashLoanPayableRepayment(req.tenantId, req.params.id, req.body, req.user)
       res.json({ success: true, ...result })
     } catch (err) {
       next(err)
@@ -174,7 +174,7 @@ export class FinancialController {
 
   getTradeReceivablesSummary = async (req, res, next) => {
     try {
-      const result = await this.service.getTradeReceivablesSummary()
+      const result = await this.service.getTradeReceivablesSummary(req.tenantId)
       res.json({ success: true, ...result })
     } catch (err) {
       next(err)
@@ -183,7 +183,7 @@ export class FinancialController {
 
   getTradePayablesSummary = async (req, res, next) => {
     try {
-      const result = await this.service.getTradePayablesSummary()
+      const result = await this.service.getTradePayablesSummary(req.tenantId)
       res.json({ success: true, ...result })
     } catch (err) {
       next(err)
@@ -193,7 +193,7 @@ export class FinancialController {
   listWithholdReceivables = async (req, res, next) => {
     try {
       const { limit, offset, status } = req.query
-      const result = await this.service.listWithholdReceivables({
+      const result = await this.service.listWithholdReceivables(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 50,
         offset: offset ? parseInt(offset, 10) : 0,
         status: status || null
@@ -206,7 +206,7 @@ export class FinancialController {
 
   createWithholdReceivableSettlement = async (req, res, next) => {
     try {
-      const result = await this.service.createWithholdReceivableSettlement(req.body, req.user)
+      const result = await this.service.createWithholdReceivableSettlement(req.tenantId, req.body, req.user)
       res.status(201).json({ success: true, ...result })
     } catch (err) {
       next(err)
@@ -216,7 +216,7 @@ export class FinancialController {
   listWithholdPayables = async (req, res, next) => {
     try {
       const { limit, offset, status } = req.query
-      const result = await this.service.listWithholdPayables({
+      const result = await this.service.listWithholdPayables(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 50,
         offset: offset ? parseInt(offset, 10) : 0,
         status: status || null
@@ -229,7 +229,7 @@ export class FinancialController {
 
   createWithholdPayableSettlement = async (req, res, next) => {
     try {
-      const result = await this.service.createWithholdPayableSettlement(req.body, req.user)
+      const result = await this.service.createWithholdPayableSettlement(req.tenantId, req.body, req.user)
       res.status(201).json({ success: true, ...result })
     } catch (err) {
       next(err)

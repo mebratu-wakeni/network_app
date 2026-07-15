@@ -4,12 +4,12 @@
 import { Router } from 'express'
 import knex from '../../db/knex.js'
 import { LedgerController } from './ledger.controller.js'
-import { authenticate } from '../../middleware/auth.js'
+import { authenticate, requireTenant } from '../../middleware/auth.js'
 
 const controller = new LedgerController(knex)
 const router = Router()
 
-router.use(authenticate)
+router.use(authenticate, requireTenant)
 router.get('/balances', controller.getBalances)
 
 export default router

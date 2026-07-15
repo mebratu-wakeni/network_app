@@ -29,7 +29,7 @@ describe('ProductsRepository', () => {
       { id: 3, product_id: 2, balance: 12 }
     ])
 
-    const stats = await repo.getProductStockStats()
+    const stats = await repo.getProductStockStats(1)
     expect(stats).toEqual({ outOfStock: 2, lowStock: 1 })
   })
 
@@ -49,7 +49,7 @@ describe('ProductsRepository', () => {
       { id: 2, product_id: 2, balance: 80 }
     ])
 
-    const result = await repo.findAll({ filter: 'low-stock', sortBy: 'balance', orderBy: 'asc' })
+    const result = await repo.findAll(1, { filter: 'low-stock', sortBy: 'balance', orderBy: 'asc' })
     expect(result.total).toBe(1)
     expect(result.products).toHaveLength(1)
     expect(result.products[0]).toMatchObject({ name: 'Low', balance: 20 })
@@ -60,14 +60,17 @@ describe('ProductsRepository', () => {
     db = createTestDb()
     await db.schema.createTable('categories', (table) => {
       table.increments('id').primary()
+      table.integer('tenant_id').unsigned().notNullable().defaultTo(1)
       table.string('name').notNullable()
     })
     await db.schema.createTable('units', (table) => {
       table.increments('id').primary()
+      table.integer('tenant_id').unsigned().notNullable().defaultTo(1)
       table.string('name').notNullable()
     })
     await db.schema.createTable('products', (table) => {
       table.increments('id').primary()
+      table.integer('tenant_id').unsigned().notNullable().defaultTo(1)
       table.string('product_code')
       table.string('name').notNullable()
       table.integer('category_id')
@@ -79,7 +82,7 @@ describe('ProductsRepository', () => {
     await db('products').insert([{ id: 1, product_code: 'PRD0001', name: 'NoBin', category_id: 1, unit_id: 1 }])
 
     const repo = new ProductsRepository(db)
-    const result = await repo.findAll({})
+    const result = await repo.findAll(1, {})
 
     expect(result.products[0].balance).toBe(0)
     expect(result.stats).toEqual({ outOfStock: 0, lowStock: 0 })

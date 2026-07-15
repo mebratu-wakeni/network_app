@@ -8,7 +8,7 @@ export class FinancialService {
     this.repository = repository
   }
 
-  async createExpense(body, user) {
+  async createExpense(tenantId, body, user) {
     const data = {
       customer_id: body.customer_id ?? null,
       category: body.category,
@@ -28,17 +28,17 @@ export class FinancialService {
       err.status = 400
       throw err
     }
-    const fy = await assertFiscalYearOpen(this.repository.knex, data.paid_on)
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, data.paid_on)
     data.fiscal_year = fy.fiscal_year
-    return this.repository.createExpense(data, user?.id)
+    return this.repository.createExpense(tenantId, data, user?.id)
   }
 
-  async listExpenses(params) {
-    return this.repository.listExpenses(params)
+  async listExpenses(tenantId, params) {
+    return this.repository.listExpenses(tenantId, params)
   }
 
-  async getExpenseById(id) {
-    const row = await this.repository.getExpenseById(id)
+  async getExpenseById(tenantId, id) {
+    const row = await this.repository.getExpenseById(tenantId, id)
     if (!row) {
       const err = new Error('Expense not found')
       err.status = 404
@@ -47,7 +47,7 @@ export class FinancialService {
     return row
   }
 
-  async createDeposit(body, user) {
+  async createDeposit(tenantId, body, user) {
     const data = {
       deposit_date: body.deposit_date,
       type: body.type || 'deposit',
@@ -67,21 +67,21 @@ export class FinancialService {
       err.status = 400
       throw err
     }
-    const fy = await assertFiscalYearOpen(this.repository.knex, data.deposit_date)
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, data.deposit_date)
     data.fiscal_year = fy.fiscal_year
-    return this.repository.createDeposit(data, user?.id)
+    return this.repository.createDeposit(tenantId, data, user?.id)
   }
 
-  async getDepositStats(params) {
-    return this.repository.getDepositStats(params)
+  async getDepositStats(tenantId, params) {
+    return this.repository.getDepositStats(tenantId, params)
   }
 
-  async listDeposits(params) {
-    return this.repository.listDeposits(params)
+  async listDeposits(tenantId, params) {
+    return this.repository.listDeposits(tenantId, params)
   }
 
-  async getDepositById(id) {
-    const row = await this.repository.getDepositById(id)
+  async getDepositById(tenantId, id) {
+    const row = await this.repository.getDepositById(tenantId, id)
     if (!row) {
       const err = new Error('Deposit not found')
       err.status = 404
@@ -90,7 +90,7 @@ export class FinancialService {
     return row
   }
 
-  async updateDeposit(id, body, user) {
+  async updateDeposit(tenantId, id, body, user) {
     const data = {
       deposit_date: body.deposit_date,
       type: body.type,
@@ -110,7 +110,19 @@ export class FinancialService {
       err.status = 400
       throw err
     }
-    const row = await this.repository.updateDeposit(Number(id), data, user?.id)
+
+    const existing = await this.repository.getDepositById(tenantId, id)
+    if (!existing) {
+      const err = new Error('Deposit not found')
+      err.status = 404
+      throw err
+    }
+
+    const transactionDate = data.deposit_date ?? existing.deposit_date
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, transactionDate)
+    data.fiscal_year = fy.fiscal_year
+
+    const row = await this.repository.updateDeposit(tenantId, Number(id), data, user?.id)
     if (!row) {
       const err = new Error('Deposit not found')
       err.status = 404
@@ -119,8 +131,18 @@ export class FinancialService {
     return row
   }
 
-  async reverseDeposit(id, user) {
-    const row = await this.repository.reverseDeposit(Number(id), user?.id)
+  async reverseDeposit(tenantId, id, user) {
+    const existing = await this.repository.getDepositById(tenantId, id)
+    if (!existing) {
+      const err = new Error('Deposit not found')
+      err.status = 404
+      throw err
+    }
+
+    const reversalDate = new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, tenantId, reversalDate)
+
+    const row = await this.repository.reverseDeposit(tenantId, Number(id), user?.id)
     if (!row) {
       const err = new Error('Deposit not found')
       err.status = 404
@@ -129,7 +151,7 @@ export class FinancialService {
     return row
   }
 
-  async createCashLoanReceivable(body, user) {
+  async createCashLoanReceivable(tenantId, body, user) {
     const data = {
       partner_id: body.partner_id,
       amount: Number(body.amount),
@@ -143,14 +165,16 @@ export class FinancialService {
       err.status = 400
       throw err
     }
-    return this.repository.createCashLoanReceivable(data, user?.id)
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, data.lent_date)
+    data.fiscal_year = fy.fiscal_year
+    return this.repository.createCashLoanReceivable(tenantId, data, user?.id)
   }
 
-  async listCashLoansReceivable(params) {
-    return this.repository.listCashLoansReceivable(params)
+  async listCashLoansReceivable(tenantId, params) {
+    return this.repository.listCashLoansReceivable(tenantId, params)
   }
 
-  async recordCashLoanReceivableReturn(loanId, body, user) {
+  async recordCashLoanReceivableReturn(tenantId, loanId, body, user) {
     const amount = Number(body.amount || 0)
     const returnDate = body.return_date || new Date().toISOString().split('T')[0]
     if (!amount || amount <= 0) {
@@ -158,10 +182,11 @@ export class FinancialService {
       err.status = 400
       throw err
     }
-    return this.repository.recordCashLoanReceivableReturn(loanId, amount, returnDate, user?.id)
+    await assertFiscalYearOpen(this.repository.knex, tenantId, returnDate)
+    return this.repository.recordCashLoanReceivableReturn(tenantId, loanId, amount, returnDate, user?.id)
   }
 
-  async createCashLoanPayable(body, user) {
+  async createCashLoanPayable(tenantId, body, user) {
     const data = {
       partner_id: body.partner_id,
       amount: Number(body.amount),
@@ -175,14 +200,16 @@ export class FinancialService {
       err.status = 400
       throw err
     }
-    return this.repository.createCashLoanPayable(data, user?.id)
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, data.borrowed_date)
+    data.fiscal_year = fy.fiscal_year
+    return this.repository.createCashLoanPayable(tenantId, data, user?.id)
   }
 
-  async listCashLoansPayable(params) {
-    return this.repository.listCashLoansPayable(params)
+  async listCashLoansPayable(tenantId, params) {
+    return this.repository.listCashLoansPayable(tenantId, params)
   }
 
-  async recordCashLoanPayableRepayment(loanId, body, user) {
+  async recordCashLoanPayableRepayment(tenantId, loanId, body, user) {
     const amount = Number(body.amount || 0)
     const repayDate = body.repay_date || new Date().toISOString().split('T')[0]
     if (!amount || amount <= 0) {
@@ -190,49 +217,54 @@ export class FinancialService {
       err.status = 400
       throw err
     }
-    return this.repository.recordCashLoanPayableRepayment(loanId, amount, repayDate, user?.id)
+    await assertFiscalYearOpen(this.repository.knex, tenantId, repayDate)
+    return this.repository.recordCashLoanPayableRepayment(tenantId, loanId, amount, repayDate, user?.id)
   }
 
-  async getTradeReceivablesSummary() {
-    return this.repository.getTradeReceivablesSummary()
+  async getTradeReceivablesSummary(tenantId) {
+    return this.repository.getTradeReceivablesSummary(tenantId)
   }
 
-  async getTradePayablesSummary() {
-    return this.repository.getTradePayablesSummary()
+  async getTradePayablesSummary(tenantId) {
+    return this.repository.getTradePayablesSummary(tenantId)
   }
 
-  async listWithholdReceivables(params) {
-    return this.repository.listWithholdReceivables(params)
+  async listWithholdReceivables(tenantId, params) {
+    return this.repository.listWithholdReceivables(tenantId, params)
   }
 
-  async createWithholdReceivableSettlement(body, user) {
+  async createWithholdReceivableSettlement(tenantId, body, user) {
     const { settlement_date, sales_order_ids, reference_no, notes } = body
     if (!settlement_date) {
       const err = new Error('settlement_date is required')
       err.status = 400
       throw err
     }
-    return this.repository.createWithholdReceivableSettlement({
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, settlement_date)
+    return this.repository.createWithholdReceivableSettlement(tenantId, {
       settlement_date,
+      fiscal_year: fy.fiscal_year,
       sales_order_ids: Array.isArray(sales_order_ids) ? sales_order_ids.map((id) => Number(id)) : [],
       reference_no: reference_no || null,
       notes: notes || null
     }, user?.id)
   }
 
-  async listWithholdPayables(params) {
-    return this.repository.listWithholdPayables(params)
+  async listWithholdPayables(tenantId, params) {
+    return this.repository.listWithholdPayables(tenantId, params)
   }
 
-  async createWithholdPayableSettlement(body, user) {
+  async createWithholdPayableSettlement(tenantId, body, user) {
     const { settlement_date, purchase_order_ids, reference_no, notes } = body
     if (!settlement_date) {
       const err = new Error('settlement_date is required')
       err.status = 400
       throw err
     }
-    return this.repository.createWithholdPayableSettlement({
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, settlement_date)
+    return this.repository.createWithholdPayableSettlement(tenantId, {
       settlement_date,
+      fiscal_year: fy.fiscal_year,
       purchase_order_ids: Array.isArray(purchase_order_ids) ? purchase_order_ids.map((id) => Number(id)) : [],
       reference_no: reference_no || null,
       notes: notes || null

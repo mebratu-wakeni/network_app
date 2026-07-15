@@ -1,4 +1,5 @@
 const { ViewModel, SharedStateManager } = Liteframe
+import { formatUserError, isNoOpenFiscalYearError } from '../utils/userErrorMessage.js'
 
 export class SettingsVM extends ViewModel {
   constructor(stateManager) {
@@ -48,7 +49,7 @@ export class SettingsVM extends ViewModel {
         })
       }
     } catch (err) {
-      this.updateState('error', err.message || 'Failed to load settings')
+      this.updateState('error', formatUserError(err, 'Could not load settings.'))
     } finally {
       this.updateState('loading', false)
     }
@@ -69,20 +70,51 @@ export class SettingsVM extends ViewModel {
     this.updateState('fiscal-years-loading', true)
     this.updateState('fiscal-years-error', null)
     try {
-      const [listRes, currentRes] = await Promise.all([
+      const [listSettled, currentSettled] = await Promise.allSettled([
         window.ipcRenderer.invoke('fiscal-years:list'),
         window.ipcRenderer.invoke('fiscal-years:get-current')
       ])
-      if (listRes?.success && Array.isArray(listRes.fiscal_years)) {
-        this.updateState('fiscal-years', listRes.fiscal_years)
+
+      const loadErrors = []
+
+      if (listSettled.status === 'fulfilled') {
+        const listRes = listSettled.value
+        if (listRes?.success && Array.isArray(listRes.fiscal_years)) {
+          this.updateState('fiscal-years', listRes.fiscal_years)
+        } else if (listRes?.error) {
+          loadErrors.push(new Error(listRes.error))
+        }
+      } else {
+        loadErrors.push(listSettled.reason)
       }
-      if (currentRes?.success && currentRes.fiscal_year) {
-        this.updateState('current-fiscal-year', currentRes.fiscal_year)
+
+      if (currentSettled.status === 'fulfilled') {
+        const currentRes = currentSettled.value
+        if (currentRes?.success && currentRes.fiscal_year) {
+          this.updateState('current-fiscal-year', currentRes.fiscal_year)
+        } else if (currentRes?.error && !isNoOpenFiscalYearError(currentRes.error)) {
+          loadErrors.push(new Error(currentRes.error))
+          this.updateState('current-fiscal-year', null)
+        } else {
+          this.updateState('current-fiscal-year', null)
+        }
+      } else if (!isNoOpenFiscalYearError(currentSettled.reason)) {
+        loadErrors.push(currentSettled.reason)
+        this.updateState('current-fiscal-year', null)
       } else {
         this.updateState('current-fiscal-year', null)
       }
+
+      if (loadErrors.length > 0) {
+        this.updateState(
+          'fiscal-years-error',
+          formatUserError(loadErrors[0], 'Could not load fiscal years.')
+        )
+      }
     } catch (err) {
-      this.updateState('fiscal-years-error', err.message || 'Failed to load fiscal years')
+      if (!isNoOpenFiscalYearError(err)) {
+        this.updateState('fiscal-years-error', formatUserError(err, 'Could not load fiscal years.'))
+      }
       this.updateState('fiscal-years', [])
       this.updateState('current-fiscal-year', null)
     } finally {
@@ -103,10 +135,10 @@ export class SettingsVM extends ViewModel {
         await this.loadFiscalYears()
         return true
       }
-      this.updateState('fiscal-years-error', result?.error || 'Failed to create fiscal year')
+      this.updateState('fiscal-years-error', formatUserError(result?.error, 'Could not create fiscal year.'))
       return false
     } catch (err) {
-      this.updateState('fiscal-years-error', err.message || 'Failed to create fiscal year')
+      this.updateState('fiscal-years-error', formatUserError(err, 'Could not create fiscal year.'))
       return false
     } finally {
       this.updateState('create-fiscal-year-loading', false)
@@ -123,7 +155,7 @@ export class SettingsVM extends ViewModel {
       }
       return false
     } catch (err) {
-      this.updateState('fiscal-years-error', err.message || 'Failed to delete fiscal year')
+      this.updateState('fiscal-years-error', formatUserError(err, 'Could not delete fiscal year.'))
       return false
     }
   }
@@ -160,10 +192,10 @@ export class SettingsVM extends ViewModel {
         await this.loadFiscalYears()
         return true
       }
-      this.updateState('fiscal-years-error', result?.error || 'Failed to close fiscal year')
+      this.updateState('fiscal-years-error', formatUserError(result?.error, 'Could not close fiscal year.'))
       return false
     } catch (err) {
-      this.updateState('fiscal-years-error', err.message || 'Failed to close fiscal year')
+      this.updateState('fiscal-years-error', formatUserError(err, 'Could not close fiscal year.'))
       return false
     } finally {
       this.updateState('close-fiscal-year-loading', false)
@@ -179,10 +211,10 @@ export class SettingsVM extends ViewModel {
         await this.loadFiscalYears()
         return true
       }
-      this.updateState('fiscal-years-error', result?.error || 'Failed to reopen fiscal year')
+      this.updateState('fiscal-years-error', formatUserError(result?.error, 'Could not reopen fiscal year.'))
       return false
     } catch (err) {
-      this.updateState('fiscal-years-error', err.message || 'Failed to reopen fiscal year')
+      this.updateState('fiscal-years-error', formatUserError(err, 'Could not reopen fiscal year.'))
       return false
     } finally {
       this.updateState('reopen-fiscal-year-loading', false)
@@ -222,10 +254,10 @@ export class SettingsVM extends ViewModel {
           company_tin: result.settings.company_tin ?? ''
         })
       } else {
-        this.updateState('error', result?.error || 'Failed to save settings')
+        this.updateState('error', formatUserError(result?.error, 'Could not save settings.'))
       }
     } catch (err) {
-      this.updateState('error', err.message || 'Failed to save settings')
+      this.updateState('error', formatUserError(err, 'Could not save settings.'))
     } finally {
       this.updateState('loading', false)
     }

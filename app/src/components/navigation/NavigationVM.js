@@ -1,7 +1,9 @@
 const { ViewModel, SharedStateManager } = Liteframe
 import { permissionChecker } from '../utils/PermissionChecker'
+import { isCloudClient } from '../../config/cloudClient.js'
+import { formatUserError } from '../utils/userErrorMessage.js'
 
-/** Filled in dev builds only — avoids typing during local work. */
+/** Filled in dev builds only — avoids typing during local work (non-cloud dev only). */
 const DEV_LOGIN_USERNAME = 'admin'
 const DEV_LOGIN_PASSWORD = 'adminuser'
 
@@ -18,10 +20,17 @@ const MENU = [
   { title: 'Profile', route: '/user-profile', icon: 'person-outline', showInNav: false }
 ]
 
+function buildMenuOptions() {
+  if (isCloudClient()) {
+    return MENU.filter((item) => item.route !== '/server')
+  }
+  return MENU
+}
+
 class NavigationVM extends ViewModel {
   constructor(stateManager = new SharedStateManager()) { // Default to singleton sharedState
     super(stateManager);
-    this.menuOptions = MENU;
+    this.menuOptions = buildMenuOptions();
     this.initializeState();
     this.loadSetupConfig();
     // this.login(); // to test auth on app start
@@ -170,17 +179,18 @@ class NavigationVM extends ViewModel {
         permissionChecker.setUserRules(userWithRules?.rules || result?.user?.rules || [])
         return true
       }
-      throw new Error(result.error || 'Login failed')
+      throw new Error(formatUserError(result.error || 'Sign in failed. Check your username and password.', 'Sign in failed. Check your username and password.'))
     } catch (err) {
-      this.updateState('auth', { ...auth, loading: false, error: err.message || 'Login failed' });
+      this.updateState('auth', { ...auth, loading: false, error: formatUserError(err, 'Sign in failed. Check your username and password.') });
       this.updateState('loading', false);
       return false
     }
   }
 
   // Logout: clear token and reset auth state
-  logout() {
+  async logout() {
     try { localStorage.removeItem('authToken') } catch (e) {}
+    try { await window.ipcRenderer?.invoke?.('auth:clear-token') } catch (_) {}
     this._devAutoLoginDone = false
     this.updateState('auth', {
       isAuthenticated: false,
@@ -200,6 +210,7 @@ class NavigationVM extends ViewModel {
     try {
       const token = localStorage.getItem('authToken')
       if (token) {
+        try { await window.ipcRenderer?.invoke?.('auth:set-token', token) } catch (_) {}
         const auth = this.getState('auth') || {}
         this.updateState('auth', { ...auth, isAuthenticated: true, token })
         await permissionChecker.loadPermissions()
@@ -229,6 +240,10 @@ class NavigationVM extends ViewModel {
       this.updateState('setup-error', e.message || 'Failed to load setup')
     } finally {
       this.updateState('setup-loading', false)
+      const config = this.getState('setup-config')
+      if (config?.clientConnected) {
+        await this.tryRestoreAuth()
+      }
     }
   }
 
@@ -349,59 +364,47 @@ class NavigationVM extends ViewModel {
   }
 
   async enrichClientConnectionState(config) {
-    if (!config || config?.mode !== 'client') return config
+    if (!config) return config
+
+    const mode = isCloudClient() ? 'client' : config?.mode
+    if (mode !== 'client') return config
+
     const currentUrl = String(config?.client?.serverUrl || '').trim()
+    const clientCode = String(config?.client?.clientCode || '').trim()
+
     if (!currentUrl) {
-      const discovery = await this.discoverClientServer()
-      if (discovery?.success && discovery?.server?.serverUrl) {
-        const connect = await window.ipcRenderer.invoke('client:connect', { serverUrl: discovery.server.serverUrl })
-        if (connect?.success && connect?.config) {
-          return {
-            ...connect.config,
-            clientConnected: true,
-            clientConnectionError: null,
-            clientConnectionMessage: `Connected to Masatech Server at ${discovery.server.serverUrl}`
-          }
-        }
-      }
       return {
         ...config,
+        mode: 'client',
         clientConnected: false,
-        clientConnectionError: discovery?.error || null,
+        clientConnectionError: null,
         clientConnectionMessage: null
       }
     }
 
     const probe = await window.ipcRenderer.invoke('client:test-server-url', { serverUrl: currentUrl })
-    if (probe?.success) {
+    if (!probe?.success) {
       return {
         ...config,
-        client: { ...(config.client || {}), serverUrl: probe.serverUrl },
-        apiBaseUrl: probe.apiBaseUrl,
-        clientConnected: true,
-        clientConnectionError: null,
-        clientConnectionMessage: `Connected to ${probe.serverUrl}`
+        mode: 'client',
+        client: { ...(config.client || {}), serverUrl: currentUrl, clientCode },
+        clientConnected: false,
+        clientConnectionError: probe?.error || 'Unable to reach the server. Check the URL and try again.',
+        clientConnectionMessage: null
       }
     }
 
-    const discovery = await this.discoverClientServer()
-    if (discovery?.success && discovery?.server?.serverUrl) {
-      const connect = await window.ipcRenderer.invoke('client:connect', { serverUrl: discovery.server.serverUrl })
-      if (connect?.success && connect?.config) {
-        return {
-          ...connect.config,
-          clientConnected: true,
-          clientConnectionError: null,
-          clientConnectionMessage: `Reconnected to Masatech Server at ${discovery.server.serverUrl}`
-        }
-      }
-    }
-
+    const hasSavedSession = config.setupCompleted === true && clientCode.length > 0
     return {
       ...config,
-      clientConnected: false,
-      clientConnectionError: discovery?.error || probe?.error || 'Unable to connect to configured server URL.',
-      clientConnectionMessage: null
+      mode: 'client',
+      client: { ...(config.client || {}), serverUrl: probe.serverUrl, clientCode },
+      apiBaseUrl: probe.apiBaseUrl || config.apiBaseUrl,
+      clientConnected: hasSavedSession,
+      clientConnectionError: null,
+      clientConnectionMessage: hasSavedSession
+        ? `Connected to ${probe.serverUrl}`
+        : null
     }
   }
 
@@ -507,6 +510,8 @@ class NavigationVM extends ViewModel {
   async connectClientServerUrl(serverUrl, clientCode) {
     const currentConfig = this.getState('setup-config') || null
     const normalizedUrl = String(serverUrl || '').trim()
+    const tenantCode = String(clientCode || '').trim()
+
     if (!normalizedUrl) {
       const next = currentConfig
         ? {
@@ -520,12 +525,28 @@ class NavigationVM extends ViewModel {
       return { success: false, error: 'Server URL is required.' }
     }
 
+    if (!tenantCode) {
+      const next = currentConfig
+        ? {
+            ...currentConfig,
+            clientConnected: false,
+            clientConnectionError: 'Tenant code is required.',
+            clientConnectionMessage: null
+          }
+        : currentConfig
+      if (next) this.updateState('setup-config', next)
+      return { success: false, error: 'Tenant code is required.' }
+    }
+
     const probe = await this.testClientServerUrl(normalizedUrl)
     if (!probe?.success) {
       return probe
     }
 
-    const result = await window.ipcRenderer.invoke('client:connect', { serverUrl: normalizedUrl, clientCode: String(clientCode || '').trim() })
+    const result = await window.ipcRenderer.invoke('client:connect', {
+      serverUrl: normalizedUrl,
+      clientCode: tenantCode
+    })
     if (!result?.success) {
       const error = result?.error || 'Unable to connect to server.'
       const next = currentConfig
