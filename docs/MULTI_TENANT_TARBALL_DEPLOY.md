@@ -1,103 +1,62 @@
-# Multi-tenant cloud — tarball deploy (API + admin)
+# Multi-tenant cloud — tarball redeploy (API + admin)
 
 Target: **https://server.masatechplc.com**
 
 | URL | What |
 |-----|------|
 | `/health`, `/api/...` | Multi-tenant API (Postgres) |
-| `/admin` | masatech-admin (tenant management SPA) |
-| `/downloads/cloud-multi/` | Electron installers (separate GitHub Actions flow) |
+| `/admin` | masatech-admin SPA |
+| `/downloads/cloud-multi/` | Electron installers (separate flow) |
 
-cPanel does **not** use GitHub→API CI. You upload a **tarball**.
-
-## What the tarball contains
-
-- Full `api/` application source (no `node_modules`, no `.env`, no local DB/uploads)
-- Built **masatech-admin** as `admin-dist/` (served at `/admin`)
-- `startup.cjs` for LiteSpeed/cPanel Node launcher
-- Migrations + seeds
-
-It does **not** contain Electron installers.
-
-## Prepare the tarball (on your Mac, from this branch)
+## Packing (matches your existing `api.tar.gz` workflow)
 
 ```bash
 cd /path/to/network-desktop-app
 git checkout feature/cloud-multi-tenant
-git pull
-
-chmod +x scripts/pack-multi-tenant-tarball.sh
 ./scripts/pack-multi-tenant-tarball.sh
 ```
 
-Output under `dist-release/`:
+**Pack order (fixed):**
 
-| File | Use |
-|------|-----|
-| `pharmasuit-multi-tenant-api-*-TIMESTAMP.tar.gz` | Extract **into** existing `api/` directory |
-| `pharmasuit-multi-tenant-api-*-TIMESTAMP-nested.tar.gz` | Extract at parent so it creates `./api/` |
-| `DEPLOY.txt` | Same checklist as below |
+1. Build `masatech-admin` → `dist/`
+2. Stage `api/` (no `.env`, no `node_modules`)
+3. Copy admin into `admin-dist/` inside that stage
+4. Write **`api.tar.gz`** (flat) + optional **`masatech-deploy.tar.gz`** (nested)
 
-## Server env (cPanel Node app — do not put secrets in the tarball)
+### Which archive?
 
-Confirm these are set on the host (Node.js App → Environment):
+| File | Layout | Extract where |
+|------|--------|----------------|
+| **`api.tar.gz`** (use this) | `./package.json`, `./src/`, `./admin-dist/`, … | **Into** Node app root (`…/api/` that already has `package.json`) — same as before |
+| `masatech-deploy.tar.gz` | `./api/…` + `./masatech-admin/dist/…` | At **parent** of `api/` |
 
-| Variable | Notes |
-|----------|--------|
-| `DATABASE_URL` or `DB_HOST`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` | **Postgres** |
-| `JWT_SECRET` | Strong random; shared by tenant + platform admin JWTs |
-| `JWT_EXPIRES_IN` | e.g. `7d` |
-| `NODE_ENV` | `production` |
-| `FRONTEND_ORIGIN` | Optional; include `https://server.masatechplc.com` if needed |
-| `PORT` | Whatever cPanel assigns |
+Wrong extract = `api/api/` nesting or missing `/admin`. Use **`api.tar.gz`** unless you intentionally use the parent layout.
 
-Startup file: **`startup.cjs`**
+## Redeploy steps
 
-## Deploy steps
-
-1. **Backup** Postgres and the current `api/` folder.
-2. Upload the flat tarball via File Manager / SFTP.
-3. Extract into the Node application directory:
+1. Backup Postgres + current `api/` on the server.
+2. Upload `dist-release/api.tar.gz` (or repo-root `api.tar.gz` after pack).
+3. On the server:
 
 ```bash
-cd ~/network-desktop-app/api   # adjust to your real path
-tar -xzf ~/path/to/pharmasuit-multi-tenant-api-….tar.gz
-```
-
-4. Install and migrate:
-
-```bash
+cd ~/network-desktop-app/api   # Application root = folder with package.json
+tar -xzf /path/to/api.tar.gz
 npm install --production
 npm run migrate
+mkdir -p tmp && touch tmp/restart.txt
 ```
 
-5. **First deploy only** — if no platform admin exists yet:
+4. First-time only (no platform admin): `npm run seed` then change password at `/admin`.
+5. Verify: `/health`, `/api/db-health`, `/admin`.
+
+**Do not** overwrite cPanel env (`.env` / Node env panel). The tarball has no secrets.
+
+Startup file: **`startup.cjs`**.
+
+## Verify archive before upload
 
 ```bash
-npm run seed
-# default: masaadmin / changeme123  → change immediately in /admin
+tar -tzf dist-release/api.tar.gz | head
+# expect: ./package.json  ./src/…  ./admin-dist/index.html  ./startup.cjs
+# NOT:    ./api/package.json
 ```
-
-6. Restart the Node app (`touch tmp/restart.txt` or cPanel Restart).
-
-## Verify
-
-```bash
-curl -sS https://server.masatechplc.com/health
-curl -sS https://server.masatechplc.com/api/db-health
-```
-
-Browser:
-
-- https://server.masatechplc.com/admin — login as platform admin  
-- Create/suspend tenants as needed  
-- Electron clients use server URL + **tenant code** against this host  
-
-## After API is live — desktop downloads (optional next)
-
-Desktop installers are **not** in the tarball. When ready:
-
-1. Set GitHub secrets `DOWNLOADS_*`  
-2. Tag `desktop-cloud-v1.0.0` → Actions builds + FTPS to `/downloads/cloud-multi/`  
-
-See [DOWNLOADS_AND_UPDATES.md](./DOWNLOADS_AND_UPDATES.md).

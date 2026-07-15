@@ -14,14 +14,19 @@ Branch policy: [BRANCHING.md](./BRANCHING.md). Multi-tenant readiness: [MULTI_TE
 ```bash
 # On your machine (feature/cloud-multi-tenant):
 ./scripts/pack-multi-tenant-tarball.sh
-# → dist-release/pharmasuit-multi-tenant-api-*.tar.gz
+# → dist-release/api.tar.gz  (same flat layout as previous /api.tar.gz)
+# → also copies to ./api.tar.gz
 ```
+
+Extract **into** the Node application root (the folder that already contains `package.json`), not into a nested `api/api/`.
 
 Full checklist: [docs/MULTI_TENANT_TARBALL_DEPLOY.md](./docs/MULTI_TENANT_TARBALL_DEPLOY.md).
 
 Summary on the server after upload/extract into `api/`:
 
 ```bash
+cd ~/network-desktop-app/api   # adjust to Application root
+tar -xzf /path/to/api.tar.gz
 npm install --production
 npm run migrate
 # npm run seed   # first time only (platform admin)
