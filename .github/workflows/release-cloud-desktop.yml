@@ -1,0 +1,69 @@
+# Builds PharmaSuit Cloud (multi-tenant) desktop installers for Mac, Windows, Linux.
+# Does NOT deploy API to cPanel — API uses tarball deploy (see docs/DOWNLOADS_AND_UPDATES.md).
+#
+# Trigger: tag desktop-cloud-v*  OR  manual "Run workflow"
+# Output: GitHub Actions artifacts → upload to server.masatechplc.com/downloads/cloud-multi/
+
+name: Release Cloud Desktop
+
+on:
+  push:
+    tags:
+      - 'desktop-cloud-v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build cloud desktop (${{ matrix.platform }})
+        working-directory: app
+        env:
+          VITE_CLOUD_MODE: 'true'
+          VITE_DEFAULT_SERVER_URL: https://mltplc.com
+          VITE_CLOUD_UPDATES_URL: https://server.masatechplc.com/downloads/cloud-multi
+        run: npm run build:cloud -- --publish never
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-desktop-${{ matrix.platform }}
+          path: |
+            app/release-cloud/**/*
+          retention-days: 90
+
+      - name: Upload update metadata (yml)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-desktop-updates-${{ matrix.platform }}
+          path: |
+            app/release-cloud/**/*.yml
+            app/release-cloud/**/*.blockmap
+          if-no-files-found: ignore
+          retention-days: 90

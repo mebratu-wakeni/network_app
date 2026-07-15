@@ -1,0 +1,21 @@
+{
+  "product": "PharmaSuit Cloud (multi-tenant)",
+  "channel": "cloud-multi",
+  "version": "1.0.0",
+  "releaseNotes": "Initial multi-tenant cloud desktop release.",
+  "publishedAt": "2026-07-15T00:00:00.000Z",
+  "artifacts": {
+    "mac": {
+      "file": "PharmaSuit-Cloud-Mac-1.0.0-Installer.dmg",
+      "url": "https://server.masatechplc.com/downloads/cloud-multi/1.0.0/PharmaSuit-Cloud-Mac-1.0.0-Installer.dmg"
+    },
+    "win": {
+      "file": "PharmaSuit-Cloud-Windows-1.0.0-Setup.exe",
+      "url": "https://server.masatechplc.com/downloads/cloud-multi/1.0.0/PharmaSuit-Cloud-Windows-1.0.0-Setup.exe"
+    },
+    "linux": {
+      "file": "PharmaSuit-Cloud-Linux-1.0.0.AppImage",
+      "url": "https://server.masatechplc.com/downloads/cloud-multi/1.0.0/PharmaSuit-Cloud-Linux-1.0.0.AppImage"
+    }
+  }
+}

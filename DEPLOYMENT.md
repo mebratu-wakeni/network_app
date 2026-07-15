@@ -1,8 +1,13 @@
 # Deployment Workflow
 
-This repo supports deployment of the Express API via Docker. The Electron app is typically distributed as installers/binaries (built separately).
+This repo supports two different delivery paths:
 
-## API (Docker)
+1. **API (cPanel / Postgres host)** — **tarball deploy** (extract on server, `npm install`, `npm run migrate`, restart). cPanel does not support reliable GitHub→server CI; ignore `.github/workflows/deploy.yml` for multi-tenant production unless you explicitly use it for a legacy SQLite host.
+2. **Desktop installers** — GitHub Actions builds Mac/Windows/Linux; you upload artifacts to `server.masatechplc.com/downloads/`. See [DOWNLOADS_AND_UPDATES.md](./DOWNLOADS_AND_UPDATES.md).
+
+Branch policy: [BRANCHING.md](./BRANCHING.md). Multi-tenant readiness: [MULTI_TENANT_READINESS.md](./MULTI_TENANT_READINESS.md).
+
+## API (Docker — local dev)
 
 ### Images and Compose
 - Image built from `api/Dockerfile`

@@ -52,5 +52,9 @@
       "AppImage"
     ],
     "artifactName": "${productName}-Cloud-Linux-${version}.${ext}"
+  },
+  "publish": {
+    "provider": "generic",
+    "url": "https://server.masatechplc.com/downloads/cloud-multi"
   }
 }

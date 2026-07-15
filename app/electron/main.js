@@ -24,6 +24,7 @@ import LicenseManager from './license/license.js'
 import { LicenseIpcHandlers } from './license/ipcHandlers.js'
 import { setToken, clearToken } from './config/authManager.js'
 import { setOnSessionExpired, setOnServerDown } from './config/apiFetch.js'
+import { initCloudAutoUpdater } from './cloudUpdater.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -1477,4 +1478,5 @@ app.whenReady().then(() => {
   registerRendererProtocol()
   // Do not auto-start server. User must choose mode first, then we validate DB/license.
   createMainWindow()
+  if (IS_CLOUD_BUILD) initCloudAutoUpdater()
 })

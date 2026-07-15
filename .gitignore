@@ -16,6 +16,7 @@ build/
 # Electron build output
 app/dist-electron/
 app/release/
+app/release-cloud/
 
 # Logs
 logs
