@@ -41,20 +41,27 @@ URL `…/downloads/cloud-multi/` → Express static → that folder.
 
 | Secret | Example | Purpose |
 |--------|---------|---------|
-| `DOWNLOADS_HOST` | FTP hostname for this cPanel account | FTP/FTPS host |
-| `DOWNLOADS_USERNAME` | cPanel FTP user | Upload auth |
+| `DOWNLOADS_HOST` | FTP hostname (e.g. `masatechplc.com`) | FTP/FTPS host |
+| `DOWNLOADS_USERNAME` | cPanel FTP user (e.g. `masatetw`) | Upload auth |
 | `DOWNLOADS_PASSWORD` | FTP password | Upload auth |
-| `DOWNLOADS_SERVER_DIR` | path to `…/server.masatechplc.com/downloads/cloud-multi/` | Remote path (trailing slash) |
+| `DOWNLOADS_SERVER_DIR` | **`server.masatechplc.com/downloads/cloud-multi/`** | Remote path **relative to the FTP account home** (trailing slash) |
 
-`DOWNLOADS_SERVER_DIR` must be the **domain-root** `downloads/cloud-multi/` folder above — **not** `public_html/…` (unless that path is the same folder on your host).
+**Important:** `DOWNLOADS_SERVER_DIR` must be **relative to `/home/masatetw`**, not an absolute `/home/masatetw/...` path.
+
+- Correct: `server.masatechplc.com/downloads/cloud-multi/`
+- Wrong: `/home/masatetw/server.masatechplc.com/downloads/cloud-multi/`  
+  (FTP treats that as a second `home/masatetw/...` nest — “ghost” files that search finds but the live site never serves)
+
+After changing the secret, re-run **Release Cloud Desktop** (or move the installers from the nested junk path into the real `server.masatechplc.com/downloads/cloud-multi/1.0.0/` folder).
 
 6. **Publish installers**: bump `app/package.json` version → tag `desktop-cloud-vX.Y.Z` → Action **Release Cloud Desktop** uploads the bundle.
 
 7. **Verify**:
    - https://server.masatechplc.com/downloads/cloud-multi/  → HTML page (not JSON)
+   - https://server.masatechplc.com/downloads/cloud-multi/1.0.0/…Installer… → real download
    - https://server.masatechplc.com/downloads/cloud-multi/latest.json
 
-Optional env override: `DOWNLOADS_STATIC_DIR` = absolute path to the `downloads` directory (parent of `cloud-multi/`).
+Optional env override: `DOWNLOADS_STATIC_DIR` = absolute path to the `downloads` directory (parent of `cloud-multi/`) on the **Node** host — unrelated to the FTP secret.
 
 Protocol in the workflow is **FTPS**. If your host needs plain FTP or SFTP, change `protocol:` in the publish step of `release-cloud-desktop.yml`.
 

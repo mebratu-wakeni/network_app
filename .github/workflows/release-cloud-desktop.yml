@@ -9,7 +9,8 @@
 #   DOWNLOADS_HOST          — FTP/SFTP host (or reuse SERVER_HOST)
 #   DOWNLOADS_USERNAME      — FTP user
 #   DOWNLOADS_PASSWORD      — FTP password
-#   DOWNLOADS_SERVER_DIR    — remote path, e.g. …/server.masatechplc.com/downloads/cloud-multi/
+#   DOWNLOADS_SERVER_DIR    — relative to FTP home, e.g. server.masatechplc.com/downloads/cloud-multi/
+#                             (NOT /home/USER/... — that nests under home again)
 
 name: Release Cloud Desktop
 
@@ -155,7 +156,14 @@ jobs:
           [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
           [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
           [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
-          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR (e.g. server.masatechplc.com/downloads/cloud-multi/)" && missing=1
+          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR (relative e.g. server.masatechplc.com/downloads/cloud-multi/)" && missing=1
+          case "$DOWNLOADS_SERVER_DIR" in
+            /home/*)
+              echo "ERROR: DOWNLOADS_SERVER_DIR looks absolute ($DOWNLOADS_SERVER_DIR)."
+              echo "Use a path relative to the FTP home, e.g. server.masatechplc.com/downloads/cloud-multi/"
+              missing=1
+              ;;
+          esac
           exit $missing
 
       - name: Publish to downloads host (FTP/FTPS)
