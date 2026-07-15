@@ -12,23 +12,36 @@ import { getUploadsRoot, ensureUploadDirs, migrateLegacyAvatarFiles } from './co
 dotenv.config()
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-// Serve the masatech-admin (super-admin) panel's built SPA at /admin, same origin as
-// the api, once it has been built (npm run build in masatech-admin/) -- mirrors how
-// license-api serves license-admin. In local dev the admin app has its own vite dev
-// server instead (see masatech-admin/vite.config.js), so this is a no-op until built.
-// Override with ADMIN_STATIC_DIR if the deploy's directory layout differs from local dev.
-const ADMIN_DIST_PATH = process.env.ADMIN_STATIC_DIR
-  ? path.resolve(process.env.ADMIN_STATIC_DIR)
-  : path.resolve(__dirname, '../../masatech-admin/dist')
+
+/**
+ * Resolve masatech-admin static files for /admin.
+ * Priority:
+ *   1. ADMIN_STATIC_DIR env (explicit override on host)
+ *   2. api/admin-dist (tarball layout — built into the package by pack script)
+ *   3. ../../masatech-admin/dist (local monorepo checkout)
+ */
+function resolveAdminDistPath() {
+  if (process.env.ADMIN_STATIC_DIR) {
+    return path.resolve(process.env.ADMIN_STATIC_DIR)
+  }
+  const tarballPath = path.resolve(__dirname, '../admin-dist')
+  if (fs.existsSync(path.join(tarballPath, 'index.html'))) {
+    return tarballPath
+  }
+  return path.resolve(__dirname, '../../masatech-admin/dist')
+}
+
+const ADMIN_DIST_PATH = resolveAdminDistPath()
 
 export function createApp() {
   const app = express()
 
   // Strict production origins allowed to speak to your API
   const allowedOrigins = [
-    'app://local',                    // Packaged Electron app
-    'https://pharmasuit.mltplc.com',  // API subdomain
-    'https://mltplc.com'              // Main domain (kept for compatibility)
+    'app://local',                         // Packaged Electron app
+    'https://server.masatechplc.com',      // Multi-tenant API + /admin
+    'https://pharmasuit.mltplc.com',       // Legacy / other products
+    'https://mltplc.com'
   ]
 
   // Inject any additional cloud origins defined inside cPanel's env dashboard

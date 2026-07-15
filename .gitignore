@@ -65,3 +65,6 @@ __MACOSX/
 # Local deployment artifacts (not for version control)
 masatech-deploy.tar.gz
 masatech-db-init*.sql
+dist-release/
+api/admin-dist/
+masatech-admin/dist/

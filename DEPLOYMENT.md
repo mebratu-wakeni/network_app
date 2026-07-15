@@ -9,16 +9,26 @@ Branch policy: [BRANCHING.md](./BRANCHING.md). Multi-tenant readiness: [MULTI_TE
 
 ## API (cPanel / Postgres host)
 
-**Multi-tenant and most cPanel hosts:** ship a **tarball** (zip/`tar.gz` of `api/`), upload via File Manager or SFTP, extract, then:
+**Multi-tenant production (`server.masatechplc.com`):** use a **tarball** that includes the API **and** the built masatech-admin SPA (`/admin`).
 
 ```bash
-cd /path/to/api
-npm install --production
-npm run migrate
-# restart app (e.g. touch tmp/restart.txt or cPanel Node “Restart”)
+# On your machine (feature/cloud-multi-tenant):
+./scripts/pack-multi-tenant-tarball.sh
+# → dist-release/pharmasuit-multi-tenant-api-*.tar.gz
 ```
 
-Desktop installers are **not** part of the API tarball. They are published automatically by GitHub Actions to `/downloads/cloud-multi/` — see [docs/DOWNLOADS_AND_UPDATES.md](./docs/DOWNLOADS_AND_UPDATES.md).
+Full checklist: [docs/MULTI_TENANT_TARBALL_DEPLOY.md](./docs/MULTI_TENANT_TARBALL_DEPLOY.md).
+
+Summary on the server after upload/extract into `api/`:
+
+```bash
+npm install --production
+npm run migrate
+# npm run seed   # first time only (platform admin)
+mkdir -p tmp && touch tmp/restart.txt
+```
+
+Desktop installers are **not** in the API tarball. They are published by GitHub Actions to `/downloads/cloud-multi/` — see [docs/DOWNLOADS_AND_UPDATES.md](./docs/DOWNLOADS_AND_UPDATES.md).
 
 ## API (Docker — local dev)
 
