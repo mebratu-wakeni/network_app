@@ -1459,10 +1459,12 @@ function BinCardDrawer({ product, showSlide, onClose, ...props }) {
   ])
 }
 
-function openAddProductModal(props) {
-  // Clear the form before opening the modal
+async function openAddProductModal(props) {
+  // Preload lists before open — loading them inside modal render fights typing (wipes inputs).
   props.viewModel.resetProductForm();
-  Modal({}, (delegator, closeHandler) => ModalContent(props.viewModel, delegator, closeHandler)) 
+  await props.viewModel.loadCategories();
+  await props.viewModel.loadUnits();
+  Modal({}, (delegator, closeHandler) => ModalContent(props.viewModel, delegator, closeHandler))
 }
 
 function openImportProductsModal(props) {

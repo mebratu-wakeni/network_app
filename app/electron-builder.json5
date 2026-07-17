@@ -28,21 +28,29 @@
     }
   ],
   "mac": {
+    // macos-latest is Apple Silicon; universal covers Intel + Apple Silicon LAN clients.
     "target": [
-      "dmg"
+      {
+        "target": "dmg",
+        "arch": [
+          "universal"
+        ]
+      }
     ],
     "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
   },
   "win": {
+    // Windows 10 64-bit and 32-bit (separate NSIS installers).
     "target": [
       {
         "target": "nsis",
         "arch": [
-          "x64"
+          "x64",
+          "ia32"
         ]
       }
     ],
-    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+    "artifactName": "${productName}-Windows-${version}-${arch}-Setup.${ext}"
   },
   "nsis": {
     "oneClick": false,

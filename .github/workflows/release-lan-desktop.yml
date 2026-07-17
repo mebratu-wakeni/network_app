@@ -1,0 +1,197 @@
+# Builds PharmaSuit LAN (offline single-tenant) installers and publishes to
+# server.masatechplc.com/downloads/lan/
+#
+# Does NOT touch downloads/cloud-multi/ — use a separate FTP dir secret.
+#
+# Trigger: tag desktop-lan-v*  OR  manual "Run workflow"
+#
+# Required GitHub secrets:
+#   DOWNLOADS_HOST
+#   DOWNLOADS_USERNAME
+#   DOWNLOADS_PASSWORD
+#   DOWNLOADS_LAN_SERVER_DIR  — relative to FTP home, e.g. server.masatechplc.com/downloads/lan/
+#                              (NOT /home/USER/... and NOT the cloud-multi path)
+
+name: Release LAN Desktop
+
+on:
+  push:
+    tags:
+      - 'desktop-lan-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version to build (must match app/package.json unless you bump first)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            api/package-lock.json
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Install API dependencies (bundled into LAN installer)
+        working-directory: api
+        run: npm ci --omit=dev
+
+      - name: Read package version
+        id: pkg
+        working-directory: app
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Build LAN desktop (${{ matrix.platform }})
+        working-directory: app
+        run: npm run build -- --publish never
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lan-desktop-${{ matrix.platform }}
+          path: |
+            app/release/**
+          retention-days: 90
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.build.result != 'cancelled' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-lan-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-lan-v}"
+          else
+            V="$(node -p "require('./app/package.json').version")"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Publishing LAN version $V"
+
+      - name: Download Mac artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: lan-desktop-mac
+          path: staging/artifacts/mac
+
+      - name: Download Windows artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: lan-desktop-win
+          path: staging/artifacts/win
+
+      - name: Download Linux artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: lan-desktop-linux
+          path: staging/artifacts/linux
+
+      - name: Prepare publish bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d staging/artifacts ] || [ -z "$(find staging/artifacts -type f 2>/dev/null | head -1)" ]; then
+            echo "No installer artifacts downloaded — cannot publish."
+            exit 1
+          fi
+          node scripts/prepare-lan-release.mjs \
+            --version "${{ steps.ver.outputs.version }}" \
+            --artifacts-dir staging/artifacts \
+            --out-dir staging/publish \
+            --notes "PharmaSuit LAN ${{ steps.ver.outputs.version }} (product create modal fix)" \
+            --base-url "https://server.masatechplc.com/downloads/lan"
+          echo "--- publish tree ---"
+          find staging/publish -type f | sort
+
+      - name: Check downloads secrets
+        shell: bash
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_LAN_SERVER_DIR: ${{ secrets.DOWNLOADS_LAN_SERVER_DIR }}
+        run: |
+          missing=0
+          [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
+          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
+          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
+          [ -z "$DOWNLOADS_LAN_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_LAN_SERVER_DIR (e.g. server.masatechplc.com/downloads/lan/)" && missing=1
+          case "$DOWNLOADS_LAN_SERVER_DIR" in
+            /home/*)
+              echo "ERROR: DOWNLOADS_LAN_SERVER_DIR looks absolute ($DOWNLOADS_LAN_SERVER_DIR)."
+              echo "Use a path relative to the FTP home, e.g. server.masatechplc.com/downloads/lan/"
+              missing=1
+              ;;
+            *cloud-multi*)
+              echo "ERROR: DOWNLOADS_LAN_SERVER_DIR points at cloud-multi — refuse to overwrite cloud installers."
+              missing=1
+              ;;
+          esac
+          exit $missing
+
+      - name: Publish to downloads/lan (FTP/FTPS)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.DOWNLOADS_HOST }}
+          username: ${{ secrets.DOWNLOADS_USERNAME }}
+          password: ${{ secrets.DOWNLOADS_PASSWORD }}
+          protocol: ftps
+          local-dir: staging/publish/
+          server-dir: ${{ secrets.DOWNLOADS_LAN_SERVER_DIR }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "### LAN desktop published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** ${{ steps.ver.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Downloads:** https://server.masatechplc.com/downloads/lan/" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Cloud (untouched):** https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"
