@@ -86,6 +86,16 @@ async function createSchema(db) {
     t.timestamp('last_updated')
     t.string('sync_status').defaultTo('pending')
   })
+
+  await db.schema.createTable('fiscal_years', (t) => {
+    t.increments('id').primary()
+    t.integer('fiscal_year').notNullable().unique()
+    t.date('start_date').notNullable()
+    t.date('end_date').notNullable()
+    t.string('status').notNullable().defaultTo('open')
+    t.timestamp('created_at')
+    t.timestamp('updated_at')
+  })
 }
 
 function createTestApp(controller) {
@@ -104,6 +114,14 @@ describe('inventories bulk-import integration', () => {
   beforeEach(async () => {
     db = createTestDb()
     await createSchema(db)
+
+    const year = new Date().getFullYear()
+    await db('fiscal_years').insert({
+      fiscal_year: year,
+      start_date: `${year}-01-01`,
+      end_date: `${year}-12-31`,
+      status: 'open'
+    })
 
     const repository = new InventoriesRepository(db)
     const service = new InventoriesService(repository)

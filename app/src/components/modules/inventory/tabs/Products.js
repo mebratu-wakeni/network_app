@@ -451,6 +451,12 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
   };
 
   const handleSaveNewCategory = async () => {
+    const nameInput = document.getElementById('new-category-name');
+    const descInput = document.getElementById('new-category-description');
+    const name = String(nameInput?.value ?? props.getLocalState('new-category-name') ?? '').trim();
+    const description = String(descInput?.value ?? props.getLocalState('new-category-description') ?? '').trim();
+    if (!name) return;
+
     const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
       actionName: 'create categories'
     });
@@ -459,11 +465,8 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
     }
 
     try {
-      const category = await props.viewModel.createCategory({
-        name: newCategoryName,
-        description: newCategoryDescription
-      });
-      // Add to category options and select it
+      const category = await props.viewModel.createCategory({ name, description });
+      if (!category?.id) return;
       props.viewModel.updateProductDetailsFormFields({
         category: category.name,
         category_id: category.id
@@ -472,7 +475,6 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
       props.setLocalState('new-category-name', '');
       props.setLocalState('new-category-description', '');
     } catch (error) {
-      // Error is handled by viewModel and displayed via error state
       console.error('Error creating category:', error);
     }
   };
@@ -484,6 +486,12 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
   };
 
   const handleSaveNewUnit = async () => {
+    const nameInput = document.getElementById('new-unit-name');
+    const abbrInput = document.getElementById('new-unit-abbreviation');
+    const name = String(nameInput?.value ?? props.getLocalState('new-unit-name') ?? '').trim();
+    const abbreviation = String(abbrInput?.value ?? props.getLocalState('new-unit-abbreviation') ?? '').trim();
+    if (!name || !abbreviation) return;
+
     const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
       actionName: 'create units'
     });
@@ -492,11 +500,8 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
     }
 
     try {
-      const unit = await props.viewModel.createUnit({
-        name: newUnitName,
-        abbreviation: newUnitAbbreviation
-      });
-      // Add to unit options and select it
+      const unit = await props.viewModel.createUnit({ name, abbreviation });
+      if (!unit?.id) return;
       props.viewModel.updateProductDetailsFormFields({
         unit: unit.name,
         unit_id: unit.id
@@ -506,7 +511,6 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
       props.setLocalState('new-unit-abbreviation', '');
       props.setLocalState('new-unit-description', '');
     } catch (error) {
-      // Error is handled by viewModel and displayed via error state
       console.error('Error creating unit:', error);
     }
   };
@@ -782,16 +786,17 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                     min: 1,
                     value: productExpiryThreshold || 30,
                     // `Input` wires `change` (often blur for number); sync on `input` so Save sees latest value.
-                    onInput: (e) =>
-                      props.viewModel.updateProductDetailsForm(
-                        'expiry_threshold',
-                        parseInt(e.target.value, 10) || 30
-                      ),
-                    onChange: (e) =>
-                      props.viewModel.updateProductDetailsForm(
-                        'expiry_threshold',
-                        parseInt(e.target.value, 10) || 30
-                      ),
+                    onInput: (e) => {
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        props.viewModel.updateProductDetailsForm('expiry_threshold', '');
+                        return;
+                      }
+                      const n = parseInt(raw, 10);
+                      if (!Number.isNaN(n)) {
+                        props.viewModel.updateProductDetailsForm('expiry_threshold', n);
+                      }
+                    },
                     name: 'expiry-threshold',
                     placeholder: 'Enter number of days'
                   }
@@ -850,7 +855,7 @@ function NewCategoryForm({ name, description, onNameChange, onDescriptionChange,
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Category Name:'),
         Input({
           value: name,
-          onChange: onNameChange,
+          onInput: onNameChange,
           name: 'new-category-name',
           placeholder: 'Enter category name',
           class: 'w-full'
@@ -860,7 +865,7 @@ function NewCategoryForm({ name, description, onNameChange, onDescriptionChange,
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Description:'),
         Input({
           value: description,
-          onChange: onDescriptionChange,
+          onInput: onDescriptionChange,
           name: 'new-category-description',
           placeholder: 'Enter category description',
           class: 'w-full'
@@ -892,7 +897,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Unit Name:'),
         Input({
           value: name,
-          onChange: onNameChange,
+          onInput: onNameChange,
           name: 'new-unit-name',
           placeholder: 'Enter unit name (e.g., Bottle)',
           class: 'w-full'
@@ -902,7 +907,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Abbreviation:'),
         Input({
           value: abbreviation,
-          onChange: onAbbreviationChange,
+          onInput: onAbbreviationChange,
           name: 'new-unit-abbreviation',
           placeholder: 'Enter abbreviation (e.g., BTL)',
           class: 'w-full'
@@ -912,7 +917,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Description:'),
         Input({
           value: description,
-          onChange: onDescriptionChange,
+          onInput: onDescriptionChange,
           name: 'new-unit-description',
           placeholder: 'Enter unit description',
           class: 'w-full'

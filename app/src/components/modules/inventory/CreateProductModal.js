@@ -6,10 +6,16 @@ import Label from "../../utils/Label";
 import { SelectFluid, SelectOptions } from "../../utils/Select";
 import { permissionChecker } from "../../utils/PermissionChecker";
 
+function displayErrorText(err) {
+  if (!err) return '';
+  if (typeof err === 'string') return err;
+  return err.message || err.error || '';
+}
+
 const { Row, StatefulRow } = Liteframe;
 
 // --- The Modal Content Component (Child) ---
-const ModalContent = (viewModel, delegator, handleClose) => {
+const ModalContent = (viewModel, delegator, handleClose, onProductCreated) => {
 
   const render = (props) => {
     // Local state only for UI concerns (inline forms visibility)
@@ -24,19 +30,12 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     // Get form data from viewModel state
     const loading = props.viewModel.getState('loading');
     const productForm = props.viewModel.getState('product-form') || {};
+    const errorMessage = displayErrorText(props.viewModel.getState('error'));
     
     // Get categories and units from ViewModel
     const categories = props.viewModel.getCategoryList();
     const units = props.viewModel.getUnitList();
-    
-    // Load categories and units if not already loaded
-    if (categories.length === 0) {
-      props.viewModel.loadCategories();
-    }
-    if (units.length === 0) {
-      props.viewModel.loadUnits();
-    }
-    
+
     const showNewCategoryForm = props.getLocalState('show-new-category-form');
     const newCategoryName = props.getLocalState('new-category-name');
     const newCategoryDescription = props.getLocalState('new-category-description');
@@ -46,6 +45,13 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     const newUnitDescription = props.getLocalState('new-unit-description');
 
     const handleSaveNewCategory = async () => {
+      // Prefer live DOM values — local state can lag when morphdom remorphs mid-typing
+      const nameInput = document.getElementById('new-category-name');
+      const descInput = document.getElementById('new-category-description');
+      const name = String(nameInput?.value ?? props.getLocalState('new-category-name') ?? '').trim();
+      const description = String(descInput?.value ?? props.getLocalState('new-category-description') ?? '').trim();
+      if (!name) return;
+
       const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
         actionName: 'create categories'
       });
@@ -54,11 +60,9 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       }
 
       try {
-        const category = await props.viewModel.createCategory({
-          name: newCategoryName,
-          description: newCategoryDescription
-        });
-        // Add to category options and select it
+        const category = await props.viewModel.createCategory({ name, description });
+        if (!category?.id) return;
+        // Select the newly created category on the product form
         props.viewModel.updateProductFormFields({
           category: category.name,
           category_id: category.id
@@ -67,7 +71,6 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         props.setLocalState('new-category-name', '');
         props.setLocalState('new-category-description', '');
       } catch (error) {
-        // Error is handled by viewModel and displayed via error state
         console.error('Error creating category:', error);
       }
     };
@@ -79,6 +82,14 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     };
 
     const handleSaveNewUnit = async () => {
+      const nameInput = document.getElementById('new-unit-name');
+      const abbrInput = document.getElementById('new-unit-abbreviation');
+      const descInput = document.getElementById('new-unit-description');
+      const name = String(nameInput?.value ?? props.getLocalState('new-unit-name') ?? '').trim();
+      const abbreviation = String(abbrInput?.value ?? props.getLocalState('new-unit-abbreviation') ?? '').trim();
+      const description = String(descInput?.value ?? props.getLocalState('new-unit-description') ?? '').trim();
+      if (!name || !abbreviation) return;
+
       const hasPermission = await permissionChecker.checkPermission('CanAddProduct', {
         actionName: 'create units'
       });
@@ -87,11 +98,9 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       }
 
       try {
-        const unit = await props.viewModel.createUnit({
-          name: newUnitName,
-          abbreviation: newUnitAbbreviation
-        });
-        // Add to unit options and select it
+        const unit = await props.viewModel.createUnit({ name, abbreviation, description });
+        if (!unit?.id) return;
+        // Select the newly created unit on the product form
         props.viewModel.updateProductFormFields({
           unit: unit.name,
           unit_id: unit.id
@@ -101,7 +110,6 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         props.setLocalState('new-unit-abbreviation', '');
         props.setLocalState('new-unit-description', '');
       } catch (error) {
-        // Error is handled by viewModel and displayed via error state
         console.error('Error creating unit:', error);
       }
     };
@@ -122,10 +130,28 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       }
 
       try {
-        const form = props.viewModel.getState('product-form') || {};
-        await props.viewModel.createProduct(form);
+        const raw = props.viewModel.getState('product-form') || {};
+        const form = {
+          ...raw,
+          name: (raw.name || '').trim(),
+          description: (raw.description || '').trim(),
+          expiry_threshold: (() => {
+            const n = parseInt(raw.expiry_threshold, 10);
+            return Number.isFinite(n) && n > 0 ? n : 30;
+          })()
+        };
+        const created = await props.viewModel.createProduct(form);
         props.viewModel.resetProductForm();
         handleClose();
+        if (typeof onProductCreated === 'function' && created) {
+          await onProductCreated({
+            ...created,
+            category: created.category || form.category || '',
+            unit: created.unit || form.unit || '',
+            product_code: created.product_code || created.productCode || '',
+            productCode: created.product_code || created.productCode || ''
+          });
+        }
       } catch (error) {
         // Error is handled by viewModel and displayed via error state
         console.error('Error creating product:', error);
@@ -150,6 +176,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
       ]),
 
       CardBody({ class: 'flex-1 overflow-y-auto p-6' }, [
+        errorMessage && Row({ class: 'mb-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700' }, errorMessage),
         Row({ class: 'flex flex-col gap-6' }, [
           // Product Name
           Row({ class: 'flex flex-col gap-2' }, [
@@ -210,7 +237,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                     tagType: 'option', 
                     attributes: { 
                       value: String(c.id), 
-                      selected: productForm.category_id === c.id 
+                      selected: productForm.category_id != null && String(productForm.category_id) === String(c.id) 
                     } 
                   }, c.name)
                 )
@@ -266,7 +293,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
                     tagType: 'option', 
                     attributes: { 
                       value: String(u.id), 
-                      selected: productForm.unit_id === u.id 
+                      selected: productForm.unit_id != null && String(productForm.unit_id) === String(u.id) 
                     } 
                   }, u.name)
                 )
@@ -293,15 +320,22 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         ]),
         // Expiry Threshold Field
         Row({ class: 'flex flex-col gap-2' }, [
-          Label({ for: 'expiry-threshold' }, 'Expiry Threshold (Days)'),
+          Label({ name: 'expiry-threshold', text: 'Expiry Threshold (Days)', class: 'text-sm font-medium text-gray-700' }),
           Input({
             type: 'number',
-            min: 1,
-            value: productForm.expiry_threshold || 30,
-            onInput: (e) =>
-              props.viewModel.updateProductForm('expiry_threshold', parseInt(e.target.value, 10) || 30),
-            onChange: (e) =>
-              props.viewModel.updateProductForm('expiry_threshold', parseInt(e.target.value, 10) || 30),
+            value: productForm.expiry_threshold ?? 30,
+            onInput: (e) => {
+              const raw = e.target.value;
+              // Allow clearing / partial edit — do not snap back to 30 on every keystroke
+              if (raw === '') {
+                props.viewModel.updateProductForm('expiry_threshold', '');
+                return;
+              }
+              const n = parseInt(raw, 10);
+              if (!Number.isNaN(n)) {
+                props.viewModel.updateProductForm('expiry_threshold', n);
+              }
+            },
             name: 'expiry-threshold',
             placeholder: 'Enter number of days (default: 30)',
             class: 'w-full',
@@ -325,8 +359,9 @@ const ModalContent = (viewModel, delegator, handleClose) => {
   
   return StatefulRow({ 
     class: 'fixed inset-0 bg-gray-800/0 flex items-center justify-center', 
-    viewModel, 
-    stateKeys: ['loading', 'product-form', 'category-list', 'unit-list'] 
+    viewModel,
+    delegator,
+    stateKeys: ['loading', 'product-form', 'category-list', 'unit-list', 'error'] 
   }, render) 
 };
 
@@ -339,7 +374,7 @@ function NewCategoryForm({ name, description, onNameChange, onDescriptionChange,
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Category Name:'),
         Input({
           value: name,
-          onChange: onNameChange,
+          onInput: onNameChange,
           name: 'new-category-name',
           placeholder: 'Enter category name',
           class: 'w-full',
@@ -350,7 +385,7 @@ function NewCategoryForm({ name, description, onNameChange, onDescriptionChange,
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Description:'),
         Input({
           value: description,
-          onChange: onDescriptionChange,
+          onInput: onDescriptionChange,
           name: 'new-category-description',
           placeholder: 'Enter category description',
           class: 'w-full',
@@ -368,7 +403,6 @@ function NewCategoryForm({ name, description, onNameChange, onDescriptionChange,
           variant: 'primary', 
           class: 'text-xs px-3 py-1',
           onClick: onSave,
-          disabled: !name || name.trim() === '',
           delegator
         }, 'Save Category')
       ])
@@ -385,7 +419,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Unit Name:'),
         Input({
           value: name,
-          onChange: onNameChange,
+          onInput: onNameChange,
           name: 'new-unit-name',
           placeholder: 'Enter unit name (e.g., Bottle)',
           class: 'w-full',
@@ -396,7 +430,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Abbreviation:'),
         Input({
           value: abbreviation,
-          onChange: onAbbreviationChange,
+          onInput: onAbbreviationChange,
           name: 'new-unit-abbreviation',
           placeholder: 'Enter abbreviation (e.g., BTL)',
           class: 'w-full',
@@ -407,7 +441,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Description:'),
         Input({
           value: description,
-          onChange: onDescriptionChange,
+          onInput: onDescriptionChange,
           name: 'new-unit-description',
           placeholder: 'Enter unit description',
           class: 'w-full',
@@ -425,7 +459,6 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
           variant: 'primary', 
           class: 'text-xs px-3 py-1',
           onClick: onSave,
-          disabled: !name || name.trim() === '' || !abbreviation || abbreviation.trim() === '',
           delegator
         }, 'Save Unit')
       ])

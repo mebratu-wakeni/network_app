@@ -201,7 +201,41 @@ export function formItem(label, input) {
 }
 
 function openAddProductModal(props) {
-  // Clear the form before opening the modal
-  const viewModel = new InventoryVM();
-  Modal({}, (delegator, closeHandler) => ModalContent(viewModel, delegator, closeHandler))
+  openAddProductModalAsync(props).catch((err) => {
+    console.error('[Purchase] openAddProductModal failed:', err);
+  });
+}
+
+async function openAddProductModalAsync(props) {
+  const inventoryVm = new InventoryVM();
+  inventoryVm.resetProductForm();
+  await inventoryVm.loadCategories();
+  await inventoryVm.loadUnits();
+
+  Modal({}, (delegator, closeHandler) =>
+    ModalContent(inventoryVm, delegator, closeHandler, async (product) => {
+      if (!product?.id) return;
+
+      const normalized = {
+        id: product.id,
+        name: product.name,
+        product_code: product.product_code || product.productCode || '',
+        productCode: product.product_code || product.productCode || '',
+        category: product.category || '',
+        unit: product.unit || '',
+        category_id: product.category_id ?? null,
+        unit_id: product.unit_id ?? null
+      };
+
+      const list = props.viewModel.getState('product-list') || [];
+      const nextList = [
+        normalized,
+        ...list.filter((p) => String(p.id) !== String(normalized.id))
+      ];
+      props.viewModel.updateState('product-list', nextList);
+      props.viewModel.updateProductForm('product', normalized);
+      props.setLocalState('productSearchQuery', normalized.name || '');
+      props.setLocalState('showProductDropdown', false);
+    })
+  );
 }

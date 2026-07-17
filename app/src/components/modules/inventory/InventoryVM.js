@@ -556,52 +556,42 @@ export class InventoryVM extends ViewModel {
   }
 
   async loadCategories() {
-    if (this.getState('loading')) return;
-    
-    this.updateState('loading', true);
     this.updateState('error', null);
 
     try {
       const result = await window.ipcRenderer.invoke('inventory:get-all-categories');
 
       if (result.success) {
-        this.updateState('category-list', result.categories || []);
-        return result.categories || [];
+        const categories = result.categories || [];
+        this.updateState('category-list', categories);
+        return categories;
       }
 
       throw new Error(result.error || 'Failed to load categories');
     } catch (error) {
       console.error('Error loading categories:', error);
       this.updateState('error', { message: error.message || 'Failed to load categories' });
-      // Don't throw, just log - we can continue with empty list
       return [];
-    } finally {
-      this.updateState('loading', false);
     }
   }
 
   async loadUnits() {
-    if (this.getState('loading')) return;
-    
-    this.updateState('loading', true);
     this.updateState('error', null);
 
     try {
       const result = await window.ipcRenderer.invoke('inventory:get-all-units');
 
       if (result.success) {
-        this.updateState('unit-list', result.units || []);
-        return result.units || [];
+        const units = result.units || [];
+        this.updateState('unit-list', units);
+        return units;
       }
 
       throw new Error(result.error || 'Failed to load units');
     } catch (error) {
       console.error('Error loading units:', error);
       this.updateState('error', { message: error.message || 'Failed to load units' });
-      // Don't throw, just log - we can continue with empty list
       return [];
-    } finally {
-      this.updateState('loading', false);
     }
   }
 
@@ -614,8 +604,6 @@ export class InventoryVM extends ViewModel {
   }
 
   async createCategory(categoryData) {
-    if (this.getState('loading')) return;
-    
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -624,10 +612,14 @@ export class InventoryVM extends ViewModel {
       const result = await window.ipcRenderer.invoke('inventory:create-category', categoryData);
 
       if (result.success) {
+        const category = result.category;
         this.updateState('success', { message: 'Category created successfully' });
-        // Reload categories list to include the new one
-        await this.loadCategories();
-        return result.category;
+        // Append locally so the select updates immediately (avoid a full reload race).
+        const list = this.getState('category-list') || [];
+        if (category && !list.some((c) => String(c.id) === String(category.id))) {
+          this.updateState('category-list', [...list, { id: category.id, name: category.name }]);
+        }
+        return category;
       }
 
       throw new Error(result.error || 'Failed to create category');
@@ -641,8 +633,6 @@ export class InventoryVM extends ViewModel {
   }
 
   async createUnit(unitData) {
-    if (this.getState('loading')) return;
-    
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -651,10 +641,16 @@ export class InventoryVM extends ViewModel {
       const result = await window.ipcRenderer.invoke('inventory:create-unit', unitData);
 
       if (result.success) {
+        const unit = result.unit;
         this.updateState('success', { message: 'Unit created successfully' });
-        // Reload units list to include the new one
-        await this.loadUnits();
-        return result.unit;
+        const list = this.getState('unit-list') || [];
+        if (unit && !list.some((u) => String(u.id) === String(unit.id))) {
+          this.updateState('unit-list', [
+            ...list,
+            { id: unit.id, name: unit.name, abbreviation: unit.abbreviation }
+          ]);
+        }
+        return unit;
       }
 
       throw new Error(result.error || 'Failed to create unit');
@@ -749,10 +745,13 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Product created successfully' });
-        // Set loading to false so loadProducts() can run
+        // Best-effort list refresh; don't fail create if reload has issues
         this.updateState('loading', false);
-        // Reload products list
-        await this.loadProducts();
+        try {
+          await this.loadProducts();
+        } catch (reloadError) {
+          console.warn('[InventoryVM] createProduct: product list reload failed:', reloadError);
+        }
         return result.product;
       }
 
@@ -1424,11 +1423,6 @@ export class InventoryVM extends ViewModel {
       remark: '',
       expiry_threshold: 30
     });
-    // Trigger re-render
-    this.updateState('loading', true);
-    setTimeout(() => {
-    this.updateState('loading', false);
-    }, 0);
   }
 
   // ==================== Drawer Management Methods ====================

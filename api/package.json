@@ -18,6 +18,7 @@
     "db:diagnose-ledger": "node scripts/diagnose-ledger.js",
     "db:clear-financial": "node scripts/clear-financial-data.js",
     "db:reset-operational-full": "node scripts/clear-financial-data.js --yes --scope=full",
+    "db:audit-fy": "node scripts/audit-fiscal-year-coverage.js",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

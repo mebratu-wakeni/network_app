@@ -1,8 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PurchaseService } from '../../../../src/modules/purchase/purchase.service.js'
 
+function makeOpenFiscalYearKnex(fy = {
+  fiscal_year: 2026,
+  status: 'open',
+  start_date: '2026-01-01',
+  end_date: '2026-12-31'
+}) {
+  return Object.assign(
+    vi.fn(() => ({
+      where: vi.fn().mockReturnThis(),
+      first: vi.fn().mockResolvedValue(fy)
+    })),
+    { fn: { now: vi.fn() } }
+  )
+}
+
 function makeRepository(overrides = {}) {
   return {
+    knex: makeOpenFiscalYearKnex(),
     findProducts: vi.fn().mockResolvedValue([]),
     findSuppliers: vi.fn().mockResolvedValue([]),
     getWithholdPercentageSetting: vi.fn().mockResolvedValue(2),
@@ -106,5 +122,32 @@ describe('PurchaseService', () => {
         payment_mode: 'cash'
       })
     ).rejects.toMatchObject({ message: 'At least one item is required', status: 400 })
+  })
+
+  it('rejects create when fiscal year covering order_date is closed', async () => {
+    const closedFy = {
+      fiscal_year: 2026,
+      status: 'closed',
+      start_date: '2026-01-01',
+      end_date: '2026-12-31'
+    }
+    const service = new PurchaseService(
+      makeRepository({ knex: makeOpenFiscalYearKnex(closedFy) })
+    )
+
+    await expect(
+      service.createOrder(
+        {
+          supplier_id: 10,
+          order_date: '2026-02-01',
+          items: [{ product_id: 1, quantity: 1, unit_price: 50 }],
+          payment_mode: 'cash'
+        },
+        { id: 1 }
+      )
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('is closed')
+    })
   })
 })

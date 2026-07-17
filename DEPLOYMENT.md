@@ -79,3 +79,10 @@ Configure the app to call the deployed API base URL (e.g., via env or config fil
   - The image runs migrations automatically. To re-run, use the manual migrate command above.
 - Permission/secret handling:
   - Replace inline passwords with secrets management (Docker secrets, env managers, KMS).
+- Fiscal year coverage gaps (worst case):
+  - New writes are blocked unless an **open** FY covers the transaction date.
+  - Historical rows are not rewritten. If any dated row falls outside every `fiscal_years` range, run a read-only audit from `api/`:
+    ```
+    npm run db:audit-fy
+    ```
+  - Fix by inserting/extending `fiscal_years` rows (closed years are fine for history). Only new writes need an open year.
