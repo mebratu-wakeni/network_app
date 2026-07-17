@@ -24,9 +24,15 @@
     "dist-electron"
   ],
   // No extraResources — the cloud build ships without the bundled API server.
+  // macos-latest is Apple Silicon; universal covers Intel + Apple Silicon.
   "mac": {
     "target": [
-      "dmg"
+      {
+        "target": "dmg",
+        "arch": [
+          "universal"
+        ]
+      }
     ],
     "artifactName": "${productName}-Cloud-Mac-${version}-Installer.${ext}"
   },
@@ -35,11 +41,12 @@
       {
         "target": "nsis",
         "arch": [
-          "x64"
+          "x64",
+          "ia32"
         ]
       }
     ],
-    "artifactName": "${productName}-Cloud-Windows-${version}-Setup.${ext}"
+    "artifactName": "${productName}-Cloud-Windows-${version}-${arch}-Setup.${ext}"
   },
   "nsis": {
     "oneClick": false,
