@@ -159,7 +159,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               value: productForm.name || '', 
               placeholder: 'Enter product name', 
               class: 'w-full', 
-              onChange: (e) => props.viewModel.updateProductForm('name', e.target.value.trim()), 
+              onInput: (e) => props.viewModel.updateProductForm('name', e.target.value),
               delegator
             })
           ]),
@@ -172,7 +172,7 @@ const ModalContent = (viewModel, delegator, handleClose) => {
               value: productForm.description || '', 
               placeholder: 'Enter product description', 
               class: 'w-full', 
-              onChange: (e) => props.viewModel.updateProductForm('description', e.target.value.trim()), 
+              onInput: (e) => props.viewModel.updateProductForm('description', e.target.value),
               delegator
             })
           ]),

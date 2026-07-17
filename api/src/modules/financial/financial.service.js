@@ -110,6 +110,18 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+
+    const existing = await this.repository.getDepositById(id)
+    if (!existing) {
+      const err = new Error('Deposit not found')
+      err.status = 404
+      throw err
+    }
+
+    const transactionDate = data.deposit_date ?? existing.deposit_date
+    const fy = await assertFiscalYearOpen(this.repository.knex, transactionDate)
+    data.fiscal_year = fy.fiscal_year
+
     const row = await this.repository.updateDeposit(Number(id), data, user?.id)
     if (!row) {
       const err = new Error('Deposit not found')
@@ -120,6 +132,16 @@ export class FinancialService {
   }
 
   async reverseDeposit(id, user) {
+    const existing = await this.repository.getDepositById(id)
+    if (!existing) {
+      const err = new Error('Deposit not found')
+      err.status = 404
+      throw err
+    }
+
+    const reversalDate = new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, reversalDate)
+
     const row = await this.repository.reverseDeposit(Number(id), user?.id)
     if (!row) {
       const err = new Error('Deposit not found')
@@ -143,6 +165,8 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+    const fy = await assertFiscalYearOpen(this.repository.knex, data.lent_date)
+    data.fiscal_year = fy.fiscal_year
     return this.repository.createCashLoanReceivable(data, user?.id)
   }
 
@@ -158,6 +182,7 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+    await assertFiscalYearOpen(this.repository.knex, returnDate)
     return this.repository.recordCashLoanReceivableReturn(loanId, amount, returnDate, user?.id)
   }
 
@@ -175,6 +200,8 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+    const fy = await assertFiscalYearOpen(this.repository.knex, data.borrowed_date)
+    data.fiscal_year = fy.fiscal_year
     return this.repository.createCashLoanPayable(data, user?.id)
   }
 
@@ -190,6 +217,7 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+    await assertFiscalYearOpen(this.repository.knex, repayDate)
     return this.repository.recordCashLoanPayableRepayment(loanId, amount, repayDate, user?.id)
   }
 
@@ -212,8 +240,10 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+    const fy = await assertFiscalYearOpen(this.repository.knex, settlement_date)
     return this.repository.createWithholdReceivableSettlement({
       settlement_date,
+      fiscal_year: fy.fiscal_year,
       sales_order_ids: Array.isArray(sales_order_ids) ? sales_order_ids.map((id) => Number(id)) : [],
       reference_no: reference_no || null,
       notes: notes || null
@@ -231,8 +261,10 @@ export class FinancialService {
       err.status = 400
       throw err
     }
+    const fy = await assertFiscalYearOpen(this.repository.knex, settlement_date)
     return this.repository.createWithholdPayableSettlement({
       settlement_date,
+      fiscal_year: fy.fiscal_year,
       purchase_order_ids: Array.isArray(purchase_order_ids) ? purchase_order_ids.map((id) => Number(id)) : [],
       reference_no: reference_no || null,
       notes: notes || null

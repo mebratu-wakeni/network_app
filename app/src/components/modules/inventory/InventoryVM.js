@@ -1402,11 +1402,6 @@ export class InventoryVM extends ViewModel {
       ...form,
       [key]: value
     });
-    // Trigger re-render by updating loading state
-    this.updateState('loading', true);
-    setTimeout(() => {
-      this.updateState('loading', false);
-    }, 0);
   }
 
   /** Apply several product-form fields in one state update (avoids losing updates from back-to-back single-field writes). */
@@ -1416,10 +1411,6 @@ export class InventoryVM extends ViewModel {
       ...form,
       ...fields
     });
-    this.updateState('loading', true);
-    setTimeout(() => {
-      this.updateState('loading', false);
-    }, 0);
   }
 
   resetProductForm() {

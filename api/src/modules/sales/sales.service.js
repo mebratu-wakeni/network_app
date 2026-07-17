@@ -231,6 +231,9 @@ export class SalesService {
       notes
     } = payload
 
+    const paymentDate = payment_date || new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, paymentDate)
+
     return this.repository.recordBulkCustomerPayment({
       customerId: Number(customerId),
       paymentAmount: Number(paymentAmount),
@@ -251,6 +254,7 @@ export class SalesService {
     const amount = Number(payload.payment_amount)
     const paymentMode = (payload.payment_mode || payload.payment_type || 'cash').toLowerCase()
     const paymentDate = payload.payment_date || new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, paymentDate)
     const chequeDetails = paymentMode === 'cheque' ? payload.cheque_details : null
     const paymentData = {
       amount,
@@ -282,6 +286,8 @@ export class SalesService {
 
   /** Reverse sales order: restore inventory, set is_reversed. */
   async reverseOrder(orderId, user) {
+    const reversalDate = new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, reversalDate)
     return this.repository.reverseOrder(Number(orderId), user?.id ?? null)
   }
 

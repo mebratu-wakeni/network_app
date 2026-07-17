@@ -2,6 +2,12 @@
  * Service: Business logic layer for inventories/stock
  * Orchestrates use cases and coordinates between repository and business rules
  */
+import { assertFiscalYearOpen } from '../../services/fiscal-year.guard.js'
+
+function todayIso () {
+  return new Date().toISOString().split('T')[0]
+}
+
 export class InventoriesService {
   constructor(repository) {
     this.repository = repository
@@ -17,6 +23,9 @@ export class InventoriesService {
     if (!Array.isArray(stockItems) || stockItems.length === 0) {
       throw new Error('Stock items array is required and must not be empty')
     }
+
+    const transactionDate = options.purchase_date || options.purchaseDate || todayIso()
+    await assertFiscalYearOpen(this.repository.knex, transactionDate)
 
     // Stock items are already transformed to backend format in the controller
     const result = await this.repository.bulkImport(stockItems, options)
@@ -194,6 +203,12 @@ export class InventoriesService {
       throw error
     }
 
+    const transactionDate =
+      adjustmentData.adjustmentDate ||
+      adjustmentData.adjustment_date ||
+      todayIso()
+    await assertFiscalYearOpen(this.repository.knex, transactionDate)
+
     const updated = await this.repository.adjustStockQuantity(inventoryId, adjustmentData, userId)
     
     // Transform to frontend format
@@ -221,6 +236,8 @@ export class InventoriesService {
    * @returns {Object} Created borrow_from_inventories record with inventory info
    */
   async createBorrowFrom(borrowData, userId = null) {
+    await assertFiscalYearOpen(this.repository.knex, todayIso())
+
     const borrowFromRecord = await this.repository.createBorrowFromInventory(borrowData, userId)
     
     // Transform to frontend format
@@ -257,6 +274,12 @@ export class InventoriesService {
    * @returns {Object} Created return record with inventory info
    */
   async processBorrowToReturn(returnData, userId = null) {
+    const transactionDate =
+      returnData.returnedDate ||
+      returnData.returned_date ||
+      todayIso()
+    await assertFiscalYearOpen(this.repository.knex, transactionDate)
+
     return await this.repository.processBorrowToReturn(returnData, userId)
   }
 
@@ -276,6 +299,12 @@ export class InventoriesService {
    * @returns {Object} Result of the operation
    */
   async processBorrowFromReturn(returnData, userId = null) {
+    const transactionDate =
+      returnData.returnedOn ||
+      returnData.returned_on ||
+      todayIso()
+    await assertFiscalYearOpen(this.repository.knex, transactionDate)
+
     return await this.repository.processBorrowFromReturn(returnData, userId)
   }
 }

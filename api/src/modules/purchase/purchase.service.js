@@ -367,10 +367,12 @@ export class PurchaseService {
    */
   async payOrder(id, body, user) {
     const userId = user?.id || null
+    const paymentDate = body.payment_date || new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, paymentDate)
 
     const paymentData = {
       amount: body.payment_amount,
-      payment_date: body.payment_date,
+      payment_date: paymentDate,
       payment_method: body.payment_mode,
       note: body.notes || null,
       cheque_no: body.cheque_details?.cheque_number || null,
@@ -393,6 +395,8 @@ export class PurchaseService {
    */
   async reverseOrder(id, body, user) {
     const userId = user?.id || null
+    const reversalDate = new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, reversalDate)
 
     return await this.repository.reverseOrder(id, {
       reason: body.reason,
@@ -407,7 +411,10 @@ export class PurchaseService {
    */
   async bulkImport(body, user) {
     const userId = user?.id || null
-
+    const purchaseDate = body.purchase_date || body.purchaseDate
+    if (purchaseDate) {
+      await assertFiscalYearOpen(this.repository.knex, purchaseDate)
+    }
     return await this.repository.bulkImportPurchases(body, userId)
   }
 
