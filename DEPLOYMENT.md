@@ -86,3 +86,11 @@ Configure the app to call the deployed API base URL (e.g., via env or config fil
     npm run db:audit-fy
     ```
   - Fix by inserting/extending `fiscal_years` rows (closed years are fine for history). Only new writes need an open year.
+
+## Cloud-backend cPanel + SQLite (critical)
+
+Before packing or extracting `api.tar.gz` on a live host, read:
+
+**[`docs/CLOUD_BACKEND_DEPLOY_SAFETY.md`](docs/CLOUD_BACKEND_DEPLOY_SAFETY.md)**
+
+Summary: live DB is sibling `network-app/db/pharmasuit_lan.db` (`DB_FILE`); tarball must nest under `api/` and never ship `.db` files; extract at `network-app/` so code cannot overwrite live data.

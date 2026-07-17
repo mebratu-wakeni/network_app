@@ -1,0 +1,4 @@
+Product Name,Description,Category,Unit
+,Missing name should fail or be skipped,Analgesics,Strip
+   ,Whitespace-only name,Supplies,Box
+Valid After Bad Rows,This row should still import if partial success is supported,Supplies,Kit

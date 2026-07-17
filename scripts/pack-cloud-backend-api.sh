@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Pack flat api.tar.gz for cloud-backend cPanel redeploy.
+# Pack api.tar.gz for cloud-backend cPanel redeploy.
 #
-# Layout (matches historical live archive):
-#   archive root = package.json, src/, db/, startup.cjs, …
-#   Extract INTO the Node application root (do not nest api/api/).
+# Layout (SAFE for hosts like perlosgo):
+#   archive root = api/package.json, api/src/, api/db/migrations, …
+#
+# Extract at the PARENT of the Node app (the folder that contains both api/ and db/):
+#   /home/.../network-app/   ← extract HERE
+#     api/                   ← Node app (package.json) — updated by this archive
+#     db/pharmasuit_lan.db   ← LIVE SQLite (DB_FILE) — NEVER in this archive
+#
+# Why nested under api/?
+#   A flat archive had top-level ./db/ (migrations). Extracting one level too high
+#   collided with the live sibling db/ folder and could overwrite pharmasuit_lan.db.
 #
 # Excludes:
 #   - macOS AppleDouble / resource forks: ._*
-#   - .DS_Store, *.md, node_modules, .env*, tests, coverage, sqlite data
+#   - .DS_Store, *.md, node_modules, .env*, tests, coverage, sqlite data (*.db)
 #
 # Usage:
 #   ./scripts/pack-cloud-backend-api.sh
@@ -30,6 +38,7 @@ TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 PKG_VERSION="$(node -p "require('./api/package.json').version" 2>/dev/null || echo 1.0.0)"
 OUT_DIR="$ROOT/dist-release"
 STAGE="$OUT_DIR/stage-api"
+STAGE_API="$STAGE/api"
 
 RSYNC_EXCLUDES=(
   --exclude node_modules
@@ -44,6 +53,10 @@ RSYNC_EXCLUDES=(
   --exclude tests
   --exclude '*.sqlite'
   --exclude '*.sqlite-*'
+  --exclude '*.db'
+  --exclude '*.db-wal'
+  --exclude '*.db-shm'
+  --exclude 'pharmasuit_lan.db*'
   --exclude '.DS_Store'
   --exclude '._*'
   --exclude '**/._*'
@@ -56,20 +69,22 @@ RSYNC_EXCLUDES=(
 scrub_stage() {
   local dir="$1"
   find "$dir" \( -name '._*' -o -name '.DS_Store' -o -name '*.md' \) -type f -delete 2>/dev/null || true
+  # Never ship local SQLite data into cloud redeploy archives
+  find "$dir" \( -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' -o -name '*.sqlite' -o -name '*.sqlite-*' \) -type f -delete 2>/dev/null || true
   find "$dir" -type d -name '__MACOSX' -exec rm -rf {} + 2>/dev/null || true
 }
 
-echo "==> Pack flat api.tar.gz for cloud-backend"
+echo "==> Pack nested api.tar.gz for cloud-backend (api/… prefix)"
 echo "==> Branch: $BRANCH  commit: $COMMIT"
-echo "==> Excludes: ._*, *.md, node_modules, .env, tests, coverage"
+echo "==> Excludes: ._*, *.md, node_modules, .env, tests, coverage, *.db"
 
 rm -rf "$STAGE"
-mkdir -p "$STAGE" "$OUT_DIR"
+mkdir -p "$STAGE_API" "$OUT_DIR"
 
-rsync -a "${RSYNC_EXCLUDES[@]}" "$ROOT/api/" "$STAGE/"
+rsync -a "${RSYNC_EXCLUDES[@]}" "$ROOT/api/" "$STAGE_API/"
 
 if [ -f "$ROOT/api/.env.example" ]; then
-  cp "$ROOT/api/.env.example" "$STAGE/.env.example"
+  cp "$ROOT/api/.env.example" "$STAGE_API/.env.example"
 fi
 
 # Embed admin SPA when present (served at /admin)
@@ -80,34 +95,35 @@ if [ -f "$ROOT/masatech-admin/package.json" ]; then
     if [ -f package-lock.json ]; then npm ci; else npm install; fi
     npm run build
   )
-  mkdir -p "$STAGE/admin-dist"
+  mkdir -p "$STAGE_API/admin-dist"
   rsync -a \
     --exclude '.DS_Store' \
     --exclude '._*' \
     --exclude '**/._*' \
     --exclude '*.md' \
-    "$ROOT/masatech-admin/dist/" "$STAGE/admin-dist/"
-  test -f "$STAGE/admin-dist/index.html"
+    "$ROOT/masatech-admin/dist/" "$STAGE_API/admin-dist/"
+  test -f "$STAGE_API/admin-dist/index.html"
 else
   echo "==> Skipping masatech-admin (not present on this branch)"
 fi
 
-cat > "$STAGE/DEPLOY_BUILD.json" <<EOF
+cat > "$STAGE_API/DEPLOY_BUILD.json" <<EOF
 {
   "product": "pharmasuit-cloud-backend",
   "version": "$PKG_VERSION",
   "gitBranch": "$BRANCH",
   "gitCommit": "$COMMIT",
   "builtAt": "$TIMESTAMP",
-  "layout": "flat-api-root",
-  "excludes": ["._*", "*.md", "node_modules", ".env", "tests"]
+  "layout": "nested-api-prefix",
+  "extractAt": "parent-of-api (folder that contains api/ and live db/)",
+  "excludes": ["._*", "*.md", "node_modules", ".env", "tests", "*.db"]
 }
 EOF
 
 scrub_stage "$STAGE"
 
-test -f "$STAGE/package.json"
-test -f "$STAGE/startup.cjs" || test -f "$STAGE/src/server.js" || true
+test -f "$STAGE_API/package.json"
+test -f "$STAGE_API/startup.cjs" || test -f "$STAGE_API/src/server.js" || true
 
 FLAT="$OUT_DIR/api.tar.gz"
 tar -czf "$FLAT" \
@@ -120,10 +136,14 @@ tar -czf "$FLAT" \
 cp -f "$FLAT" "$ROOT/api.tar.gz"
 
 echo "==> Archive preview:"
-tar -tzf "$FLAT" | head -20
+tar -tzf "$FLAT" | head -25
 
 BAD_MD="$(tar -tzf "$FLAT" | grep -E '\.md$' || true)"
 BAD_DOT="$(tar -tzf "$FLAT" | grep -E '(^|/)\._' || true)"
+BAD_TOP_DB="$(tar -tzf "$FLAT" | grep -E '^\./db(/|$)' || true)"
+BAD_SQLITE="$(tar -tzf "$FLAT" | grep -iE '\.(db|sqlite)(-wal|-shm)?$' || true)"
+MISSING_NEST="$(tar -tzf "$FLAT" | grep -E '^\./api/package\.json$' || true)"
+
 if [ -n "$BAD_MD" ]; then
   echo "ERROR: tarball still contains .md files:"
   echo "$BAD_MD"
@@ -134,18 +154,32 @@ if [ -n "$BAD_DOT" ]; then
   echo "$BAD_DOT"
   exit 1
 fi
-echo "==> OK: no .md and no ._* files in archive"
+if [ -z "$MISSING_NEST" ]; then
+  echo "ERROR: expected nested ./api/package.json (safe layout)"
+  exit 1
+fi
+if [ -n "$BAD_TOP_DB" ]; then
+  echo "ERROR: top-level ./db/ must not exist (collides with live DB_FILE folder):"
+  echo "$BAD_TOP_DB"
+  exit 1
+fi
+if [ -n "$BAD_SQLITE" ]; then
+  echo "ERROR: tarball must not contain SQLite data files:"
+  echo "$BAD_SQLITE"
+  exit 1
+fi
+echo "==> OK: nested under api/, no top-level db/, no .db/.md/._* files"
 
 # Confirm FY guards are present in the packed tree
-if ! grep -q 'assertFiscalYearOpen' "$STAGE/src/services/fiscal-year.guard.js" 2>/dev/null; then
+if ! grep -q 'assertFiscalYearOpen' "$STAGE_API/src/services/fiscal-year.guard.js" 2>/dev/null; then
   echo "ERROR: fiscal-year.guard.js missing from stage"
   exit 1
 fi
-if ! grep -q 'getAnyOpen' "$STAGE/src/modules/fiscal-years/fiscal-years.repository.js"; then
+if ! grep -q 'getAnyOpen' "$STAGE_API/src/modules/fiscal-years/fiscal-years.repository.js"; then
   echo "ERROR: getAnyOpen missing from fiscal-years.repository.js"
   exit 1
 fi
-GUARD_CALLS="$(grep -R "assertFiscalYearOpen" "$STAGE/src/modules" --include='*.js' | wc -l | tr -d ' ')"
+GUARD_CALLS="$(grep -R "assertFiscalYearOpen" "$STAGE_API/src/modules" --include='*.js' | wc -l | tr -d ' ')"
 echo "==> assertFiscalYearOpen call sites in modules: $GUARD_CALLS"
 if [ "${GUARD_CALLS:-0}" -lt 10 ]; then
   echo "ERROR: expected FY ledger guards wired into modules"
@@ -153,27 +187,39 @@ if [ "${GUARD_CALLS:-0}" -lt 10 ]; then
 fi
 
 cat > "$OUT_DIR/DEPLOY-cloud-backend.txt" <<EOF
-cloud-backend API redeploy (api.tar.gz)
-=======================================
+cloud-backend API redeploy (api.tar.gz) — SAFE nested layout
+============================================================
 Built:  $TIMESTAMP
 Branch: $BRANCH
 Commit: $COMMIT
 
 Upload:  dist-release/api.tar.gz  (also ./api.tar.gz)
 
-Extract INTO the Node application root (folder that already has package.json):
-  tar -xzf api.tar.gz
-Do NOT extract at parent (that creates api/api/).
+LIVE LAYOUT (example: perlosgo)
+-------------------------------
+  /home/.../network-app/
+    api/                      ← Node application root (package.json)
+    db/pharmasuit_lan.db      ← LIVE data (DB_FILE) — never in this tarball
 
-Then:
-  npm install --production
-  # migrate if your host allows (or use phpPgAdmin / migrate-lite)
-  mkdir -p tmp && touch tmp/restart.txt
+EXTRACT (important)
+-------------------
+Extract at network-app/ (parent of api/), NOT inside api/:
+
+  cd /home/.../network-app
+  tar -xzf api.tar.gz
+
+That updates only ./api/… and cannot overwrite ./db/pharmasuit_lan.db.
+
+Then (in Setup Node.js for the api app):
+  - optional: Run NPM Install if dependencies changed
+  - Restart
+  - Do NOT migrate unless you intentionally need schema changes
 
 This build includes:
-  - Only one open fiscal year (create/reopen blocked otherwise)
-  - FY open guard on sales / purchase / financial / inventory ledger txs
-  - No ._* / *.md in the archive
+  - Nested api/ prefix (safe vs sibling live db/)
+  - No SQLite *.db in the archive
+  - No ._* / *.md
+  - FY ledger guards
 EOF
 
 rm -rf "$STAGE"
