@@ -1,0 +1,191 @@
+# Builds PharmaSuit single-tenant ONLINE cloud client and publishes to
+# server.masatechplc.com/downloads/lan/
+#
+# Uses electron-builder.cloud.json5 (NO bundled API) so Mac universal works.
+# Does NOT touch downloads/cloud-multi/.
+#
+# Trigger: tag desktop-lan-v*  OR  manual "Run workflow"
+#
+# Secrets:
+#   DOWNLOADS_HOST / DOWNLOADS_USERNAME / DOWNLOADS_PASSWORD
+#   DOWNLOADS_LAN_SERVER_DIR — e.g. server.masatechplc.com/downloads/lan/
+
+name: Release LAN Desktop
+
+on:
+  push:
+    tags:
+      - 'desktop-lan-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version to build (must match app/package.json unless you bump first)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Read package version
+        id: pkg
+        working-directory: app
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Build cloud desktop client (${{ matrix.platform }})
+        working-directory: app
+        env:
+          VITE_CLOUD_MODE: 'true'
+          VITE_DEFAULT_SERVER_URL: https://server.masatechplc.com
+          VITE_CLOUD_UPDATES_URL: https://server.masatechplc.com/downloads/lan
+        run: npm run build:cloud -- --publish never
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lan-desktop-${{ matrix.platform }}
+          path: |
+            app/release-cloud/**
+          retention-days: 90
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.build.result != 'cancelled' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-lan-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-lan-v}"
+          else
+            V="$(node -p "require('./app/package.json').version")"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $V"
+
+      - name: Download Mac artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: lan-desktop-mac
+          path: staging/artifacts/mac
+
+      - name: Download Windows artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: lan-desktop-win
+          path: staging/artifacts/win
+
+      - name: Download Linux artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: lan-desktop-linux
+          path: staging/artifacts/linux
+
+      - name: Prepare publish bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d staging/artifacts ] || [ -z "$(find staging/artifacts -type f 2>/dev/null | head -1)" ]; then
+            echo "No installer artifacts downloaded — cannot publish."
+            exit 1
+          fi
+          node scripts/prepare-lan-release.mjs \
+            --version "${{ steps.ver.outputs.version }}" \
+            --artifacts-dir staging/artifacts \
+            --out-dir staging/publish \
+            --notes "PharmaSuit single-tenant cloud ${{ steps.ver.outputs.version }}" \
+            --base-url "https://server.masatechplc.com/downloads/lan"
+          echo "--- publish tree ---"
+          find staging/publish -type f | sort
+
+      - name: Check downloads secrets
+        shell: bash
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_LAN_SERVER_DIR: ${{ secrets.DOWNLOADS_LAN_SERVER_DIR }}
+        run: |
+          missing=0
+          [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
+          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
+          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
+          [ -z "$DOWNLOADS_LAN_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_LAN_SERVER_DIR (e.g. server.masatechplc.com/downloads/lan/)" && missing=1
+          case "$DOWNLOADS_LAN_SERVER_DIR" in
+            /home/*)
+              echo "ERROR: DOWNLOADS_LAN_SERVER_DIR looks absolute."
+              missing=1
+              ;;
+            *cloud-multi*)
+              echo "ERROR: DOWNLOADS_LAN_SERVER_DIR must not point at cloud-multi."
+              missing=1
+              ;;
+          esac
+          exit $missing
+
+      - name: Publish to downloads/lan (FTP/FTPS)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.DOWNLOADS_HOST }}
+          username: ${{ secrets.DOWNLOADS_USERNAME }}
+          password: ${{ secrets.DOWNLOADS_PASSWORD }}
+          protocol: ftps
+          local-dir: staging/publish/
+          server-dir: ${{ secrets.DOWNLOADS_LAN_SERVER_DIR }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "### Single-tenant cloud desktop published → downloads/lan" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** ${{ steps.ver.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Downloads:** https://server.masatechplc.com/downloads/lan/" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Cloud-multi (untouched):** https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"

@@ -24,22 +24,32 @@
     "dist-electron"
   ],
   // No extraResources — the cloud build ships without the bundled API server.
+  // macos-latest is Apple Silicon; default arch is arm64-only and fails on Intel
+  // Macs (e.g. 2018 MacBook Pro). Universal covers Intel + Apple Silicon.
   "mac": {
     "target": [
-      "dmg"
+      {
+        "target": "dmg",
+        "arch": [
+          "universal"
+        ]
+      }
     ],
     "artifactName": "${productName}-Cloud-Mac-${version}-Installer.${ext}"
   },
   "win": {
+    // Windows 10 64-bit (x64) and 32-bit (ia32). Not a single “universal” binary —
+    // two NSIS installers are published; the downloads page lists both.
     "target": [
       {
         "target": "nsis",
         "arch": [
-          "x64"
+          "x64",
+          "ia32"
         ]
       }
     ],
-    "artifactName": "${productName}-Cloud-Windows-${version}-Setup.${ext}"
+    "artifactName": "${productName}-Cloud-Windows-${version}-${arch}-Setup.${ext}"
   },
   "nsis": {
     "oneClick": false,
@@ -52,5 +62,9 @@
       "AppImage"
     ],
     "artifactName": "${productName}-Cloud-Linux-${version}.${ext}"
+  },
+  "publish": {
+    "provider": "generic",
+    "url": "https://server.masatechplc.com/downloads/cloud-multi"
   }
 }
