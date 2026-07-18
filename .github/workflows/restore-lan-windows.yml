@@ -1,0 +1,209 @@
+# Restore downloads/lan installers via FTPS (Dedicated Cloud / single-tenant).
+# Syncs only downloads/lan/<version>/, then puts latest.json + index.html.
+#
+# Secrets:
+#   DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD
+#   DOWNLOADS_LAN_SERVER_DIR — e.g. server.masatechplc.com/downloads/lan/
+
+name: Restore lan Windows installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      win_artifact_id:
+        description: "lan-desktop-win artifact id"
+        required: true
+        default: "8415306628"
+      mac_artifact_id:
+        description: "lan-desktop-mac artifact id"
+        required: true
+        default: "8415302915"
+      linux_artifact_id:
+        description: "lan-desktop-linux artifact id"
+        required: true
+        default: "8415268771"
+      version:
+        description: "Version folder"
+        required: true
+        default: "1.0.1"
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for downloads/lan/index.html)
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          WIN_ID: ${{ inputs.win_artifact_id }}
+          MAC_ID: ${{ inputs.mac_artifact_id }}
+          LINUX_ID: ${{ inputs.linux_artifact_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p staging/raw staging/out/"$VERSION"
+
+          download() {
+            local id="$1" name="$2"
+            echo "Downloading $name ($id)…"
+            curl -fL --retry 10 --retry-delay 2 --retry-all-errors \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${id}/zip" \
+              -o "staging/${name}.zip"
+            ls -lh "staging/${name}.zip"
+            unzip -q "staging/${name}.zip" -d "staging/raw/${name}"
+          }
+
+          download "$WIN_ID" win
+          download "$MAC_ID" mac
+          download "$LINUX_ID" linux
+
+          find staging/raw -type f \( \
+              -iname '*-x64-Setup.exe' -o -iname '*-ia32-Setup.exe' -o \
+              -iname '*.dmg' -o -iname '*.AppImage' -o -iname '*.appimage' -o \
+              -iname '*Setup.exe.blockmap' -o -iname '*.dmg.blockmap' \
+            \) ! -iname 'elevate.exe' -print0 | while IFS= read -r -d '' f; do
+              base=$(basename "$f")
+              case "$base" in
+                PharmaSuit.exe|elevate.exe) continue ;;
+              esac
+              cp -v "$f" "staging/out/${VERSION}/"
+            done
+
+          ls -lah "staging/out/${VERSION}"
+
+          WIN32=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*ia32*Setup.exe' ! -iname '*.blockmap' -printf '%f\n' | head -n1 || true)
+          WIN64=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*x64*Setup.exe' ! -iname '*.blockmap' -printf '%f\n' | head -n1 || true)
+          MAC=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*.dmg' ! -iname '*.blockmap' -printf '%f\n' | head -n1 || true)
+          LINUX=$(find "staging/out/${VERSION}" -maxdepth 1 -type f \( -iname '*.AppImage' -o -iname '*.appimage' \) -printf '%f\n' | head -n1 || true)
+
+          {
+            echo "WIN64=$WIN64"
+            echo "WIN32=$WIN32"
+            echo "MAC=$MAC"
+            echo "LINUX=$LINUX"
+          } >> "$GITHUB_ENV"
+
+          test -n "${WIN64:-}" && test -n "${WIN32:-}" && test -n "${MAC:-}" && test -n "${LINUX:-}"
+          test "$(stat -c%s "staging/out/${VERSION}/${WIN64}")" -gt 1000000
+          test "$(stat -c%s "staging/out/${VERSION}/${WIN32}")" -gt 1000000
+
+      - name: Write latest.json
+        env:
+          VERSION: ${{ inputs.version }}
+          BASE_URL: https://server.masatechplc.com/downloads/lan
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          version = os.environ["VERSION"]
+          base = os.environ["BASE_URL"].rstrip("/")
+          def art(name):
+              return {"file": name, "url": f"{base}/{version}/{name}"}
+          latest = {
+            "product": "PharmaSuit (single-tenant cloud)",
+            "channel": "lan",
+            "version": version,
+            "releaseNotes": f"PharmaSuit single-tenant cloud {version}",
+            "publishedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "artifacts": {
+              "mac": art(os.environ["MAC"]),
+              "win": art(os.environ["WIN64"]),
+              "win32": art(os.environ["WIN32"]),
+              "linux": art(os.environ["LINUX"]),
+            },
+          }
+          with open("staging/out/latest.json", "w", encoding="utf-8") as f:
+              json.dump(latest, f, indent=2)
+              f.write("\n")
+          print(open("staging/out/latest.json", encoding="utf-8").read())
+          PY
+
+      - name: Resolve downloads server dir
+        id: dir
+        env:
+          SERVER_DIR: ${{ secrets.DOWNLOADS_LAN_SERVER_DIR }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          DEST="${SERVER_DIR:-server.masatechplc.com/downloads/lan}"
+          DEST="${DEST#/}"
+          DEST="${DEST%/}"
+          case "$DEST" in
+            *cloud-multi*)
+              echo "DOWNLOADS_LAN_SERVER_DIR must not point at cloud-multi (got: $DEST)"
+              exit 1
+              ;;
+            *downloads/lan*) ;;
+            *) echo "DOWNLOADS_LAN_SERVER_DIR must point at downloads/lan (got: $DEST)"; exit 1 ;;
+          esac
+          echo "base=$DEST" >> "$GITHUB_OUTPUT"
+          echo "version_dir=${DEST}/${VERSION}/" >> "$GITHUB_OUTPUT"
+
+      - name: FTPS sync version folder
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.DOWNLOADS_HOST }}
+          username: ${{ secrets.DOWNLOADS_USERNAME }}
+          password: ${{ secrets.DOWNLOADS_PASSWORD }}
+          protocol: ftps
+          local-dir: staging/out/${{ inputs.version }}/
+          server-dir: ${{ steps.dir.outputs.version_dir }}
+          dangerous-clean-slate: false
+
+      - name: FTPS put latest.json and index.html
+        env:
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
+          BASE: ${{ steps.dir.outputs.base }}
+        run: |
+          set -euo pipefail
+          curl -sS --ftp-ssl --insecure --user "${USER}:${PASS}" \
+            -T staging/out/latest.json \
+            "ftp://${HOST}/${BASE}/latest.json"
+          echo "Uploaded latest.json"
+
+          if [ -f downloads/lan/index.html ]; then
+            curl -sS --ftp-ssl --insecure --user "${USER}:${PASS}" \
+              -T downloads/lan/index.html \
+              "ftp://${HOST}/${BASE}/index.html"
+            echo "Uploaded index.html"
+          else
+            echo "WARN: downloads/lan/index.html missing from repo checkout"
+          fi
+
+      - name: Verify public HTTP URLs
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          BASE="https://server.masatechplc.com/downloads/lan"
+          sleep 15
+          fail=0
+          for name in "$WIN64" "$WIN32" "$MAC" "$LINUX"; do
+            url="${BASE}/${VERSION}/${name}"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 60 -I "$url" || echo 000)
+            clen=$(curl -sS -L --max-time 60 -I "$url" | awk -F': ' 'tolower($1)=="content-length"{gsub(/\r/,"",$2); print $2; exit}')
+            echo "$name -> HTTP $code Content-Length=${clen:-?}"
+            if [ "$code" != "200" ] || [ -z "${clen:-}" ] || [ "${clen:-0}" -lt 1000000 ]; then
+              echo "FAIL: $url"
+              fail=1
+            fi
+          done
+          curl -sS -L --max-time 30 "${BASE}/latest.json" | head -c 800
+          echo
+          exit "$fail"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Restored lan (Dedicated Cloud) installers via FTPS" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version \`${{ inputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- win64 \`${{ env.WIN64 }}\` / win32 \`${{ env.WIN32 }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- mac \`${{ env.MAC }}\` / linux \`${{ env.LINUX }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- https://server.masatechplc.com/downloads/lan/" >> "$GITHUB_STEP_SUMMARY"
