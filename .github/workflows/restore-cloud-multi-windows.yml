@@ -1,20 +1,29 @@
-# Restore Windows installers to downloads/cloud-multi/ from a prior
-# cloud-desktop-win Actions artifact (exe files went missing on the host).
+# Restore cloud-multi installers via SSH/SCP (put only — never deletes remote siblings).
+# Prior FTPS sync wiped Mac/Linux while Windows .exe were missing/quarantined.
 #
-# Secrets: DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD,
-#          DOWNLOADS_SERVER_DIR (must be …/downloads/cloud-multi/)
+# Secrets:
+#   DOWNLOADS_HOST, DOWNLOADS_USERNAME
+#   SERVER_SSH_KEY (+ optional SERVER_SSH_KEY_PASSPHRASE, SERVER_SSH_PORT)
 
 name: Restore cloud-multi Windows installers
 
 on:
   workflow_dispatch:
     inputs:
-      artifact_id:
-        description: "GitHub Actions artifact id for cloud-desktop-win"
+      win_artifact_id:
+        description: "cloud-desktop-win artifact id"
         required: true
         default: "8360403538"
+      mac_artifact_id:
+        description: "cloud-desktop-mac artifact id"
+        required: true
+        default: "8360390397"
+      linux_artifact_id:
+        description: "cloud-desktop-linux artifact id"
+        required: true
+        default: "8360377791"
       version:
-        description: "Version folder under cloud-multi"
+        description: "Version folder"
         required: true
         default: "1.0.2"
 
@@ -22,41 +31,57 @@ jobs:
   restore:
     runs-on: ubuntu-latest
     steps:
-      - name: Download Windows artifact
+      - name: Download release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          ARTIFACT_ID: ${{ inputs.artifact_id }}
           VERSION: ${{ inputs.version }}
+          WIN_ID: ${{ inputs.win_artifact_id }}
+          MAC_ID: ${{ inputs.mac_artifact_id }}
+          LINUX_ID: ${{ inputs.linux_artifact_id }}
         run: |
           set -euo pipefail
-          mkdir -p staging/raw staging/ftp/"$VERSION"
-          echo "Downloading artifact ${ARTIFACT_ID}…"
-          curl -fL --retry 10 --retry-delay 2 --retry-all-errors \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
-            -o staging/win.zip
-          ls -lh staging/win.zip
-          unzip -q staging/win.zip -d staging/raw
-          find staging/raw -type f | sort
+          mkdir -p staging/raw staging/out/"$VERSION"
 
-          # Copy installers into version folder for FTPS
-          find staging/raw -type f \( -iname '*.exe' -o -iname '*windows*.blockmap' \) -print0 \
-            | while IFS= read -r -d '' f; do
-                cp -v "$f" "staging/ftp/${VERSION}/"
-              done
+          download() {
+            local id="$1" name="$2"
+            echo "Downloading $name ($id)…"
+            curl -fL --retry 10 --retry-delay 2 --retry-all-errors \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${id}/zip" \
+              -o "staging/${name}.zip"
+            ls -lh "staging/${name}.zip"
+            unzip -q "staging/${name}.zip" -d "staging/raw/${name}"
+          }
 
-          ls -lah "staging/ftp/${VERSION}"
-          WIN32=$(find "staging/ftp/${VERSION}" -maxdepth 1 -type f -iname '*ia32*Setup.exe' -printf '%f\n' | head -n1 || true)
-          WIN64=$(find "staging/ftp/${VERSION}" -maxdepth 1 -type f -iname '*x64*Setup.exe' -printf '%f\n' | head -n1 || true)
-          echo "WIN64=${WIN64:-}" >> "$GITHUB_ENV"
-          echo "WIN32=${WIN32:-}" >> "$GITHUB_ENV"
-          if [ -z "${WIN64:-}" ] && [ -z "${WIN32:-}" ]; then
-            echo "ERROR: no *Setup.exe files in artifact"
-            exit 1
-          fi
+          download "$WIN_ID" win
+          download "$MAC_ID" mac
+          download "$LINUX_ID" linux
 
-      - name: Write latest.json with correct Windows filenames
+          find staging/raw -type f \( \
+              -iname '*.exe' -o -iname '*.dmg' -o -iname '*.AppImage' -o -iname '*.appimage' -o \
+              -iname '*.blockmap' \
+            \) -print0 | while IFS= read -r -d '' f; do
+              cp -v "$f" "staging/out/${VERSION}/"
+            done
+
+          ls -lah "staging/out/${VERSION}"
+
+          WIN32=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*ia32*Setup.exe' -printf '%f\n' | head -n1 || true)
+          WIN64=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*x64*Setup.exe' -printf '%f\n' | head -n1 || true)
+          MAC=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*.dmg' ! -iname '*.blockmap' -printf '%f\n' | head -n1 || true)
+          LINUX=$(find "staging/out/${VERSION}" -maxdepth 1 -type f \( -iname '*.AppImage' -o -iname '*.appimage' \) -printf '%f\n' | head -n1 || true)
+
+          {
+            echo "WIN64=$WIN64"
+            echo "WIN32=$WIN32"
+            echo "MAC=$MAC"
+            echo "LINUX=$LINUX"
+          } >> "$GITHUB_ENV"
+
+          test -n "${WIN64:-}" && test -n "${WIN32:-}" && test -n "${MAC:-}" && test -n "${LINUX:-}"
+
+      - name: Write latest.json
         env:
           VERSION: ${{ inputs.version }}
           BASE_URL: https://server.masatechplc.com/downloads/cloud-multi
@@ -67,70 +92,83 @@ jobs:
           from datetime import datetime, timezone
           version = os.environ["VERSION"]
           base = os.environ["BASE_URL"].rstrip("/")
-          win64 = os.environ.get("WIN64", "").strip()
-          win32 = os.environ.get("WIN32", "").strip()
-          artifacts = {
-            "mac": {
-              "file": f"PharmaSuit-Cloud-Mac-{version}-Installer.dmg",
-              "url": f"{base}/{version}/PharmaSuit-Cloud-Mac-{version}-Installer.dmg",
-            },
-            "linux": {
-              "file": f"PharmaSuit-Cloud-Linux-{version}.AppImage",
-              "url": f"{base}/{version}/PharmaSuit-Cloud-Linux-{version}.AppImage",
-            },
-          }
-          if win64:
-              artifacts["win"] = {"file": win64, "url": f"{base}/{version}/{win64}"}
-          if win32:
-              artifacts["win32"] = {"file": win32, "url": f"{base}/{version}/{win32}"}
+          def art(name):
+              return {"file": name, "url": f"{base}/{version}/{name}"}
           latest = {
             "product": "PharmaSuit Cloud (multi-tenant)",
             "channel": "cloud-multi",
             "version": version,
             "releaseNotes": f"PharmaSuit Cloud {version}",
             "publishedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
-            "artifacts": artifacts,
+            "artifacts": {
+              "mac": art(os.environ["MAC"]),
+              "win": art(os.environ["WIN64"]),
+              "win32": art(os.environ["WIN32"]),
+              "linux": art(os.environ["LINUX"]),
+            },
           }
-          path = "staging/ftp/latest.json"
-          with open(path, "w", encoding="utf-8") as f:
+          with open("staging/out/latest.json", "w", encoding="utf-8") as f:
               json.dump(latest, f, indent=2)
               f.write("\n")
-          print(open(path, encoding="utf-8").read())
+          print(open("staging/out/latest.json", encoding="utf-8").read())
           PY
-          find staging/ftp -type f | sort
 
-      - name: Check downloads secrets
+      - name: Prepare SSH key
         env:
-          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
-          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
-          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
-          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          PORT: ${{ secrets.SERVER_SSH_PORT }}
         run: |
-          missing=0
-          [ -z "$DOWNLOADS_HOST" ] && echo "Missing DOWNLOADS_HOST" && missing=1
-          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing DOWNLOADS_USERNAME" && missing=1
-          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing DOWNLOADS_PASSWORD" && missing=1
-          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing DOWNLOADS_SERVER_DIR" && missing=1
-          echo "DOWNLOADS_SERVER_DIR=$DOWNLOADS_SERVER_DIR"
-          exit $missing
+          set -euo pipefail
+          test -n "${SERVER_SSH_KEY:-}" || { echo "Missing SERVER_SSH_KEY"; exit 1; }
+          test -n "${HOST:-}" || { echo "Missing DOWNLOADS_HOST"; exit 1; }
+          PORT="${PORT:-22}"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_restore
+          chmod 600 ~/.ssh/id_restore
+          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts
 
-      - name: Upload via FTPS
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.DOWNLOADS_HOST }}
-          username: ${{ secrets.DOWNLOADS_USERNAME }}
-          password: ${{ secrets.DOWNLOADS_PASSWORD }}
-          protocol: ftps
-          local-dir: staging/ftp/
-          server-dir: ${{ secrets.DOWNLOADS_SERVER_DIR }}
-          dangerous-clean-slate: false
+      - name: SCP installers (no deletes)
+        env:
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PORT: ${{ secrets.SERVER_SSH_PORT }}
+          PASSPHRASE: ${{ secrets.SERVER_SSH_KEY_PASSPHRASE }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "${HOST:-}" && test -n "${USER:-}"
+          PORT="${PORT:-22}"
+          REMOTE="${USER}@${HOST}"
+          DEST="server.masatechplc.com/downloads/cloud-multi"
+          SSH_OPTS="-i $HOME/.ssh/id_restore -p $PORT -o IdentitiesOnly=yes -o BatchMode=yes"
+
+          if [ -n "${PASSPHRASE:-}" ]; then
+            eval "$(ssh-agent -s)"
+            printf '%s\n' "$PASSPHRASE" | ssh-add "$HOME/.ssh/id_restore"
+          fi
+
+          ssh $SSH_OPTS "$REMOTE" "mkdir -p ~/${DEST}/${VERSION}"
+          scp $SSH_OPTS staging/out/"${VERSION}"/* "$REMOTE:~/${DEST}/${VERSION}/"
+          scp $SSH_OPTS staging/out/latest.json "$REMOTE:~/${DEST}/latest.json"
+
+          echo "Remote listing:"
+          ssh $SSH_OPTS "$REMOTE" "ls -lah ~/${DEST}/${VERSION}; echo ---; cat ~/${DEST}/latest.json"
+
+          ssh $SSH_OPTS "$REMOTE" "set -e
+            D=~/${DEST}/${VERSION}
+            test \$(stat -c%s \"\$D/${WIN64}\") -gt 1000000
+            test \$(stat -c%s \"\$D/${WIN32}\") -gt 1000000
+            test \$(stat -c%s \"\$D/${MAC}\") -gt 1000000
+            test \$(stat -c%s \"\$D/${LINUX}\") -gt 1000000
+            echo VERIFY_OK"
 
       - name: Summary
         run: |
-          echo "### Restored cloud-multi Windows installers" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Version: \`${{ inputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- win64: \`${{ env.WIN64 }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- win32: \`${{ env.WIN32 }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Page: https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Restored cloud-multi installers via SCP" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version \`${{ inputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- win64 \`${{ env.WIN64 }}\` / win32 \`${{ env.WIN32 }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- mac \`${{ env.MAC }}\` / linux \`${{ env.LINUX }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "If .exe vanish again, ask the host about executable quarantine/Imunify." >> "$GITHUB_STEP_SUMMARY"
+          echo "If Windows .exe disappear again, ask host about Imunify/AV quarantine of executables." >> "$GITHUB_STEP_SUMMARY"
