@@ -1,5 +1,6 @@
-# Restore cloud-multi installers via FTPS put-only (never deletes remote siblings).
-# SSH from GitHub Actions timed out; FTPS secrets already work for downloads/*.
+# Restore cloud-multi installers via FTPS.
+# Syncs only downloads/cloud-multi/<version>/ (win+mac+linux), then puts latest.json.
+# Does not sync the parent folder (avoids deleting other version dirs).
 #
 # Secrets:
 #   DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD
@@ -121,16 +122,13 @@ jobs:
           print(open("staging/out/latest.json", encoding="utf-8").read())
           PY
 
-      - name: FTPS put-only upload (no deletes)
+      - name: Resolve downloads server dir
+        id: dir
         env:
-          HOST: ${{ secrets.DOWNLOADS_HOST }}
-          USER: ${{ secrets.DOWNLOADS_USERNAME }}
-          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
           SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          test -n "${HOST:-}" && test -n "${USER:-}" && test -n "${PASS:-}"
           DEST="${SERVER_DIR:-server.masatechplc.com/downloads/cloud-multi}"
           DEST="${DEST#/}"
           DEST="${DEST%/}"
@@ -138,36 +136,34 @@ jobs:
             *cloud-multi*) ;;
             *) echo "DOWNLOADS_SERVER_DIR must point at cloud-multi (got: $DEST)"; exit 1 ;;
           esac
+          echo "base=$DEST" >> "$GITHUB_OUTPUT"
+          echo "version_dir=${DEST}/${VERSION}/" >> "$GITHUB_OUTPUT"
 
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq lftp
+      # Sync only the version folder (includes win/mac/linux) so parent siblings stay.
+      - name: FTPS sync version folder
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.DOWNLOADS_HOST }}
+          username: ${{ secrets.DOWNLOADS_USERNAME }}
+          password: ${{ secrets.DOWNLOADS_PASSWORD }}
+          protocol: ftps
+          local-dir: staging/out/${{ inputs.version }}/
+          server-dir: ${{ steps.dir.outputs.version_dir }}
+          dangerous-clean-slate: false
 
-          # Put files only — never mirror/delete.
-          lftp -c "
-          set cmd:fail-exit yes
-          set ftp:ssl-force true
-          set ftp:ssl-protect-data true
-          set ssl:verify-certificate no
-          set net:max-retries 5
-          set net:timeout 120
-          set net:reconnect-interval-base 5
-          set xfer:clobber on
-          open -u ${USER},${PASS} ${HOST}
-          # -f: ignore "directory already exists" (550) so re-runs succeed
-          mkdir -pf ${DEST}/${VERSION}
-          cd ${DEST}/${VERSION}
-          lcd staging/out/${VERSION}
-          mput *
-          cd ..
-          lcd ..
-          put latest.json -o latest.json
-          echo '--- remote version dir ---'
-          cls -l ${DEST}/${VERSION}
-          echo '--- latest.json ---'
-          cat ${DEST}/latest.json
-          bye
-          "
-
+      # Put-only latest.json (curl -T does not delete siblings).
+      - name: FTPS put latest.json
+        env:
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
+          BASE: ${{ steps.dir.outputs.base }}
+        run: |
+          set -euo pipefail
+          curl -sS --ftp-ssl --insecure --user "${USER}:${PASS}" \
+            -T staging/out/latest.json \
+            "ftp://${HOST}/${BASE}/latest.json"
+          echo "Uploaded latest.json"
       - name: Verify public HTTP URLs
         env:
           VERSION: ${{ inputs.version }}
@@ -194,7 +190,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### Restored cloud-multi installers via FTPS put-only" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Restored cloud-multi installers via FTPS" >> "$GITHUB_STEP_SUMMARY"
           echo "- Version \`${{ inputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- win64 \`${{ env.WIN64 }}\` / win32 \`${{ env.WIN32 }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- mac \`${{ env.MAC }}\` / linux \`${{ env.LINUX }}\`" >> "$GITHUB_STEP_SUMMARY"
