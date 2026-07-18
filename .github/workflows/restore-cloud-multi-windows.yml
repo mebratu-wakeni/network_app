@@ -32,6 +32,9 @@ jobs:
   restore:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (for downloads/cloud-multi/index.html)
+        uses: actions/checkout@v4
+
       - name: Download release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -151,8 +154,8 @@ jobs:
           server-dir: ${{ steps.dir.outputs.version_dir }}
           dangerous-clean-slate: false
 
-      # Put-only latest.json (curl -T does not delete siblings).
-      - name: FTPS put latest.json
+      # Put-only metadata/page (curl -T does not delete siblings).
+      - name: FTPS put latest.json and index.html
         env:
           HOST: ${{ secrets.DOWNLOADS_HOST }}
           USER: ${{ secrets.DOWNLOADS_USERNAME }}
@@ -164,6 +167,16 @@ jobs:
             -T staging/out/latest.json \
             "ftp://${HOST}/${BASE}/latest.json"
           echo "Uploaded latest.json"
+
+          # Earlier FTPS sync wiped the downloads page; always restore it.
+          if [ -f downloads/cloud-multi/index.html ]; then
+            curl -sS --ftp-ssl --insecure --user "${USER}:${PASS}" \
+              -T downloads/cloud-multi/index.html \
+              "ftp://${HOST}/${BASE}/index.html"
+            echo "Uploaded index.html"
+          else
+            echo "WARN: downloads/cloud-multi/index.html missing from repo checkout"
+          fi
       - name: Verify public HTTP URLs
         env:
           VERSION: ${{ inputs.version }}
