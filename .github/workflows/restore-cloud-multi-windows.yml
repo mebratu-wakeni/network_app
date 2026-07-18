@@ -153,7 +153,8 @@ jobs:
           set net:reconnect-interval-base 5
           set xfer:clobber on
           open -u ${USER},${PASS} ${HOST}
-          mkdir -p ${DEST}/${VERSION}
+          # -f: ignore "directory already exists" (550) so re-runs succeed
+          mkdir -pf ${DEST}/${VERSION}
           cd ${DEST}/${VERSION}
           lcd staging/out/${VERSION}
           mput *
