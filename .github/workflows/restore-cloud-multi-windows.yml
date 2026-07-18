@@ -1,9 +1,9 @@
-# Restore cloud-multi installers via SSH/SCP (put only — never deletes remote siblings).
-# Prior FTPS sync wiped Mac/Linux while Windows .exe were missing/quarantined.
+# Restore cloud-multi installers via FTPS put-only (never deletes remote siblings).
+# SSH from GitHub Actions timed out; FTPS secrets already work for downloads/*.
 #
 # Secrets:
-#   DOWNLOADS_HOST, DOWNLOADS_USERNAME
-#   SERVER_SSH_KEY (+ optional SERVER_SSH_KEY_PASSPHRASE, SERVER_SSH_PORT)
+#   DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD
+#   DOWNLOADS_SERVER_DIR — e.g. server.masatechplc.com/downloads/cloud-multi/
 
 name: Restore cloud-multi Windows installers
 
@@ -58,17 +58,23 @@ jobs:
           download "$MAC_ID" mac
           download "$LINUX_ID" linux
 
+          # Only public installers + blockmaps (skip unpacked PharmaSuit.exe / elevate.exe).
           find staging/raw -type f \( \
-              -iname '*.exe' -o -iname '*.dmg' -o -iname '*.AppImage' -o -iname '*.appimage' -o \
-              -iname '*.blockmap' \
-            \) -print0 | while IFS= read -r -d '' f; do
+              -iname '*-x64-Setup.exe' -o -iname '*-ia32-Setup.exe' -o \
+              -iname '*.dmg' -o -iname '*.AppImage' -o -iname '*.appimage' -o \
+              -iname '*Setup.exe.blockmap' -o -iname '*.dmg.blockmap' \
+            \) ! -iname 'elevate.exe' -print0 | while IFS= read -r -d '' f; do
+              base=$(basename "$f")
+              case "$base" in
+                PharmaSuit.exe|elevate.exe) continue ;;
+              esac
               cp -v "$f" "staging/out/${VERSION}/"
             done
 
           ls -lah "staging/out/${VERSION}"
 
-          WIN32=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*ia32*Setup.exe' -printf '%f\n' | head -n1 || true)
-          WIN64=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*x64*Setup.exe' -printf '%f\n' | head -n1 || true)
+          WIN32=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*ia32*Setup.exe' ! -iname '*.blockmap' -printf '%f\n' | head -n1 || true)
+          WIN64=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*x64*Setup.exe' ! -iname '*.blockmap' -printf '%f\n' | head -n1 || true)
           MAC=$(find "staging/out/${VERSION}" -maxdepth 1 -type f -iname '*.dmg' ! -iname '*.blockmap' -printf '%f\n' | head -n1 || true)
           LINUX=$(find "staging/out/${VERSION}" -maxdepth 1 -type f \( -iname '*.AppImage' -o -iname '*.appimage' \) -printf '%f\n' | head -n1 || true)
 
@@ -80,6 +86,8 @@ jobs:
           } >> "$GITHUB_ENV"
 
           test -n "${WIN64:-}" && test -n "${WIN32:-}" && test -n "${MAC:-}" && test -n "${LINUX:-}"
+          test "$(stat -c%s "staging/out/${VERSION}/${WIN64}")" -gt 1000000
+          test "$(stat -c%s "staging/out/${VERSION}/${WIN32}")" -gt 1000000
 
       - name: Write latest.json
         env:
@@ -113,62 +121,82 @@ jobs:
           print(open("staging/out/latest.json", encoding="utf-8").read())
           PY
 
-      - name: Prepare SSH key
-        env:
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          HOST: ${{ secrets.DOWNLOADS_HOST }}
-          PORT: ${{ secrets.SERVER_SSH_PORT }}
-        run: |
-          set -euo pipefail
-          test -n "${SERVER_SSH_KEY:-}" || { echo "Missing SERVER_SSH_KEY"; exit 1; }
-          test -n "${HOST:-}" || { echo "Missing DOWNLOADS_HOST"; exit 1; }
-          PORT="${PORT:-22}"
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_restore
-          chmod 600 ~/.ssh/id_restore
-          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts
-
-      - name: SCP installers (no deletes)
+      - name: FTPS put-only upload (no deletes)
         env:
           HOST: ${{ secrets.DOWNLOADS_HOST }}
           USER: ${{ secrets.DOWNLOADS_USERNAME }}
-          PORT: ${{ secrets.SERVER_SSH_PORT }}
-          PASSPHRASE: ${{ secrets.SERVER_SSH_KEY_PASSPHRASE }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
+          SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          test -n "${HOST:-}" && test -n "${USER:-}"
-          PORT="${PORT:-22}"
-          REMOTE="${USER}@${HOST}"
-          DEST="server.masatechplc.com/downloads/cloud-multi"
-          SSH_OPTS="-i $HOME/.ssh/id_restore -p $PORT -o IdentitiesOnly=yes -o BatchMode=yes"
+          test -n "${HOST:-}" && test -n "${USER:-}" && test -n "${PASS:-}"
+          DEST="${SERVER_DIR:-server.masatechplc.com/downloads/cloud-multi}"
+          DEST="${DEST#/}"
+          DEST="${DEST%/}"
+          case "$DEST" in
+            *cloud-multi*) ;;
+            *) echo "DOWNLOADS_SERVER_DIR must point at cloud-multi (got: $DEST)"; exit 1 ;;
+          esac
 
-          if [ -n "${PASSPHRASE:-}" ]; then
-            eval "$(ssh-agent -s)"
-            printf '%s\n' "$PASSPHRASE" | ssh-add "$HOME/.ssh/id_restore"
-          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lftp
 
-          ssh $SSH_OPTS "$REMOTE" "mkdir -p ~/${DEST}/${VERSION}"
-          scp $SSH_OPTS staging/out/"${VERSION}"/* "$REMOTE:~/${DEST}/${VERSION}/"
-          scp $SSH_OPTS staging/out/latest.json "$REMOTE:~/${DEST}/latest.json"
+          # Put files only — never mirror/delete.
+          lftp -c "
+          set cmd:fail-exit yes
+          set ftp:ssl-force true
+          set ftp:ssl-protect-data true
+          set ssl:verify-certificate no
+          set net:max-retries 5
+          set net:timeout 120
+          set net:reconnect-interval-base 5
+          set xfer:clobber on
+          open -u ${USER},${PASS} ${HOST}
+          mkdir -p ${DEST}/${VERSION}
+          cd ${DEST}/${VERSION}
+          lcd staging/out/${VERSION}
+          mput *
+          cd ..
+          lcd ..
+          put latest.json -o latest.json
+          echo '--- remote version dir ---'
+          cls -l ${DEST}/${VERSION}
+          echo '--- latest.json ---'
+          cat ${DEST}/latest.json
+          bye
+          "
 
-          echo "Remote listing:"
-          ssh $SSH_OPTS "$REMOTE" "ls -lah ~/${DEST}/${VERSION}; echo ---; cat ~/${DEST}/latest.json"
-
-          ssh $SSH_OPTS "$REMOTE" "set -e
-            D=~/${DEST}/${VERSION}
-            test \$(stat -c%s \"\$D/${WIN64}\") -gt 1000000
-            test \$(stat -c%s \"\$D/${WIN32}\") -gt 1000000
-            test \$(stat -c%s \"\$D/${MAC}\") -gt 1000000
-            test \$(stat -c%s \"\$D/${LINUX}\") -gt 1000000
-            echo VERIFY_OK"
+      - name: Verify public HTTP URLs
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          BASE="https://server.masatechplc.com/downloads/cloud-multi"
+          # Allow host a moment to flush / antivirus scan.
+          sleep 15
+          fail=0
+          for name in "$WIN64" "$WIN32" "$MAC" "$LINUX"; do
+            url="${BASE}/${VERSION}/${name}"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 60 -I "$url" || echo 000)
+            clen=$(curl -sS -L --max-time 60 -I "$url" | awk -F': ' 'tolower($1)=="content-length"{gsub(/\r/,"",$2); print $2; exit}')
+            echo "$name -> HTTP $code Content-Length=${clen:-?}"
+            if [ "$code" != "200" ] || [ -z "${clen:-}" ] || [ "${clen:-0}" -lt 1000000 ]; then
+              echo "FAIL: $url"
+              fail=1
+            fi
+          done
+          curl -sS -L --max-time 30 "${BASE}/latest.json" | head -c 800
+          echo
+          exit "$fail"
 
       - name: Summary
+        if: always()
         run: |
-          echo "### Restored cloud-multi installers via SCP" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Restored cloud-multi installers via FTPS put-only" >> "$GITHUB_STEP_SUMMARY"
           echo "- Version \`${{ inputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- win64 \`${{ env.WIN64 }}\` / win32 \`${{ env.WIN32 }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- mac \`${{ env.MAC }}\` / linux \`${{ env.LINUX }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "If Windows .exe disappear again, ask host about Imunify/AV quarantine of executables." >> "$GITHUB_STEP_SUMMARY"
+          echo "If Windows .exe vanish again after verify, ask host about Imunify/AV quarantine." >> "$GITHUB_STEP_SUMMARY"
