@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PharmaSuit Cloud — Downloads</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #4f46e5;
+      --accent-hover: #6366f1;
+      --border: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1e1b4b 0%, var(--bg) 55%);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+    main {
+      width: 100%;
+      max-width: 40rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem 1.75rem;
+    }
+    h1 {
+      margin: 0 0 0.35rem;
+      font-size: 1.65rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #a5b4fc;
+      margin-bottom: 0.75rem;
+    }
+    p { margin: 0 0 1.25rem; color: var(--muted); line-height: 1.55; }
+    .meta {
+      font-size: 0.875rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+      padding: 0.75rem 1rem;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .meta strong { color: var(--text); }
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    a.btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.9rem 1.1rem;
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: background 0.15s ease;
+    }
+    a.btn:hover { background: var(--accent-hover); }
+    a.btn.disabled,
+    a.btn[aria-disabled="true"] {
+      background: #475569;
+      pointer-events: none;
+      opacity: 0.7;
+    }
+    a.btn span.os { font-weight: 700; }
+    a.btn span.hint { font-weight: 500; font-size: 0.8rem; opacity: 0.9; }
+    .error {
+      color: #fecaca;
+      background: #7f1d1d;
+      border: 1px solid #991b1b;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+    }
+    footer {
+      margin-top: 1.75rem;
+      font-size: 0.75rem;
+      color: #64748b;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="tag">Dedicated Cloud</div>
+    <h1>PharmaSuit</h1>
+    <p>
+      Download the desktop app for your operating system. After install, enter your
+      cloud server URL and sign in with your username and password (no tenant code).
+    </p>
+    <div id="meta" class="meta">Loading release info…</div>
+    <div id="buttons" class="buttons"></div>
+    <div id="error" hidden class="error"></div>
+    <footer>
+      Single-tenant online client. Multi-tenant installers live at /downloads/cloud-multi/.
+      Questions: contact Masatech support.
+    </footer>
+  </main>
+  <script>
+    (function () {
+      var metaEl = document.getElementById('meta')
+      var buttonsEl = document.getElementById('buttons')
+      var errorEl = document.getElementById('error')
+
+      var platforms = [
+        { key: 'mac', label: 'macOS', hint: 'Universal DMG (Intel + Apple Silicon)' },
+        { key: 'win', label: 'Windows 64-bit', hint: 'Setup (.exe) — Windows 10/11 x64' },
+        { key: 'win32', label: 'Windows 32-bit', hint: 'Setup (.exe) — Windows 10 x86' },
+        { key: 'linux', label: 'Linux', hint: 'AppImage' }
+      ]
+
+      function showError(msg) {
+        errorEl.hidden = false
+        errorEl.textContent = msg
+        metaEl.textContent = 'Release information unavailable.'
+      }
+
+      function render(data) {
+        var version = data.version || '—'
+        var notes = data.releaseNotes || ''
+        var published = data.publishedAt
+          ? new Date(data.publishedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+          : '—'
+
+        metaEl.innerHTML =
+          '<strong>Version ' + version + '</strong><br />' +
+          'Published: ' + published +
+          (notes ? '<br />' + notes : '')
+
+        buttonsEl.innerHTML = ''
+        platforms.forEach(function (p) {
+          var art = (data.artifacts && data.artifacts[p.key]) || null
+          var a = document.createElement('a')
+          a.className = 'btn'
+          if (art && art.url) {
+            a.href = art.url
+            a.setAttribute('download', '')
+            a.innerHTML =
+              '<span class="os">' + p.label + '</span>' +
+              '<span class="hint">' + (art.file || p.hint) + '</span>'
+          } else {
+            a.href = '#'
+            a.setAttribute('aria-disabled', 'true')
+            a.className = 'btn disabled'
+            a.innerHTML =
+              '<span class="os">' + p.label + '</span>' +
+              '<span class="hint">Not available yet</span>'
+          }
+          buttonsEl.appendChild(a)
+        })
+      }
+
+      fetch('latest.json', { cache: 'no-store' })
+        .then(function (res) {
+          if (!res.ok) throw new Error('Could not load latest.json (' + res.status + ')')
+          return res.json()
+        })
+        .then(render)
+        .catch(function (err) {
+          showError(err.message || 'Failed to load release info.')
+          // Still show disabled buttons
+          render({ version: null, artifacts: {} })
+        })
+    })()
+  </script>
+</body>
+</html>
