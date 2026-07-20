@@ -83,14 +83,21 @@ export class PurchaseService {
     const subtotal = enrichedItems.reduce((sum, it) => sum + it.total_price, 0)
 
     // 2) Resolve withhold percentage
-    let appliedWithholdPercentage = withhold_percentage
-    if (appliedWithholdPercentage == null) {
+    // Explicit null/0 from the client means "no withhold" (unchecked checkbox).
+    // Only fall back to company settings when the field is omitted (undefined),
+    // e.g. older callers / import paths that do not send the key.
+    let appliedWithholdPercentage
+    if (withhold_percentage === undefined) {
       const setting = await this.repository.getWithholdPercentageSetting()
-      appliedWithholdPercentage = setting != null ? setting : null
+      appliedWithholdPercentage = setting != null ? Number(setting) : null
+    } else if (withhold_percentage == null || Number(withhold_percentage) === 0) {
+      appliedWithholdPercentage = null
+    } else {
+      appliedWithholdPercentage = Number(withhold_percentage)
     }
 
     const withholdAmount =
-      appliedWithholdPercentage != null
+      appliedWithholdPercentage != null && Number.isFinite(appliedWithholdPercentage)
         ? (subtotal * appliedWithholdPercentage) / 100
         : 0
 
