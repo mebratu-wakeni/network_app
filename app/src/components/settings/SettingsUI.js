@@ -122,6 +122,17 @@ function GeneralTab(props) {
                   class: 'w-full max-w-[200px]',
                   placeholder: 'Tax ID'
                 })
+              ]),
+              Row({}, [
+                Row({ tagType: 'label', attributes: { for: 'company_logo_url' }, class: labelClass }, 'Logo URL (optional)'),
+                Input({
+                  name: 'company_logo_url',
+                  value: form.company_logo_url,
+                  onChange: handleChange('company_logo_url'),
+                  class: 'w-full max-w-md',
+                  placeholder: 'https://… or local path used on receipts'
+                }),
+                Row({ class: 'mt-1 text-xs text-gray-500' }, 'Shown on sales and purchase receipts. Leave blank to use a letterhead monogram.')
               ])
             ])
           ])

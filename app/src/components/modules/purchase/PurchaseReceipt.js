@@ -1,17 +1,20 @@
 /**
- * Compact, professional purchase receipt. From/To max 2 lines; layout optimized for A4 and multi-page print.
+ * Dense A4 purchase receipt: letterhead, FROM supplier | TO company, currency, credit signatures.
  */
-const { Row, EventDelegator } = Liteframe;
+const { Row } = Liteframe;
+import {
+  formatReceiptMoney,
+  joinNonEmpty,
+  companyMonogram,
+  renderRichTextNodes,
+} from '../../utils/receiptHelpers.js';
 
-const formatMoney = (amount) => {
-  if (amount == null || (typeof amount === 'number' && isNaN(amount))) return amount ?? '';
-  return Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
-
-const joinNonEmpty = (arr, sep = ' · ') => arr.filter(Boolean).map((s) => String(s).trim()).filter(Boolean).join(sep);
-
+function cellText(value) {
+  const t = value == null ? '' : String(value).trim();
+  return t || '—';
+}
 /**
- * @param {Object} receiptData - fromCompany, toSupplier, orderDetails, items, summary, notesAndTerms, footerInfo, watermarkText, receiptNo, dateIssued
+ * @param {Object} receiptData
  * @param {EventDelegator} delegator
  * @param {boolean} isReversed
  * @returns {HTMLElement}
@@ -24,49 +27,85 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
   const summary = receiptData.summary || {};
   const notesAndTerms = receiptData.notesAndTerms || { list: [] };
   const footerInfo = receiptData.footerInfo || {};
+  const docTitle = 'Purchase Receipt';
+  const receiptNo = receiptData.receiptNo ?? '';
+  const companyName = fromCompany.businessName || '';
+  const isCredit = String(orderDetails.paymentMode || '').toLowerCase() === 'credit';
 
-  const renderRichText = (textWithHtml) => {
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = textWithHtml;
-    return Array.from(tempDiv.childNodes);
-  };
-
-  // FROM = Supplier (we buy from). Line 1 = name, line 2 = address · Contact · Email · TIN
+  // FROM = Supplier (we buy from). TO = Company (purchasing entity).
   const fromLine1 = toSupplier.supplierName || '';
   const fromLine2 = joinNonEmpty([
     toSupplier.address,
     toSupplier.contactPerson ? `Contact: ${toSupplier.contactPerson}` : null,
     toSupplier.email ? `Email: ${toSupplier.email}` : null,
-    (toSupplier.taxId && toSupplier.taxId !== 'N/A') ? `TIN: ${toSupplier.taxId}` : null,
-  ], ' · ');
+    toSupplier.taxId && toSupplier.taxId !== 'N/A' ? `TIN: ${toSupplier.taxId}` : null,
+  ]);
 
-  // TO = Company (purchasing entity). Line 1 = name, line 2 = address · Ph · Email · TIN
-  const toLine1 = fromCompany.businessName || '';
+  const toLine1 = companyName;
   const toLine2 = joinNonEmpty([
     fromCompany.address,
     fromCompany.phone && `Ph: ${fromCompany.phone}`,
     fromCompany.email,
     fromCompany.taxId && `TIN: ${fromCompany.taxId}`,
-  ], ' · ');
+  ]);
 
-  // --- HEADER (compact: one row) ---
+  const brandMark = fromCompany.logoUrl
+    ? Row({
+        tagType: 'img',
+        classNames: ['receipt-brand-logo'],
+        attributes: {
+          src: fromCompany.logoUrl,
+          alt: companyName || 'Logo',
+        },
+        delegator,
+      })
+    : Row({
+        classNames: ['receipt-brand-monogram'],
+        children: [companyMonogram(companyName)],
+        delegator,
+      });
+
   const header = Row({
     tagType: 'header',
-    classNames: ['receipt-header', 'receipt-header-compact'],
+    classNames: ['receipt-header', 'receipt-header-compact', 'receipt-letterhead'],
     children: [
       Row({
-        classNames: ['company-logo', 'company-logo-compact'],
-        children: [fromCompany.businessName || ''],
+        classNames: ['receipt-brand-block'],
+        children: [
+          brandMark,
+          Row({
+            classNames: ['receipt-brand-text'],
+            children: [
+              Row({ classNames: ['receipt-brand-name'], children: [companyName], delegator }),
+              fromCompany.taxId
+                ? Row({
+                    classNames: ['receipt-brand-legal'],
+                    children: [`TIN: ${fromCompany.taxId}`],
+                    delegator,
+                  })
+                : null,
+            ].filter(Boolean),
+            delegator,
+          }),
+        ],
         delegator,
       }),
       Row({
-        classNames: ['receipt-title-section', 'receipt-meta-inline'],
+        classNames: ['receipt-title-section', 'receipt-meta-stack'],
         children: [
-          Row({ tagType: 'span', classNames: ['receipt-doc-title'], children: ['Purchase Receipt'], delegator }),
-          Row({ tagType: 'span', classNames: ['receipt-meta-sep'], children: [' | '], delegator }),
-          Row({ tagType: 'span', children: ['No: ', Row({ tagType: 'strong', children: [receiptData.receiptNo ?? ''], delegator })], delegator }),
-          Row({ tagType: 'span', classNames: ['receipt-meta-sep'], children: [' | '], delegator }),
-          Row({ tagType: 'span', children: [`Date: ${receiptData.dateIssued ?? ''}`], delegator }),
+          Row({ tagType: 'span', classNames: ['receipt-doc-title'], children: [docTitle], delegator }),
+          Row({
+            classNames: ['receipt-meta-stack-line'],
+            children: [
+              Row({ tagType: 'span', children: ['No. ', Row({ tagType: 'strong', children: [receiptNo], delegator })], delegator }),
+            ],
+            delegator,
+          }),
+          Row({
+            classNames: ['receipt-meta-stack-line'],
+            children: [`Date: ${receiptData.dateIssued ?? ''}`],
+            delegator,
+          }),
         ],
         delegator,
       }),
@@ -74,7 +113,6 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
     delegator,
   });
 
-  // --- FROM (Supplier) | TO (Company): two columns; TO column right-aligned ---
   const detailsGrid = Row({
     classNames: ['receipt-parties-compact'],
     children: [
@@ -120,26 +158,47 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
     delegator,
   });
 
-  // --- ORDER & PAYMENT (one compact line) ---
+  const statusTokens = [
+    'receipt-status-badge',
+    `receipt-status-${String(orderDetails.status || 'paid')
+      .toLowerCase()
+      .replace(/\s+/g, '-')}`,
+  ];
   const orderLine = joinNonEmpty([
-    orderDetails.purchaseDate && `Date: ${orderDetails.purchaseDate}`,
     orderDetails.paymentMode && `Payment: ${orderDetails.paymentMode}`,
-    orderDetails.withholdTaxInfo && orderDetails.withholdTaxInfo !== 'N/A' ? `Withhold: ${orderDetails.withholdTaxInfo}` : null,
-    orderDetails.status && `Status: ${orderDetails.status}`,
-    orderDetails.referencePO && `Ref: ${orderDetails.referencePO}`,
-  ], ' · ');
+    orderDetails.withholdTaxInfo && orderDetails.withholdTaxInfo !== 'N/A'
+      ? `Withhold: ${orderDetails.withholdTaxInfo}`
+      : null,
+    orderDetails.encoderName ? `Prepared by: ${orderDetails.encoderName}` : null,
+    orderDetails.referencePO && orderDetails.referencePO !== receiptNo
+      ? `Ref: ${orderDetails.referencePO}`
+      : null,
+  ]);
 
   const orderDetailsSection = Row({
     classNames: ['receipt-order-line'],
-    children: [orderLine || '—'],
+    children: [
+      Row({
+        tagType: 'span',
+        classNames: ['receipt-order-meta'],
+        children: [orderLine || '—'],
+        delegator,
+      }),
+      orderDetails.status
+        ? Row({
+            tagType: 'span',
+            classNames: statusTokens,
+            children: [orderDetails.status],
+            delegator,
+          })
+        : null,
+    ].filter(Boolean),
     delegator,
   });
 
-  // --- ITEMS TABLE (compact; thead repeats on each page in print) ---
   const itemsTable = Row({
     classNames: ['section', 'items-purchased', 'items-purchased-compact'],
     children: [
-      Row({ tagType: 'h2', classNames: ['items-section-title'], children: ['Items Purchased'], delegator }),
       Row({
         tagType: 'table',
         classNames: ['items-table', 'items-table-compact'],
@@ -157,8 +216,8 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
                   Row({ tagType: 'th', classNames: ['col-batch', 'nowrap'], children: ['Batch'], delegator }),
                   Row({ tagType: 'th', classNames: ['col-expiry', 'nowrap'], children: ['Expiry'], delegator }),
                   Row({ tagType: 'th', classNames: ['col-qty', 'text-center'], children: ['Qty'], delegator }),
-                  Row({ tagType: 'th', classNames: ['col-price', 'text-right'], children: ['Unit Price'], delegator }),
-                  Row({ tagType: 'th', classNames: ['col-total', 'text-right'], children: ['Total'], delegator }),
+                  Row({ tagType: 'th', classNames: ['col-price', 'text-right'], children: ['Unit (Br)'], delegator }),
+                  Row({ tagType: 'th', classNames: ['col-total', 'text-right'], children: ['Total (Br)'], delegator }),
                 ],
                 delegator,
               }),
@@ -172,14 +231,29 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
                 tagType: 'tr',
                 classNames: ['items-row'],
                 children: [
-                  Row({ tagType: 'td', classNames: ['col-no'], children: [item.id !== undefined ? item.id : index + 1], delegator }),
-                  Row({ tagType: 'td', classNames: ['col-code'], children: [item.productCode ?? ''], delegator }),
-                  Row({ tagType: 'td', classNames: ['col-desc'], children: [item.description ?? ''], delegator }),
-                  Row({ tagType: 'td', classNames: ['col-batch'], children: [item.batchNo ?? ''], delegator }),
-                  Row({ tagType: 'td', classNames: ['col-expiry'], children: [item.expiryDate ?? ''], delegator }),
-                  Row({ tagType: 'td', classNames: ['col-qty', 'text-center'], children: [item.qty], delegator }),
-                  Row({ tagType: 'td', classNames: ['col-price', 'text-right'], children: [formatMoney(item.unitPrice)], delegator }),
-                  Row({ tagType: 'td', classNames: ['col-total', 'text-right'], children: [formatMoney(item.totalAmount)], delegator }),
+                  Row({
+                    tagType: 'td',
+                    classNames: ['col-no'],
+                    children: [item.id !== undefined ? item.id : index + 1],
+                    delegator,
+                  }),
+                  Row({ tagType: 'td', classNames: ['col-code'], children: [cellText(item.productCode)], delegator }),
+                  Row({ tagType: 'td', classNames: ['col-desc'], children: [cellText(item.description)], delegator }),
+                  Row({ tagType: 'td', classNames: ['col-batch'], children: [cellText(item.batchNo)], delegator }),
+                  Row({ tagType: 'td', classNames: ['col-expiry'], children: [cellText(item.expiryDate)], delegator }),
+                  Row({ tagType: 'td', classNames: ['col-qty', 'text-center'], children: [item.qty ?? '—'], delegator }),
+                  Row({
+                    tagType: 'td',
+                    classNames: ['col-price', 'text-right'],
+                    children: [formatReceiptMoney(item.unitPrice)],
+                    delegator,
+                  }),
+                  Row({
+                    tagType: 'td',
+                    classNames: ['col-total', 'text-right'],
+                    children: [formatReceiptMoney(item.totalAmount)],
+                    delegator,
+                  }),
                 ],
                 delegator,
               })
@@ -193,7 +267,6 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
     delegator,
   });
 
-  // --- SUMMARY (compact, right-aligned) ---
   const summarySection = Row({
     classNames: ['transaction-summary-section', 'transaction-summary-compact'],
     children: [
@@ -208,32 +281,44 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
                 tagType: 'tr',
                 children: [
                   Row({ tagType: 'td', children: ['Subtotal:'], delegator }),
-                  Row({ tagType: 'td', children: [formatMoney(summary.subtotal)], delegator }),
+                  Row({ tagType: 'td', children: [formatReceiptMoney(summary.subtotal)], delegator }),
                 ],
                 delegator,
               }),
-              summary.withholdTaxPercentage != null && summary.withholdTaxPercentage > 0 && Row({
-                tagType: 'tr',
-                children: [
-                  Row({ tagType: 'td', children: [`Withhold (${Number(summary.withholdTaxPercentage).toFixed(1)}%):`], delegator }),
-                  Row({ tagType: 'td', children: [formatMoney(summary.withholdTaxAmount)], delegator }),
-                ],
-                delegator,
-              }),
-              summary.vatAmount != null && summary.vatAmount !== undefined && Row({
-                tagType: 'tr',
-                children: [
-                  Row({ tagType: 'td', children: [`VAT (${(summary.vatPercentage ?? 0).toFixed(1)}%):`], delegator }),
-                  Row({ tagType: 'td', children: [formatMoney(summary.vatAmount)], delegator }),
-                ],
-                delegator,
-              }),
+              summary.withholdTaxPercentage != null &&
+                summary.withholdTaxPercentage > 0 &&
+                Row({
+                  tagType: 'tr',
+                  children: [
+                    Row({
+                      tagType: 'td',
+                      children: [`Withhold (${Number(summary.withholdTaxPercentage).toFixed(1)}%):`],
+                      delegator,
+                    }),
+                    Row({ tagType: 'td', children: [formatReceiptMoney(summary.withholdTaxAmount)], delegator }),
+                  ],
+                  delegator,
+                }),
+              summary.vatAmount != null &&
+                summary.vatAmount !== undefined &&
+                Row({
+                  tagType: 'tr',
+                  children: [
+                    Row({
+                      tagType: 'td',
+                      children: [`VAT (${(summary.vatPercentage ?? 0).toFixed(1)}%):`],
+                      delegator,
+                    }),
+                    Row({ tagType: 'td', children: [formatReceiptMoney(summary.vatAmount)], delegator }),
+                  ],
+                  delegator,
+                }),
               Row({
                 tagType: 'tr',
                 classNames: ['grand-total'],
                 children: [
                   Row({ tagType: 'td', children: ['Total Due:'], delegator }),
-                  Row({ tagType: 'td', children: [formatMoney(summary.totalAmountDue)], delegator }),
+                  Row({ tagType: 'td', children: [formatReceiptMoney(summary.totalAmountDue)], delegator }),
                 ],
                 delegator,
               }),
@@ -242,17 +327,16 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
                 classNames: ['amount-paid'],
                 children: [
                   Row({ tagType: 'td', children: ['Paid:'], delegator }),
-                  Row({ tagType: 'td', children: [formatMoney(summary.amountPaid)], delegator }),
+                  Row({ tagType: 'td', children: [formatReceiptMoney(summary.amountPaid)], delegator }),
                 ],
                 delegator,
               }),
               Row({
                 tagType: 'tr',
                 classNames: ['remaining-balance'],
-                style: { borderTop: '1px dashed var(--border-color)' },
                 children: [
                   Row({ tagType: 'td', children: ['Balance:'], delegator }),
-                  Row({ tagType: 'td', children: [formatMoney(summary.remainingBalance)], delegator }),
+                  Row({ tagType: 'td', children: [formatReceiptMoney(summary.remainingBalance)], delegator }),
                 ],
                 delegator,
               }),
@@ -266,29 +350,58 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
     delegator,
   });
 
-  // --- NOTES (compact: one line or short list) ---
   const notesList = Array.isArray(notesAndTerms.list) ? notesAndTerms.list : [];
-  const notesAndTermsSection = notesList.length > 0 ? Row({
-    classNames: ['notes-terms-section', 'notes-terms-compact'],
-    children: [
-      Row({ tagType: 'span', classNames: ['notes-label'], children: [notesAndTerms.title || 'Notes:'], delegator }),
-      Row({
-        tagType: 'ul',
-        classNames: ['notes-list-inline'],
-        children: notesList.map((note) =>
-          Row({
-            tagType: 'li',
-            children: typeof note === 'string' && note.includes('<') && note.includes('>') ? renderRichText(note) : [note],
-            delegator,
-          })
-        ),
-        delegator,
-      }),
-    ],
-    delegator,
-  }) : null;
+  const notesAndTermsSection =
+    notesList.length > 0
+      ? Row({
+          classNames: ['notes-terms-section', 'notes-terms-compact'],
+          children: [
+            Row({ tagType: 'span', classNames: ['notes-label'], children: [notesAndTerms.title || 'Notes:'], delegator }),
+            Row({
+              tagType: 'ul',
+              classNames: ['notes-list-inline'],
+              children: notesList.map((note) =>
+                Row({
+                  tagType: 'li',
+                  children:
+                    typeof note === 'string' && note.includes('<') && note.includes('>')
+                      ? renderRichTextNodes(note)
+                      : [note],
+                  delegator,
+                })
+              ),
+              delegator,
+            }),
+          ],
+          delegator,
+        })
+      : null;
 
-  // --- FOOTER ---
+  const signaturesSection = isCredit
+    ? Row({
+        classNames: ['receipt-signatures'],
+        children: [
+          Row({
+            classNames: ['receipt-signature-block'],
+            children: [
+              Row({ classNames: ['receipt-signature-line'], children: [''], delegator }),
+              Row({ classNames: ['receipt-signature-label'], children: ['Authorized signature'], delegator }),
+            ],
+            delegator,
+          }),
+          Row({
+            classNames: ['receipt-signature-block'],
+            children: [
+              Row({ classNames: ['receipt-signature-line'], children: [''], delegator }),
+              Row({ classNames: ['receipt-signature-label'], children: ['Received by'], delegator }),
+            ],
+            delegator,
+          }),
+        ],
+        delegator,
+      })
+    : null;
+
   const footer = Row({
     tagType: 'footer',
     classNames: ['receipt-footer', 'receipt-footer-compact'],
@@ -298,32 +411,36 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
         classNames: ['receipt-footer-line'],
         children: [
           footerInfo.thankYouMessage ?? 'Thank you for your business.',
-          ' — ',
-          footerInfo.companyLine1 ?? '',
-          (fromCompany.phone || footerInfo.emailLink) ? ` · ${fromCompany.phone ?? ''}${fromCompany.phone && footerInfo.emailLink ? ' · ' : ''}${footerInfo.emailLink ?? ''}` : '',
+          companyName ? ` — ${companyName}` : '',
+          fromCompany.phone || footerInfo.emailLink
+            ? ` · ${joinNonEmpty([fromCompany.phone, footerInfo.emailLink])}`
+            : '',
         ],
         delegator,
       }),
-      footerInfo.softwareCredit
-        ? Row({
-            tagType: 'p',
-            classNames: ['receipt-footer-line', 'receipt-software-credit'],
-            children: [footerInfo.softwareCredit],
-            delegator,
-          })
-        : null,
-    ].filter(Boolean),
+      Row({
+        tagType: 'p',
+        classNames: ['receipt-footer-line', 'receipt-software-credit'],
+        children: [
+          joinNonEmpty([
+            receiptNo && `Receipt ${receiptNo}`,
+            footerInfo.softwareCredit || 'PharmaSuit by MasaTech',
+          ]),
+        ],
+        delegator,
+      }),
+    ],
     delegator,
   });
 
-  // --- WATERMARK ---
-  const watermark = Row({
-    classNames: ['watermark', isReversed && 'reversed'].filter(Boolean),
-    children: [receiptData.watermarkText ?? 'PROCESSED'],
-    delegator,
-  });
+  const watermark = isReversed
+    ? Row({
+        classNames: ['watermark', 'reversed'],
+        children: [receiptData.watermarkText || 'REVERSED'],
+        delegator,
+      })
+    : null;
 
-  // --- ASSEMBLE ---
   return Row({
     classNames: ['receipt-container'],
     children: [
@@ -334,6 +451,7 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
       itemsTable,
       summarySection,
       notesAndTermsSection,
+      signaturesSection,
       footer,
     ].filter(Boolean),
     delegator,

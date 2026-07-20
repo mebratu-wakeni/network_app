@@ -321,12 +321,18 @@ function SaleActionButtons(props) {
       disabled: loading,
       class: 'w-40',
       onClick: async () => {
-
-        const order = await props.viewModel.getLastOrder(); 
-        if (order && order.id) {
-          openReceiptModal({ orderId: order.id })
-        } else {
-          showAlert({ message: 'No sales orders yet.', variant: 'info' });
+        try {
+          const order = await props.viewModel.getLastOrder();
+          if (order && order.id) {
+            await openReceiptModal({ orderId: order.id });
+          } else {
+            showAlert({ message: 'No sales orders yet.', variant: 'info' });
+          }
+        } catch (e) {
+          showAlert({
+            message: e?.message || 'Failed to load last receipt.',
+            variant: 'error',
+          });
         }
       },
     }, 'View Last Receipt'),

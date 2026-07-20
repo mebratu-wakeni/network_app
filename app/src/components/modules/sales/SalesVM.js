@@ -365,7 +365,9 @@ export class SalesVM extends ViewModel {
     const currentSale = this.getState('current-sale') || {};
     const items = currentSale.items || [];
     const subtotal = items.reduce((sum, item) => sum + (item.quantity * (item.unit_price || 0)), 0);
-    const withholdPercentage = currentSale.is_withholding ? this.getState('withhold-percentage') : 0;
+    const withholdPercentage = currentSale.is_withholding
+      ? Number(this.getState('withhold-percentage') ?? 0)
+      : 0;
     const withholdAmount = (subtotal * withholdPercentage) / 100;
     const netAmount = subtotal - withholdAmount;
 
@@ -823,7 +825,13 @@ export class SalesVM extends ViewModel {
 
         // Walk-in customers cannot have withholding
         const isWalkIn = this.isWalkInCustomer(customerForSelect) || (!customerForSelect && String(customerName || '').trim().toLowerCase() === 'walk-in');
-        const snapshotWithholding = (snapshot.withhold_percentage != null || holdOrder.withhold_percentage != null) && Number(snapshot.withhold_percentage || holdOrder.withhold_percentage || 0) > 0;
+        const holdWithholdPctRaw = snapshot.withhold_percentage != null
+          ? snapshot.withhold_percentage
+          : holdOrder.withhold_percentage;
+        const holdWithholdPct =
+          holdWithholdPctRaw == null ? null : Number(holdWithholdPctRaw);
+        const snapshotWithholding =
+          holdWithholdPct != null && Number.isFinite(holdWithholdPct) && holdWithholdPct > 0;
         
         const orderDate = normalizeSaleDate(snapshot.sale_date || snapshot.order_date || holdOrder.order_date);
         const paymentMode = snapshot.payment_mode || snapshot.payment_type || holdOrder.payment_mode || 'cash';
@@ -846,7 +854,7 @@ export class SalesVM extends ViewModel {
           
           // Withholding (matching sales_orders table)
           is_withholding: isWalkIn ? false : snapshotWithholding,
-          withhold_percentage: snapshot.withhold_percentage != null ? Number(snapshot.withhold_percentage) : null,
+          withhold_percentage: snapshotWithholding ? holdWithholdPct : null,
           withhold_amount: null, // Will be computed
           withhold_reference: isWalkIn ? '' : (snapshot.withhold_reference || ''),
           withhold_ref: isWalkIn ? null : (snapshot.withhold_ref ?? snapshot.sales_invoice_no ?? null),
@@ -870,6 +878,10 @@ export class SalesVM extends ViewModel {
         };
         this.updateState('current-sale', currentSale);
         this.updateState('filtered-items', items);
+        // Keep VM withhold % in sync with the loaded hold (totals read this state key).
+        if (!isWalkIn && snapshotWithholding) {
+          this.updateState('withhold-percentage', holdWithholdPct);
+        }
         this.updateTab('current-sale');
         return holdOrder;
       }
@@ -927,8 +939,11 @@ export class SalesVM extends ViewModel {
         payment_type: currentSale.payment_mode,
         total_amount: netAmount,
         amount_paid: amountPaid,
-        withhold_percentage: currentSale.is_withholding ? Number(this.getState('withhold-percentage')) : null,
-        withhold_amount: totals.withhold_amount || null,
+        // Send 0 when unchecked — keep hold snapshot aligned with finalize path.
+        withhold_percentage: currentSale.is_withholding
+          ? Number(this.getState('withhold-percentage') ?? 0)
+          : 0,
+        withhold_amount: currentSale.is_withholding ? (totals.withhold_amount || 0) : 0,
         withhold_reference: currentSale.withhold_reference || null,
         withhold_ref: currentSale.withhold_ref || null,
         first_payment: currentSale.payment_mode === 'credit' ? Number(currentSale.first_payment || 0) : null,
