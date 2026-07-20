@@ -603,8 +603,10 @@ export class PurchaseVM extends ViewModel {
         payment_mode: currentOrder.payment_mode,
         total_amount: netAmount,
         amount_paid: amountPaid,
-        withhold_percentage: currentOrder.is_withholding ? Number(this.getState('withhold-percentage')) : null,
-        withhold_amount: totals.withhold_amount || null,
+        withhold_percentage: currentOrder.is_withholding
+          ? Number(this.getState('withhold-percentage') ?? 0)
+          : 0,
+        withhold_amount: currentOrder.is_withholding ? (totals.withhold_amount || 0) : 0,
         first_payment: currentOrder.payment_mode === 'credit' ? Number(currentOrder.first_payment || 0) : null,
         cheque_details:
           currentOrder.payment_mode === 'cheque' && currentOrder.cheque_details
@@ -668,7 +670,10 @@ export class PurchaseVM extends ViewModel {
           expiry_date: item.expiry_date || null
         })),
         payment_mode: currentOrder.payment_mode,
-        withhold_percentage: currentOrder.is_withholding ? Number(this.getState('withhold-percentage')) : null,
+        // Send 0 when unchecked — API must not treat null as "use company default".
+        withhold_percentage: currentOrder.is_withholding
+          ? Number(this.getState('withhold-percentage') ?? 0)
+          : 0,
         first_payment: currentOrder.payment_mode === 'credit' ? Number(currentOrder.first_payment || 0) : null,
         cheque_details: currentOrder.payment_mode === 'cheque' && currentOrder.cheque_details
           ? { ...currentOrder.cheque_details, amount: Number(currentOrder.cheque_details.amount) }
@@ -889,7 +894,8 @@ export class PurchaseVM extends ViewModel {
 
         const withholdPercentage =
           holdOrder.withhold_percentage == null ? null : Number(holdOrder.withhold_percentage);
-        const hasWithholding = withholdPercentage != null && withholdPercentage > 0;
+        const hasWithholding =
+          withholdPercentage != null && Number.isFinite(withholdPercentage) && withholdPercentage > 0;
         const restoredSupplier = holdOrder.supplier_id
           ? {
               id: holdOrder.supplier_id,
@@ -922,6 +928,10 @@ export class PurchaseVM extends ViewModel {
         this.updateState('selected-supplier', restoredSupplier);
         this.updateState('supplier-search-query', restoredSupplier?.name || '');
         this.updateState('filtered-items', normalizedItems);
+        // Keep VM withhold % in sync with the loaded hold (avoid stale % after check→uncheck→hold).
+        if (hasWithholding) {
+          this.updateState('withhold-percentage', withholdPercentage);
+        }
 
         this.updateTab('current-order');
         return holdOrder;

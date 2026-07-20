@@ -96,6 +96,56 @@ describe('PurchaseService', () => {
     )
   })
 
+  it('does not apply company withhold when client sends null (unchecked checkbox)', async () => {
+    const repository = makeRepository()
+    const service = new PurchaseService(repository)
+
+    const result = await service.createOrder(
+      {
+        supplier_id: 10,
+        order_date: '2026-02-01',
+        items: [{ product_id: 1, quantity: 2, unit_price: 50 }],
+        payment_mode: 'cash',
+        withhold_percentage: null
+      },
+      { id: 7, full_name: 'Tester' }
+    )
+
+    expect(result.subtotal).toBe(100)
+    expect(result.withhold_amount).toBe(0)
+    expect(result.net_amount).toBe(100)
+    expect(repository.getWithholdPercentageSetting).not.toHaveBeenCalled()
+    expect(repository.createOrderWithItemsAndReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        order: expect.objectContaining({
+          withhold_percentage: null,
+          withhold_amount: 0,
+          amount_paid: 100
+        })
+      }),
+      7
+    )
+  })
+
+  it('uses company withhold setting only when withhold_percentage is omitted', async () => {
+    const repository = makeRepository()
+    const service = new PurchaseService(repository)
+
+    const result = await service.createOrder(
+      {
+        supplier_id: 10,
+        order_date: '2026-02-01',
+        items: [{ product_id: 1, quantity: 2, unit_price: 50 }],
+        payment_mode: 'cash'
+      },
+      { id: 7, full_name: 'Tester' }
+    )
+
+    expect(repository.getWithholdPercentageSetting).toHaveBeenCalled()
+    expect(result.withhold_amount).toBe(2)
+    expect(result.net_amount).toBe(98)
+  })
+
   it('throws a 400 error when cheque mode has no cheque details', async () => {
     const service = new PurchaseService(makeRepository())
     await expect(
