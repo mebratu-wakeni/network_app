@@ -29,13 +29,13 @@ on:
         description: 'FTPS dry-run only (no uploads)'
         type: boolean
         default: true
-  # Real FTPS to mltplc only (proven). Prefer manual dry-run for perloss first.
-  # Editing this workflow file alone does not upload.
+  # Real FTPS on push (both sites). Manual Run workflow is optional when the button is available.
   push:
     branches:
       - cloud-backend
     paths:
       - 'api/**'
+      - '.github/workflows/deploy.yml'
 
 concurrency:
   group: deploy-cpanel-${{ github.event.inputs.target || 'push' }}
@@ -62,8 +62,8 @@ jobs:
             esac
             echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
           else
-            # Push: auto-deploy mltplc only until perloss dry-run is proven
-            echo "matrix={\"include\":[$mltplc]}" >> "$GITHUB_OUTPUT"
+            # Push: FTPS both sites (same as mltplc; no Run workflow button needed)
+            echo "matrix={\"include\":[$mltplc,$perloss]}" >> "$GITHUB_OUTPUT"
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           fi
 
