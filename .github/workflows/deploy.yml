@@ -1,32 +1,36 @@
-# Deploy PharmaSuit API → mltplc.com (cPanel) via FTPS.
+# Deploy PharmaSuit API → dedicated-cloud cPanel hosts via FTPS.
 # Live SQLite stays outside api/ (sibling db/); this workflow must never upload *.db.
+# After a real sync: cPanel → Setup Node.js App → Restart (SSH not used).
 #
-# Secrets (repo → Settings → Secrets → Actions):
+# GitHub secrets (exact names used below):
 #   MLTPLC_HOST, MLTPLC_USERNAME, MLTPLC_PASSWORD
-# Optional later:
-#   MLTPLC_SSH_KEY, MLTPLC_SSH_PORT (default 22) — for npm install / migrate / restart
+#   PERLOSS_HOST, PERLOSS_USERNAME, PERLOSS_PASSWORD
 #
-# First run: Actions → Deploy API (mltplc) → Run workflow → dry-run = true
+# Remote paths (do not mix):
+#   mltplc  → network-desktop-app/api/
+#   perloss → network-app/api/
+#
+# First run per site: Actions → Deploy API (cPanel) → dry-run = true
 
-name: Deploy API (mltplc)
+name: Deploy API (cPanel)
 
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: 'Which site(s) to deploy'
+        type: choice
+        options:
+          - mltplc
+          - perloss
+          - both
+        default: mltplc
       dry_run:
         description: 'FTPS dry-run only (no uploads)'
         type: boolean
         default: true
-      run_ssh:
-        description: 'After FTPS, SSH npm install + restart (needs SSH access)'
-        type: boolean
-        default: false
-      run_migrate:
-        description: 'Also run knex migrate over SSH (only with run_ssh)'
-        type: boolean
-        default: false
-  # Real FTPS sync (not dry-run). Prefer a manual dry-run once before relying on this.
-  # Path filter omits this workflow file so editing deploy.yml alone does not upload.
+  # Real FTPS to mltplc only (proven). Prefer manual dry-run for perloss first.
+  # Editing this workflow file alone does not upload.
   push:
     branches:
       - cloud-backend
@@ -34,27 +38,44 @@ on:
       - 'api/**'
 
 concurrency:
-  group: deploy-mltplc
+  group: deploy-cpanel-${{ github.event.inputs.target || 'push' }}
   cancel-in-progress: false
 
 jobs:
-  deploy-mltplc:
+  select:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      dry_run: ${{ steps.pick.outputs.dry_run }}
+    steps:
+      - name: Pick sites and dry-run
+        id: pick
+        run: |
+          mltplc='{"site":"mltplc","server_dir":"network-desktop-app/api/","live_db_hint":"network-desktop-app/db/"}'
+          perloss='{"site":"perloss","server_dir":"network-app/api/","live_db_hint":"network-app/db/"}'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            case "${{ inputs.target }}" in
+              mltplc)  echo "matrix={\"include\":[$mltplc]}" >> "$GITHUB_OUTPUT" ;;
+              perloss) echo "matrix={\"include\":[$perloss]}" >> "$GITHUB_OUTPUT" ;;
+              both)    echo "matrix={\"include\":[$mltplc,$perloss]}" >> "$GITHUB_OUTPUT" ;;
+              *) echo "::error::Unknown target"; exit 1 ;;
+            esac
+            echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+          else
+            # Push: auto-deploy mltplc only until perloss dry-run is proven
+            echo "matrix={\"include\":[$mltplc]}" >> "$GITHUB_OUTPUT"
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: select
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.select.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Require MLTPLC FTPS secrets
-        env:
-          MLTPLC_HOST: ${{ secrets.MLTPLC_HOST }}
-          MLTPLC_USERNAME: ${{ secrets.MLTPLC_USERNAME }}
-          MLTPLC_PASSWORD: ${{ secrets.MLTPLC_PASSWORD }}
-        run: |
-          missing=0
-          [ -z "$MLTPLC_HOST" ] && echo "Missing secret: MLTPLC_HOST" && missing=1
-          [ -z "$MLTPLC_USERNAME" ] && echo "Missing secret: MLTPLC_USERNAME" && missing=1
-          [ -z "$MLTPLC_PASSWORD" ] && echo "Missing secret: MLTPLC_PASSWORD" && missing=1
-          exit $missing
 
       - name: Guard — refuse to sync if SQLite files exist under api/
         run: |
@@ -71,21 +92,34 @@ jobs:
           fi
           echo "OK: no SQLite files under api/"
 
-      - name: Resolve deploy options
-        id: opts
+      - name: Require MLTPLC_* secrets
+        if: matrix.site == 'mltplc'
+        env:
+          MLTPLC_HOST: ${{ secrets.MLTPLC_HOST }}
+          MLTPLC_USERNAME: ${{ secrets.MLTPLC_USERNAME }}
+          MLTPLC_PASSWORD: ${{ secrets.MLTPLC_PASSWORD }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
-            echo "run_ssh=${{ inputs.run_ssh }}" >> "$GITHUB_OUTPUT"
-            echo "run_migrate=${{ inputs.run_migrate }}" >> "$GITHUB_OUTPUT"
-          else
-            # Push: real sync; SSH/migrate stay off until keys are configured
-            echo "dry_run=false" >> "$GITHUB_OUTPUT"
-            echo "run_ssh=false" >> "$GITHUB_OUTPUT"
-            echo "run_migrate=false" >> "$GITHUB_OUTPUT"
-          fi
+          missing=0
+          [ -z "$MLTPLC_HOST" ] && echo "Missing secret: MLTPLC_HOST" && missing=1
+          [ -z "$MLTPLC_USERNAME" ] && echo "Missing secret: MLTPLC_USERNAME" && missing=1
+          [ -z "$MLTPLC_PASSWORD" ] && echo "Missing secret: MLTPLC_PASSWORD" && missing=1
+          exit $missing
 
-      - name: FTPS sync api/ → network-desktop-app/api/
+      - name: Require PERLOSS_* secrets
+        if: matrix.site == 'perloss'
+        env:
+          PERLOSS_HOST: ${{ secrets.PERLOSS_HOST }}
+          PERLOSS_USERNAME: ${{ secrets.PERLOSS_USERNAME }}
+          PERLOSS_PASSWORD: ${{ secrets.PERLOSS_PASSWORD }}
+        run: |
+          missing=0
+          [ -z "$PERLOSS_HOST" ] && echo "Missing secret: PERLOSS_HOST" && missing=1
+          [ -z "$PERLOSS_USERNAME" ] && echo "Missing secret: PERLOSS_USERNAME" && missing=1
+          [ -z "$PERLOSS_PASSWORD" ] && echo "Missing secret: PERLOSS_PASSWORD" && missing=1
+          exit $missing
+
+      - name: FTPS sync api/ → mltplc (${{ matrix.server_dir }})
+        if: matrix.site == 'mltplc'
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.MLTPLC_HOST }}
@@ -93,10 +127,9 @@ jobs:
           password: ${{ secrets.MLTPLC_PASSWORD }}
           protocol: ftps
           local-dir: api/
-          # Existing mltplc tarball layout (do not sync parent live db/)
-          server-dir: network-desktop-app/api/
+          server-dir: ${{ matrix.server_dir }}
           dangerous-clean-slate: false
-          dry-run: ${{ steps.opts.outputs.dry_run == 'true' }}
+          dry-run: ${{ needs.select.outputs.dry_run == 'true' }}
           exclude: |
             **/.git*
             **/.git*/**
@@ -120,53 +153,52 @@ jobs:
             **/startup-error.log
             **/test-api.js
 
-      # SSH host is often mltplc.com (not ftp.mltplc.com). Set MLTPLC_SSH_HOST if needed.
-      # Add `key: ${{ secrets.MLTPLC_SSH_KEY }}` once a deploy key is installed in cPanel.
-      - name: SSH — npm install, optional migrate, Passenger restart
-        if: steps.opts.outputs.run_ssh == 'true'
-        uses: appleboy/ssh-action@v1.2.0
+      - name: FTPS sync api/ → perloss (${{ matrix.server_dir }})
+        if: matrix.site == 'perloss'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          host: ${{ secrets.MLTPLC_SSH_HOST || secrets.MLTPLC_HOST }}
-          username: ${{ secrets.MLTPLC_USERNAME }}
-          password: ${{ secrets.MLTPLC_PASSWORD }}
-          port: ${{ secrets.MLTPLC_SSH_PORT || 22 }}
-          script: |
-            set -euo pipefail
-            APP="$HOME/network-desktop-app/api"
-            VENV="$HOME/nodevenv/network-desktop-app/api/20/bin/activate"
-            if [ -f "$VENV" ]; then
-              # shellcheck disable=SC1090
-              source "$VENV"
-            fi
-            cd "$APP"
-            find db -name '._*' -type f -delete 2>/dev/null || true
-            npm install --omit=dev
-            if [ "${{ steps.opts.outputs.run_migrate }}" = "true" ]; then
-              echo "==> migrate (schema only; does not replace the .db file)"
-              npm run migrate
-            else
-              echo "==> skip migrate"
-            fi
-            mkdir -p tmp
-            touch tmp/restart.txt
-            echo "==> touched tmp/restart.txt"
+          server: ${{ secrets.PERLOSS_HOST }}
+          username: ${{ secrets.PERLOSS_USERNAME }}
+          password: ${{ secrets.PERLOSS_PASSWORD }}
+          protocol: ftps
+          local-dir: api/
+          server-dir: ${{ matrix.server_dir }}
+          dangerous-clean-slate: false
+          dry-run: ${{ needs.select.outputs.dry_run == 'true' }}
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.env
+            **/.env.*
+            **/data/**
+            **/uploads/**
+            **/coverage/**
+            **/admin-dist/**
+            **/tests/**
+            **/*.md
+            **/.DS_Store
+            **/._*
+            **/*.db
+            **/*.db-wal
+            **/*.db-shm
+            **/*.sqlite
+            **/*.sqlite-*
+            **/pharmasuit_lan.db*
+            **/startup-error.log
+            **/test-api.js
 
       - name: Summary
         run: |
           {
-            echo "### Deploy API (mltplc)"
-            echo "- **Host:** FTPS → \`${{ secrets.MLTPLC_HOST }}\`"
-            echo "- **Remote:** \`network-desktop-app/api/\` (code only)"
-            echo "- **Dry-run:** \`${{ steps.opts.outputs.dry_run }}\`"
-            echo "- **SSH steps:** \`${{ steps.opts.outputs.run_ssh }}\`"
-            echo "- **Migrate:** \`${{ steps.opts.outputs.run_migrate }}\`"
+            echo "### Deploy API — ${{ matrix.site }}"
+            echo "- **Remote:** \`${{ matrix.server_dir }}\` (code only)"
+            echo "- **Live DB (untouched):** \`${{ matrix.live_db_hint }}\`"
+            echo "- **Dry-run:** \`${{ needs.select.outputs.dry_run }}\`"
             echo ""
-            echo "Live SQLite must remain at sibling \`network-desktop-app/db/\` (never uploaded)."
-            if [ "${{ steps.opts.outputs.dry_run }}" = "true" ]; then
-              echo ""
-              echo "Next: re-run with **dry-run = false**. Without SSH, restart the Node app in cPanel after a real sync."
-            elif [ "${{ steps.opts.outputs.run_ssh }}" != "true" ]; then
-              echo ""
-              echo "FTPS upload done. Restart via **cPanel → Setup Node.js App** (or enable SSH and re-run with **run_ssh**)."
+            if [ "${{ needs.select.outputs.dry_run }}" = "true" ]; then
+              echo "Next: re-run with **dry-run = false**, then **cPanel → Setup Node.js App → Restart**."
+            else
+              echo "FTPS upload done. Restart the Node app in that site’s cPanel, then smoke-test login."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

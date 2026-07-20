@@ -1,88 +1,91 @@
-# Deploy API to cPanel from GitHub Actions (mltplc)
+# Deploy API to cPanel from GitHub Actions
 
-Goal: deploy `api/` to **mltplc.com** over **FTPS** without touching live SQLite.  
-perloss.com is out of scope until a later pass (different remote path — see below).
+Goal: FTPS-sync `api/` to dedicated-cloud hosts **without** touching live SQLite.  
+After each real upload: **cPanel → Setup Node.js App → Restart** (SSH is not used).
 
 Tarball remains a **manual emergency** path; see [CLOUD_BACKEND_DEPLOY_SAFETY.md](./CLOUD_BACKEND_DEPLOY_SAFETY.md).
 
-## GitHub secrets (mltplc FTPS)
+## GitHub secrets (names must match the workflow)
 
-Repo → **Settings → Secrets and variables → Actions**:
+Repo → **Settings → Secrets and variables → Actions**.  
+Use these **exact** names (same as in `.github/workflows/deploy.yml`):
+
+### mltplc.com
 
 | Secret | Value |
 |--------|--------|
 | `MLTPLC_HOST` | From cPanel → FTP Accounts → Configure FTP Client (e.g. `ftp.mltplc.com`) |
-| `MLTPLC_USERNAME` | `mltplcpi` |
+| `MLTPLC_USERNAME` | cPanel/FTP user (e.g. `mltplcpi`) |
 | `MLTPLC_PASSWORD` | cPanel password |
 
-Optional (SSH step — enable after provider turns on shell access):
+### perloss.com
 
 | Secret | Value |
 |--------|--------|
-| `MLTPLC_SSH_KEY` | Private key (preferred over password for SSH) |
-| `MLTPLC_SSH_PORT` | From cPanel SSH Access (often `22`) |
-| `MLTPLC_SSH_HOST` | Optional. If SSH rejects `ftp.mltplc.com`, use `mltplc.com` (or the hostname cPanel SSH Access shows) |
+| `PERLOSS_HOST` | From perloss cPanel → Configure FTP Client (often `ftp.perloss.com` or as shown) |
+| `PERLOSS_USERNAME` | perloss cPanel/FTP user |
+| `PERLOSS_PASSWORD` | that account’s password |
 
-Do **not** put these values in chat, commits, or workflow YAML.
+Do **not** put these values in chat, commits, or workflow YAML.  
+Do **not** reuse `DOWNLOADS_*` (those are for `server.masatechplc.com` installer publish).
 
-**Do not reuse** `DOWNLOADS_*` (those are for `server.masatechplc.com` installer publish).
+## Remote layouts (do not mix)
 
-## Remote layout (already live from tarball)
-
-**mltplc.com** (this workflow):
+**mltplc.com**
 
 ```text
 ~/network-desktop-app/
-  api/                   ← FTPS target (code)
-  db/pharmasuit_lan.db   ← LIVE data — never synced
+  api/                   ← FTPS → network-desktop-app/api/
+  db/pharmasuit_lan.db   ← LIVE — never synced
 ```
 
-**perloss.com** (later — do not use mltplc paths):
+**perloss.com**
 
 ```text
 ~/network-app/
-  api/                   ← FTPS target when we add PERLOSS_* secrets
-  db/pharmasuit_lan.db   ← LIVE data — never synced
+  api/                   ← FTPS → network-app/api/
+  db/pharmasuit_lan.db   ← LIVE — never synced
 ```
 
-Same code branch; different `server-dir` / home layout per tenant. Production `DB_FILE` on each host must point at that site’s sibling live file, not a path under `api/`.
+Same `cloud-backend` code; different `server-dir` and secrets per tenant.  
+Production `DB_FILE` on each host must point at that site’s sibling live file, not under `api/`.
 
-## What the workflow does
+## Workflow
 
-Workflow: **Deploy API (mltplc)** (`.github/workflows/deploy.yml`)
+**Deploy API (cPanel)** (`.github/workflows/deploy.yml`)
 
-1. Refuses to run if any `*.db` exists under `api/` in the checkout
-2. FTPS sync `api/` → `network-desktop-app/api/` with excludes for `.env`, `*.db`, `uploads/`, `node_modules/`, …
-3. Optional SSH (manual input `run_ssh`): `npm install --omit=dev`, optional `migrate`, `touch tmp/restart.txt`
+| Manual input | Meaning |
+|--------------|---------|
+| `target` | `mltplc` / `perloss` / `both` |
+| `dry_run` | default `true` — list FTPS changes only |
 
-`dangerous-clean-slate` is **false** so remote-only files are not wiped.
+1. Refuses to run if any `*.db` exists under `api/` in the checkout  
+2. FTPS sync with excludes (`.env`, `*.db`, `uploads/`, `node_modules/`, …)  
+3. `dangerous-clean-slate: false`  
+4. You restart Node in that site’s cPanel  
 
-## Safe first test
+Push to `cloud-backend` touching `api/**` auto-deploys **mltplc only** (real sync, not dry-run). perloss stays manual until you’ve dry-run it once.
 
-1. Actions → **Deploy API (mltplc)** → **Run workflow**
-2. Leave **dry-run = true** (default) — lists planned FTPS changes only
-3. Confirm the list does **not** include any `.db` / live data paths
-4. Re-run with **dry-run = false**
-5. Until SSH is ready: **cPanel → Setup Node.js App → Restart**
-6. Smoke-test login against mltplc
+## Safe first test (perloss)
 
-Leave **run_ssh** / **run_migrate** off until SSH works. Migrate changes schema *inside* the live file; it does not replace the file — still use only when you intend schema updates.
-
-## Push trigger
-
-Pushes to `cloud-backend` that touch `api/**` run a **real** FTPS sync (not dry-run), still **without** SSH/migrate. Editing only this workflow file does **not** auto-deploy. Prefer a manual dry-run once before relying on push.
+1. Add the three `PERLOSS_*` secrets (from perloss **Configure FTP Client**)  
+2. Actions → **Deploy API (cPanel)** → **Run workflow**  
+3. `target = perloss`, **dry-run = true**  
+4. Confirm planned paths under `network-app/api/` only — no `.db`  
+5. Re-run with **dry-run = false**  
+6. **perloss cPanel → Setup Node.js App → Restart**  
+7. Smoke-test login  
 
 ## If it fails
 
 | Symptom | Likely fix |
 |---------|------------|
-| FTPS login / TLS errors | Confirm `MLTPLC_HOST` is `ftp.mltplc.com`; password correct |
-| Wrong remote folder | Confirm File Manager has `network-desktop-app/api/package.json` |
-| App not picking up code | Restart Node app in cPanel (or enable SSH + `run_ssh`) |
-| SSH timeout | Enable SSH; set `MLTPLC_SSH_PORT`; prefer `MLTPLC_SSH_KEY` |
-| Knex reads `._*.js` | Workflow deletes `db/**/._*` on SSH; avoid uploading Mac junk |
+| Missing secret | Add `PERLOSS_HOST` / `USERNAME` / `PASSWORD` (exact names) |
+| FTPS login / TLS | Use hostname from Configure FTP Client, not a guess |
+| Wrong folder | mltplc = `network-desktop-app/api/`; perloss = `network-app/api/` |
+| App not updating | Restart Node app in that site’s cPanel after real sync |
 
 ## Related
 
-- [CLOUD_BACKEND_DEPLOY_SAFETY.md](./CLOUD_BACKEND_DEPLOY_SAFETY.md) — why tarball once wiped DB
-- `scripts/pack-cloud-backend-api.sh` — emergency pack (no `.db`)
+- [CLOUD_BACKEND_DEPLOY_SAFETY.md](./CLOUD_BACKEND_DEPLOY_SAFETY.md)
+- `scripts/pack-cloud-backend-api.sh`
