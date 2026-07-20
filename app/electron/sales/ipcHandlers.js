@@ -104,7 +104,10 @@ export function SalesIpcHandlers() {
 
       const order_date = normalizeDate(currentSale.order_date || currentSale.sale_date)
       const payment_type = currentSale.payment_mode || currentSale.payment_type || 'cash'
-      const withhold_percentage = currentSale.is_withholding && totals?.withhold_percentage != null ? Number(totals.withhold_percentage) : null
+      // Send 0 when unchecked so API never treats missing intent as an applied withhold.
+      const withhold_percentage = currentSale.is_withholding
+        ? Number(totals?.withhold_percentage ?? 0)
+        : 0
       let amount_paid = currentSale.first_payment != null ? Number(currentSale.first_payment) : null
       if (payment_type === 'cash') amount_paid = totals?.net_amount ?? 0
       if (payment_type === 'cheque' && currentSale.cheque_details?.amount != null) amount_paid = Number(currentSale.cheque_details.amount)

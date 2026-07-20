@@ -5,91 +5,92 @@ import electron from 'vite-plugin-electron/simple';
 import tailwindcss from '@tailwindcss/vite'
 
 /**
- * All ion-icon names actually referenced in src/.
- * Update this list whenever a new icon is introduced.
+ * Icons referenced via variables / hard-to-scan patterns — always keep these.
+ * Prefer string literals in source so the scanner picks them up automatically.
  */
-const USED_ICONS = new Set([
-  'add-outline',
-  'alert-circle-outline',
-  'arrow-back-outline',
-  'arrow-down-circle-outline',
-  'arrow-down-outline',
-  'arrow-forward-outline',
-  'arrow-undo-outline',
-  'arrow-up-circle-outline',
-  'arrow-up-outline',
-  'ban-outline',
-  'business-outline',
-  'calendar-outline',
-  'card-outline',
-  'caret-back-outline',
-  'caret-forward-circle-outline',
-  'caret-forward-outline',
-  'cart-outline',
-  'checkbox',
-  'cash-outline',
-  'checkmark-circle-outline',
-  'checkmark-done-outline',
-  'chevron-back-outline',
-  'chevron-down-outline',
-  'chevron-forward-outline',
-  'chevron-up-outline',
-  'close-circle-outline',
-  'close-outline',
-  'cloud-offline-outline',
-  'cloud-upload-outline',
-  'create-outline',
+const EXTRA_ICONS = [
   'cube',
-  'cube-outline',
-  'diamond-outline',
-  'document-attach-outline',
-  'document-outline',
-  'document-text-outline',
-  'download-outline',
-  'ellipsis-vertical-outline',
-  'eye-outline',
-  'filter-outline',
   'flash',
-  'grid-outline',
-  'hourglass-outline',
-  'key-outline',
-  'layers-outline',
-  'lock-closed-outline',
-  'lock-open-outline',
-  'log-out-outline',
-  'logo-apple',
-  'mail-outline',
-  'medical-outline',
-  'pencil-outline',
-  'people-outline',
-  'person-add-outline',
-  'person-circle-outline',
-  'person-outline',
-  'pie-chart-outline',
-  'pricetag-outline',
-  'print-outline',
-  'reader-outline',
-  'receipt-outline',
-  'return-down-back-outline',
-  'return-up-forward-outline',
-  'rocket-outline',
-  'search-outline',
   'server',
-  'server-outline',
-  'settings-outline',
-  'shield-checkmark',
-  'shield-checkmark-outline',
-  'square-outline',
-  'stats-chart-outline',
-  'swap-horizontal-outline',
-  'swap-vertical-outline',
-  'time-outline',
   'toggle',
-  'trash-outline',
-  'trending-up-outline',
-  'wallet-outline',
-  'warning-outline',
+  'logo-apple',
+  'medical-outline',
+  'rocket-outline',
+  'caret-forward-circle-outline',
+]
+
+/** Solid (non-*-outline) ionicon names we actually use. */
+const SOLID_ICONS = new Set([
+  'checkbox',
+  'checkmark',
+  'cube',
+  'flash',
+  'logo-apple',
+  'server',
+  'shield-checkmark',
+  'toggle',
 ])
+
+const ICON_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+
+function isLikelyIconName(name) {
+  if (!ICON_NAME_RE.test(name)) return false
+  if (name.endsWith('-outline')) return true
+  if (SOLID_ICONS.has(name)) return true
+  return false
+}
+
+function walkSourceFiles(dir, files = []) {
+  if (!fs.existsSync(dir)) return files
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) walkSourceFiles(full, files)
+    else if (/\.(js|jsx|ts|tsx)$/.test(entry.name)) files.push(full)
+  }
+  return files
+}
+
+/**
+ * Scan app/src for ion-icon names so production builds keep every icon in use
+ * (manual allowlists drift — e.g. add-circle-outline was missing from deployed builds).
+ */
+function collectUsedIcons(srcDir) {
+  const icons = new Set(EXTRA_ICONS)
+  const files = walkSourceFiles(srcDir)
+
+  for (const file of files) {
+    const text = fs.readFileSync(file, 'utf8')
+
+    // IonIcon({ name: 'xxx' }) — including multiline props
+    for (const match of text.matchAll(/IonIcon\(\s*\{([\s\S]*?)\}\s*\)/g)) {
+      const body = match[1]
+      const lit = body.match(/\bname:\s*['"`]([a-z0-9-]+)['"`]/)
+      if (lit && isLikelyIconName(lit[1])) icons.add(lit[1])
+      const tpl = body.match(/\bname:\s*`([^`]*)`/)
+      if (tpl) {
+        for (const quoted of tpl[1].matchAll(/['"]([a-z0-9-]+)['"]/g)) {
+          if (isLikelyIconName(quoted[1])) icons.add(quoted[1])
+        }
+      }
+    }
+
+    // <ion-icon> via Row tagType
+    for (const match of text.matchAll(
+      /tagType:\s*['"]ion-icon['"][\s\S]{0,200}?\bname:\s*['"`]([a-z0-9-]+)['"`]/g
+    )) {
+      if (isLikelyIconName(match[1])) icons.add(match[1])
+    }
+
+    // ActionItem / nav / tabs: icon: 'xxx-outline'
+    for (const match of text.matchAll(/\bicon:\s*['"`]([a-z0-9-]+)['"`]/g)) {
+      if (isLikelyIconName(match[1])) icons.add(match[1])
+    }
+  }
+
+  return icons
+}
+
+const USED_ICONS = collectUsedIcons(path.resolve(__dirname, 'src'))
 
 /**
  * Vite plugin that strips unused Ionicons assets from dist/ after the
@@ -150,6 +151,7 @@ function ioniconsOptimizer() {
       if (fs.existsSync(componentSvgDir)) {
         const files = fs.readdirSync(componentSvgDir)
         let removed = 0
+        const missingAssets = []
         for (const file of files) {
           if (!file.endsWith('.svg')) continue
           const iconName = file.slice(0, -4) // strip .svg
@@ -158,9 +160,18 @@ function ioniconsOptimizer() {
             removed++
           }
         }
+        for (const iconName of USED_ICONS) {
+          const svgPath = path.join(componentSvgDir, `${iconName}.svg`)
+          if (!fs.existsSync(svgPath)) missingAssets.push(iconName)
+        }
         console.log(
-          `[ionicons-optimizer] SVGs: kept ${USED_ICONS.size}, removed ${removed} unused from dist/ionicons/ionicons/svg/`
+          `[ionicons-optimizer] SVGs: kept ${USED_ICONS.size} (scanned from src/), removed ${removed} unused from dist/ionicons/ionicons/svg/`
         )
+        if (missingAssets.length) {
+          console.warn(
+            `[ionicons-optimizer] WARNING: ${missingAssets.length} used icon(s) have no SVG asset: ${missingAssets.join(', ')}`
+          )
+        }
       }
 
       const finalSize = getFolderSize(ioniconsDir)

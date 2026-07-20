@@ -18,7 +18,8 @@ export class SettingsVM extends ViewModel {
       company_address: '',
       company_phone: '',
       company_email: '',
-      company_tin: ''
+      company_tin: '',
+      company_logo_url: ''
     })
     this.setState('fiscal-years', [])
     this.setState('current-fiscal-year', null)
@@ -44,7 +45,8 @@ export class SettingsVM extends ViewModel {
           company_address: result.settings.company_address ?? '',
           company_phone: result.settings.company_phone ?? '',
           company_email: result.settings.company_email ?? '',
-          company_tin: result.settings.company_tin ?? ''
+          company_tin: result.settings.company_tin ?? '',
+          company_logo_url: result.settings.company_logo_url ?? ''
         })
       }
     } catch (err) {
@@ -208,7 +210,8 @@ export class SettingsVM extends ViewModel {
         company_address: form.company_address || null,
         company_phone: form.company_phone || null,
         company_email: form.company_email || null,
-        company_tin: form.company_tin || null
+        company_tin: form.company_tin || null,
+        company_logo_url: form.company_logo_url || null
       }
       const result = await window.ipcRenderer.invoke('settings:update', payload)
       if (result && result.success) {
@@ -219,7 +222,8 @@ export class SettingsVM extends ViewModel {
           company_address: result.settings.company_address ?? '',
           company_phone: result.settings.company_phone ?? '',
           company_email: result.settings.company_email ?? '',
-          company_tin: result.settings.company_tin ?? ''
+          company_tin: result.settings.company_tin ?? '',
+          company_logo_url: result.settings.company_logo_url ?? ''
         })
       } else {
         this.updateState('error', result?.error || 'Failed to save settings')
