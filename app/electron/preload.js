@@ -29,6 +29,20 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   getServerLogs: (service, lines) => ipcRenderer.invoke('server:logs', service, lines),
   checkDevServerStatus: () => ipcRenderer.invoke('server:check-dev-status'),
 
+  // Managed / Dedicated cloud in-app updates (electron-updater)
+  getUpdateState: () => ipcRenderer.invoke('updater:get-state'),
+  checkForUpdates: () => ipcRenderer.invoke('updater:check-now'),
+  simulateUpdate: (payload) => ipcRenderer.invoke('updater:simulate', payload),
+  startUpdateDownload: () => ipcRenderer.invoke('updater:start-download'),
+  installUpdate: () => ipcRenderer.invoke('updater:install'),
+  dismissUpdate: () => ipcRenderer.invoke('updater:dismiss'),
+  isPackaged: () => ipcRenderer.invoke('app:is-packaged'),
+  onUpdateState: (listener) => {
+    const wrapped = (_event, state) => listener(state)
+    ipcRenderer.on('updater:state', wrapped)
+    return () => ipcRenderer.off('updater:state', wrapped)
+  },
+
   // Note: For user management and other APIs, use invoke() directly:
   // window.ipcRenderer.invoke('users:search', searchParams, token)
   // window.ipcRenderer.invoke('users:get-by-id', userId, token)

@@ -24,7 +24,7 @@ import LicenseManager from './license/license.js'
 import { LicenseIpcHandlers } from './license/ipcHandlers.js'
 import { setToken, clearToken } from './config/authManager.js'
 import { setOnSessionExpired, setOnServerDown } from './config/apiFetch.js'
-import { initCloudAutoUpdater } from './cloudUpdater.js'
+import { initCloudAutoUpdater, registerCloudUpdaterIpc } from './cloudUpdater.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -1242,6 +1242,8 @@ ipcMain.handle('app:quit', async () => {
   return { success: true }
 })
 
+ipcMain.handle('app:is-packaged', async () => app.isPackaged)
+
 ipcMain.handle('setup:save-config', async (_event, payload) => {
   const mode = payload?.mode === 'client' ? 'client' : 'server'
   if (IS_CLOUD_BUILD && mode === 'server') {
@@ -1476,6 +1478,7 @@ app.on('before-quit', async () => {
 
 app.whenReady().then(() => {
   registerRendererProtocol()
+  registerCloudUpdaterIpc(ipcMain)
   // Do not auto-start server. User must choose mode first, then we validate DB/license.
   createMainWindow()
   if (IS_CLOUD_BUILD) initCloudAutoUpdater()

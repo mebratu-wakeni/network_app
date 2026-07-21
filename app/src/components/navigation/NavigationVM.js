@@ -60,6 +60,17 @@ class NavigationVM extends ViewModel {
     this.setState('startup-loading-expanded', false);
     this.setState('startup-error-details-open', false);
     this.setState('server-down', false);
+    this.setState('app-update-state', {
+      status: 'idle',
+      version: null,
+      releaseNotes: '',
+      mandatory: false,
+      percent: 0,
+      error: null,
+      currentVersion: null,
+      simulated: false
+    });
+    this.setState('app-update-dev-panel', { show: false, note: '' });
 
     this._devAutoLoginDone = false
 

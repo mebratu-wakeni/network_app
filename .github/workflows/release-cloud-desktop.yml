@@ -24,6 +24,14 @@ on:
         description: 'App version to build (must match app/package.json unless you bump first)'
         required: false
         default: ''
+      mandatory:
+        description: 'Mark this release as a required in-app update'
+        type: boolean
+        default: false
+      min_supported_version:
+        description: 'Oldest client version still allowed (empty = no floor)'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -135,12 +143,20 @@ jobs:
             echo "No installer artifacts downloaded — cannot publish."
             exit 1
           fi
-          node scripts/prepare-cloud-multi-release.mjs \
-            --version "${{ steps.ver.outputs.version }}" \
-            --artifacts-dir staging/artifacts \
-            --out-dir staging/publish \
-            --notes "PharmaSuit Cloud ${{ steps.ver.outputs.version }}" \
+          PREPARE_ARGS=(
+            --version "${{ steps.ver.outputs.version }}"
+            --artifacts-dir staging/artifacts
+            --out-dir staging/publish
+            --notes "PharmaSuit Cloud ${{ steps.ver.outputs.version }}"
             --base-url "https://server.masatechplc.com/downloads/cloud-multi"
+          )
+          if [ "${{ github.event.inputs.mandatory }}" = "true" ]; then
+            PREPARE_ARGS+=(--mandatory)
+          fi
+          if [ -n "${{ github.event.inputs.min_supported_version }}" ]; then
+            PREPARE_ARGS+=(--min-supported-version "${{ github.event.inputs.min_supported_version }}")
+          fi
+          node scripts/prepare-cloud-multi-release.mjs "${PREPARE_ARGS[@]}"
           echo "--- publish tree ---"
           find staging/publish -type f | sort
 

@@ -6,6 +6,7 @@ import NavigationVM, { navigationVM } from "./components/navigation/NavigationVM
 import { Input } from './components/utils/Input.js';
 import { Button } from './components/utils/Button.js';
 import { getDefaultServerUrl } from './config/cloudClient.js';
+import AppUpdateUI from './components/updates/AppUpdateUI.js';
 
 /** Shared indigo spinner for boot screens (gray/white backgrounds) */
 function BootSpinner(props = {}) {
@@ -28,25 +29,33 @@ export function App() {
     const setupConfig = props.viewModel.getState('setup-config')
     const clientConnected = setupConfig?.clientConnected === true
 
+    let content
     if (setupLoading) {
-      return Row({ class: 'h-[100dvh] w-full flex flex-col items-center justify-center gap-4 bg-gray-50', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
+      content = Row({ class: 'h-[100dvh] w-full flex flex-col items-center justify-center gap-4 bg-gray-50', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
         Row({ tagType: 'div', class: 'text-xl font-bold text-indigo-700' }, 'PharmaSuit'),
         BootSpinner({ class: 'h-8 w-8 text-indigo-600' }),
         Row({ tagType: 'div', class: 'text-sm text-gray-500' }, 'Preparing PharmaSuit…')
       ])
+    } else if (!clientConnected) {
+      content = ClientConnectionLayout(props)
+    } else {
+      const auth = props.viewModel.getState('auth') || { isAuthenticated: false };
+      if (!auth.isAuthenticated) {
+        content = LoginLayout(props);
+      } else {
+        const serverDown = !!props.viewModel.getState('server-down')
+        content = serverDown ? ServerDownOverlay(props) : MainLayout(props, main, router);
+      }
     }
-    if (!clientConnected) return ClientConnectionLayout(props)
 
-    const auth = props.viewModel.getState('auth') || { isAuthenticated: false };
-    if (!auth.isAuthenticated) return LoginLayout(props);
-
-    const serverDown = !!props.viewModel.getState('server-down')
-    if (serverDown) return ServerDownOverlay(props)
-
-    return MainLayout(props, main, router);
+    // Managed Cloud is always a cloud client build — mount updater chrome on every screen.
+    return Row({ class: 'relative h-[100dvh] min-h-0 overflow-hidden' }, [
+      AppUpdateUI({ viewModel: props.viewModel }),
+      Row({ class: 'h-full min-h-0' }, [content])
+    ])
   };
 
-  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'auth', 'server-down'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'auth', 'server-down', 'app-update-state', 'app-update-dev-panel'], viewModel: navigationVM }, render);
 }
 
 function ClientConnectionLayout(props) {
