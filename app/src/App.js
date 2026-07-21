@@ -6,6 +6,7 @@ import FooterUI from "./components/footer/FooterUI.js";
 import NavigationVM, { navigationVM } from "./components/navigation/NavigationVM.js";
 import { Input } from './components/utils/Input.js';
 import { Button } from './components/utils/Button.js';
+import AppUpdateUI from './components/updates/AppUpdateUI.js';
 
 /** Shared indigo spinner for boot screens (gray/white backgrounds) */
 function BootSpinner(props = {}) {
@@ -37,28 +38,39 @@ export function App() {
       props.viewModel.chooseStartupMode('client')
     }
 
+    let content
     if (setupLoading) {
-      return Row({ class: 'h-[100dvh] w-full flex flex-col items-center justify-center gap-4 bg-gray-50', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
+      content = Row({ class: 'h-[100dvh] w-full flex flex-col items-center justify-center gap-4 bg-gray-50', attributes: { 'aria-busy': 'true', 'aria-live': 'polite' } }, [
         Row({ tagType: 'div', class: 'text-xl font-bold text-indigo-700' }, 'PharmaSuit'),
         BootSpinner({ class: 'h-8 w-8 text-indigo-600' }),
         Row({ tagType: 'div', class: 'text-sm text-gray-500' }, 'Preparing PharmaSuit…')
       ])
+    } else if (!startupMode) {
+      content = StartupModeLayout(props)
+    } else if (!setupDone) {
+      content = SetupLayout(props, { forcedMode: startupMode })
+    } else if (licenseRequired) {
+      content = LicenseRequiredLayout(props)
+    } else if (clientNeedsConnection) {
+      content = ClientConnectionLayout(props)
+    } else {
+      const auth = props.viewModel.getState('auth') || { isAuthenticated: false };
+      if (!auth.isAuthenticated) {
+        content = LoginLayout(props);
+      } else {
+        const serverDown = !!props.viewModel.getState('server-down')
+        content = serverDown ? ServerDownOverlay(props) : MainLayout(props, main, router);
+      }
     }
-    if (!startupMode) return StartupModeLayout(props)
-    if (!setupDone) return SetupLayout(props, { forcedMode: startupMode })
-    if (licenseRequired) return LicenseRequiredLayout(props)
-    if (clientNeedsConnection) return ClientConnectionLayout(props)
 
-    const auth = props.viewModel.getState('auth') || { isAuthenticated: false };
-    if (!auth.isAuthenticated) return LoginLayout(props);
-
-    const serverDown = !!props.viewModel.getState('server-down')
-    if (serverDown) return ServerDownOverlay(props)
-
-    return MainLayout(props, main, router);
+    if (!isCloudBuild) return content
+    return Row({ class: 'relative h-[100dvh] min-h-0 overflow-hidden' }, [
+      AppUpdateUI({ viewModel: props.viewModel }),
+      Row({ class: 'h-full min-h-0' }, [content])
+    ])
   };
 
-  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'startup-error', 'startup-error-details-open', 'startup-progress', 'startup-progress-percent', 'startup-selected-mode', 'startup-loading-expanded', 'auth', 'server-down'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'startup-mode', 'setup-config', 'setup-defaults', 'setup-error', 'startup-error', 'startup-error-details-open', 'startup-progress', 'startup-progress-percent', 'startup-selected-mode', 'startup-loading-expanded', 'auth', 'server-down', 'app-update-state', 'app-update-dev-panel'], viewModel: navigationVM }, render);
   
 }
 

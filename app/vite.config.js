@@ -196,6 +196,10 @@ export default defineConfig(({ mode }) => {
   // the renderer bundle AND the Electron main-process bundle at build time.
   const env = loadEnv(mode, process.cwd(), '')
   const isCloudBuild = env.VITE_CLOUD_MODE === 'true'
+  // Dedicated Cloud feed (cloud-backend). Managed Cloud builds override via CI env.
+  const cloudUpdatesUrl =
+    env.VITE_CLOUD_UPDATES_URL ||
+    'https://server.masatechplc.com/downloads/lan'
 
   return {
     plugins: [
@@ -209,6 +213,7 @@ export default defineConfig(({ mode }) => {
             define: {
               // Injected as a Node.js process.env so main.js can read it at runtime.
               'process.env.IS_CLOUD_BUILD': JSON.stringify(isCloudBuild ? 'true' : 'false'),
+              'process.env.CLOUD_UPDATES_URL': JSON.stringify(isCloudBuild ? cloudUpdatesUrl : ''),
             },
           },
         },

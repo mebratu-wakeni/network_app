@@ -31,7 +31,9 @@ function parseArgs(argv) {
     artifactsDir: '',
     outDir: '',
     notes: '',
-    baseUrl: 'https://server.masatechplc.com/downloads/lan'
+    baseUrl: 'https://server.masatechplc.com/downloads/lan',
+    mandatory: false,
+    minSupportedVersion: ''
   }
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]
@@ -40,6 +42,8 @@ function parseArgs(argv) {
     else if (a === '--out-dir') out.outDir = path.resolve(argv[++i] || '')
     else if (a === '--notes') out.notes = String(argv[++i] || '').trim()
     else if (a === '--base-url') out.baseUrl = String(argv[++i] || '').replace(/\/+$/, '')
+    else if (a === '--mandatory') out.mandatory = true
+    else if (a === '--min-supported-version') out.minSupportedVersion = String(argv[++i] || '').trim()
   }
   return out
 }
@@ -166,6 +170,9 @@ function main() {
     version: args.version,
     releaseNotes: args.notes || `PharmaSuit ${args.version}`,
     publishedAt,
+    // In-app updater policy (electron-updater reads yml; app UI reads these fields)
+    mandatory: args.mandatory === true,
+    minSupportedVersion: args.minSupportedVersion || null,
     artifacts: {}
   }
 

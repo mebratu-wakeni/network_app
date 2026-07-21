@@ -1,7 +1,7 @@
 {
   "name": "app",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -29,6 +29,7 @@
     "axios": "^1.13.2",
     "clsx": "^2.1.1",
     "csv": "^6.4.1",
+    "electron-updater": "^6.8.9",
     "form-data": "^4.0.5",
     "ionicons": "^8.0.13",
     "tailwind-merge": "^3.4.0"

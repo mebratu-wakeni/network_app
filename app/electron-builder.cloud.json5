@@ -59,5 +59,10 @@
       "AppImage"
     ],
     "artifactName": "${productName}-Cloud-Linux-${version}.${ext}"
+  },
+  // Dedicated Cloud channel — Managed Cloud builds must override publish.url to cloud-multi.
+  "publish": {
+    "provider": "generic",
+    "url": "https://server.masatechplc.com/downloads/lan"
   }
 }
