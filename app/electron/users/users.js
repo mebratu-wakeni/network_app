@@ -49,11 +49,18 @@ class UsersManager {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await apiFetch(url, {
-      method: options.method || 'GET',
-      headers,
-      body: body
-    });
+    let response
+    try {
+      response = await apiFetch(url, {
+        method: options.method || 'GET',
+        headers,
+        body: body
+      });
+    } catch (networkErr) {
+      const cause = networkErr?.cause?.code || networkErr?.cause?.message || ''
+      console.error('[apiRequest] fetch failed', url, networkErr?.message || networkErr, cause)
+      throw networkErr
+    }
     const data = await response.json();
 
     if (!response.ok) {
