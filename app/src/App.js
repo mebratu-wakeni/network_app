@@ -103,7 +103,9 @@ function ClientConnectionLayout(props) {
     } catch (_) {}
   }
 
-  const placeholder = import.meta.env.DEV ? 'http://localhost:4000' : 'https://mltplc.com'
+  const placeholder = import.meta.env.DEV
+    ? 'http://localhost:4000'
+    : (getDefaultServerUrl() || 'https://server.masatechplc.com')
   const hint = 'Enter your PharmaSuit server URL and the tenant code from your administrator, then connect to sign in.'
 
   return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
