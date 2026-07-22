@@ -9,6 +9,8 @@
 
 Public downloads + update feed: **`https://server.masatechplc.com/downloads/cloud-multi/`**
 
+Product-line policy (branches, tags, cherry-picks): [`PRODUCT_LINES.md`](PRODUCT_LINES.md).
+
 > **Note:** [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) on this branch is a **legacy** Dedicated/SQLite SFTP stub. It does **not** deploy Managed Cloud (`server.masatechplc.com`).
 
 ## Ship Managed Cloud (API + app together)
