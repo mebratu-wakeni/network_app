@@ -108,7 +108,8 @@ describe('PurchaseService', () => {
         payment_mode: 'cash',
         withhold_percentage: null
       },
-      { id: 7, full_name: 'Tester' }
+      { id: 7, full_name: 'Tester' },
+      1
     )
 
     expect(result.subtotal).toBe(100)
@@ -116,6 +117,7 @@ describe('PurchaseService', () => {
     expect(result.net_amount).toBe(100)
     expect(repository.getWithholdPercentageSetting).not.toHaveBeenCalled()
     expect(repository.createOrderWithItemsAndReceipt).toHaveBeenCalledWith(
+      1,
       expect.objectContaining({
         order: expect.objectContaining({
           withhold_percentage: null,
@@ -138,7 +140,8 @@ describe('PurchaseService', () => {
         items: [{ product_id: 1, quantity: 2, unit_price: 50 }],
         payment_mode: 'cash'
       },
-      { id: 7, full_name: 'Tester' }
+      { id: 7, full_name: 'Tester' },
+      1
     )
 
     expect(repository.getWithholdPercentageSetting).toHaveBeenCalled()
