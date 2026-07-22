@@ -220,7 +220,7 @@ jobs:
       - name: Summary
         shell: bash
         run: |
-          echo "### LAN desktop published" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Offline LAN desktop published" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Version:** ${{ steps.ver.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Downloads:** https://server.masatechplc.com/downloads/offline/" >> "$GITHUB_STEP_SUMMARY"
