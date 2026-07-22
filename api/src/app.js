@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import knex from './db/knex.js'
 import v1Routes from './routes/index.js'
 import { notFound, errorHandler } from './middleware/error.js'
+import { minClientVersion } from './middleware/minClientVersion.js'
 import { getUploadsRoot, ensureUploadDirs, migrateLegacyAvatarFiles } from './config/storagePaths.js'
 
 dotenv.config()
@@ -96,7 +97,7 @@ export function createApp() {
     },
     credentials: true, // Safeguards authentication cookies / session transmission
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Client-Version']
   }
 
   app.use(cors(corsOptions))
@@ -120,8 +121,8 @@ export function createApp() {
     } catch (err) { next(err) }
   })
 
-  // Core API Routes
-  app.use('/api', v1Routes)
+  // Core API Routes (optional floor: MIN_SUPPORTED_CLIENT_VERSION)
+  app.use('/api', minClientVersion, v1Routes)
 
   // masatech-admin static SPA (see ADMIN_DIST_PATH note above).
   // Express 5 no longer accepts a bare '/admin/*' route pattern, so the SPA

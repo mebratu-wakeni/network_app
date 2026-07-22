@@ -112,9 +112,23 @@ Packaged cloud clients call `initCloudAutoUpdater()` and poll:
 
 `https://server.masatechplc.com/downloads/cloud-multi/`
 
-(`latest-mac.yml` / `latest.yml` / `latest-linux.yml`). Users get a dialog to download and restart.
+(`latest-mac.yml` / `latest.yml` / `latest-linux.yml`). Users get a banner/wizard to download and restart.
 
-Dev (`npm run dev:cloud`) does not check for updates.
+Policy in `latest.json`:
+- `mandatory: true` — required update UI (no permanent Later)
+- `minSupportedVersion` — clients below this version also get a required update
+
+### Hard API floor (optional)
+
+Set on the **API host** (cPanel env), then restart Node:
+
+```bash
+MIN_SUPPORTED_CLIENT_VERSION=1.0.3
+```
+
+Desktop clients send `X-Client-Version` on every `/api` call. Older clients get **HTTP 426** `CLIENT_OUTDATED` and the app opens the required updater. Leave unset to allow all versions. Keep this in sync with `latest.json` `minSupportedVersion` when you force an upgrade.
+
+Dev (`npm run dev:cloud`) does not check for updates (use the Updater test panel).
 
 Override feed at build time: `VITE_CLOUD_UPDATES_URL`.
 

@@ -17,6 +17,7 @@ function getUpdatesFeedUrl() {
 let updateCheckStarted = false
 let simulateMode = false
 let simulateTimer = null
+let serverForcedOutdated = false
 let currentState = {
   status: 'idle', // idle | checking | available | downloading | downloaded | up-to-date | error
   version: null,
@@ -64,7 +65,7 @@ async function fetchUpdatePolicy(feedUrl) {
 
 function classifyUpdate(policy, availableVersion) {
   const target = availableVersion || policy?.version
-  let mandatory = policy?.mandatory === true
+  let mandatory = policy?.mandatory === true || serverForcedOutdated
   if (policy?.minSupportedVersion && compareVersions(APP_VERSION, policy.minSupportedVersion) < 0) {
     mandatory = true
   }
@@ -168,7 +169,22 @@ export function initCloudAutoUpdater() {
     })
   })
 
-  autoUpdater.on('update-not-available', () => {
+  autoUpdater.on('update-not-available', async () => {
+    if (serverForcedOutdated) {
+      const policy = await fetchUpdatePolicy(feedUrl)
+      broadcast({
+        status: 'available',
+        version: policy?.version || null,
+        releaseNotes:
+          policy?.releaseNotes ||
+          'A required update is available. Please update PharmaSuit to continue.',
+        mandatory: true,
+        percent: 0,
+        error: null,
+        simulated: false
+      })
+      return
+    }
     broadcast({
       status: 'up-to-date',
       version: null,
@@ -194,6 +210,46 @@ export function initCloudAutoUpdater() {
       broadcast({ status: 'error', error: err?.message || String(err), simulated: false })
     })
   }, 8000)
+}
+
+/**
+ * API returned 426 CLIENT_OUTDATED — force required-update UX and re-check the feed.
+ */
+export function handleClientOutdated(info = {}) {
+  serverForcedOutdated = true
+  const message =
+    info?.message ||
+    'This version of PharmaSuit is no longer supported. Please update to continue.'
+
+  if (!app.isPackaged) {
+    return Promise.resolve(startSimulatedUpdate({ mandatory: true }))
+  }
+
+  initCloudAutoUpdater()
+  broadcast({
+    status: 'checking',
+    mandatory: true,
+    error: null,
+    releaseNotes: message,
+    simulated: false
+  })
+
+  return autoUpdater
+    .checkForUpdates()
+    .then(() => ({ success: true }))
+    .catch((err) => {
+      console.warn('[cloud-updater] forced check failed:', err?.message || err)
+      broadcast({
+        status: 'available',
+        version: null,
+        releaseNotes: message,
+        mandatory: true,
+        percent: 0,
+        error: err?.message || String(err),
+        simulated: false
+      })
+      return { success: false, error: err?.message || String(err) }
+    })
 }
 
 export function registerCloudUpdaterIpc(ipcMain) {

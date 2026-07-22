@@ -6,21 +6,33 @@
  *   treat the request as an unknown content type (avoids 415 errors).
  * - User-Agent             : identifies the app to WAF / bot-protection
  *   systems (e.g. Imunify360 on cPanel) so requests are not blocked.
+ * - X-Client-Version       : real app version for optional API min-client gates.
  *
  * Caller-supplied headers always win (spread after defaults).
  *
  * 401 interception: when any API call returns 401 (token expired / invalid),
  * the registered `_onSessionExpired` callback fires so main.js can notify
  * the renderer to show the login screen.
+ *
+ * 426 CLIENT_OUTDATED: when the API rejects an old client, `_onClientOutdated`
+ * fires so the updater UI can force a required update.
  */
+
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const { version: APP_VERSION } = require('../../package.json')
 
 const DEFAULT_HEADERS = {
   'Accept': 'application/json',
-  'User-Agent': 'Mozilla/5.0 (compatible; PharmaSuit/1.0)'
+  'User-Agent': `Mozilla/5.0 (compatible; PharmaSuit/${APP_VERSION})`,
+  'X-Client-Version': APP_VERSION
 }
 
 let _onSessionExpired = null
 let _onServerDown = null
+let _onClientOutdated = null
+let _clientOutdatedNotified = false
 
 /**
  * Register a callback that fires whenever any API call returns HTTP 401.
@@ -37,6 +49,13 @@ export function setOnSessionExpired(fn) {
  */
 export function setOnServerDown(fn) {
   _onServerDown = typeof fn === 'function' ? fn : null
+}
+
+/**
+ * Register a callback for HTTP 426 / code CLIENT_OUTDATED from the API.
+ */
+export function setOnClientOutdated(fn) {
+  _onClientOutdated = typeof fn === 'function' ? fn : null
 }
 
 /**
@@ -62,6 +81,20 @@ export async function apiFetch(url, options = {}) {
   }
   if (response.status === 401 && _onSessionExpired) {
     try { _onSessionExpired() } catch (_) {}
+  }
+  if (response.status === 426 && _onClientOutdated && !_clientOutdatedNotified) {
+    _clientOutdatedNotified = true
+    let body = null
+    try {
+      body = await response.clone().json()
+    } catch (_) {}
+    try {
+      _onClientOutdated({
+        minSupportedVersion: body?.minSupportedVersion || null,
+        message: body?.message || body?.error || null,
+        code: body?.code || 'CLIENT_OUTDATED'
+      })
+    } catch (_) {}
   }
   return response
 }
