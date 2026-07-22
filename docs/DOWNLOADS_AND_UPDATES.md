@@ -17,20 +17,21 @@ Product-line policy (branches, tags, cherry-picks): [`PRODUCT_LINES.md`](PRODUCT
 
 One tag drives both the API pack and the desktop update feed.
 
-On `feature/cloud-multi-tenant` (or your release branch that tracks Managed):
+Work on a short-lived branch off **`release/managed-cloud`**, merge the PR, then:
 
-1. Bump `"version"` in [`app/package.json`](../app/package.json) (e.g. `1.0.3` → `1.0.4`).
-2. Commit and push the branch.
-3. Tag and push:
+1. On `release/managed-cloud`, bump `"version"` in [`app/package.json`](../app/package.json) (e.g. `1.0.3` → `1.0.4`) if not already bumped in the PR.
+2. Commit/push the release branch if needed.
+3. Tag and push **from that tip**:
 
 ```bash
+git checkout release/managed-cloud
+git pull origin release/managed-cloud
 git tag desktop-cloud-v1.0.4
-git push origin feature/cloud-multi-tenant
 git push origin desktop-cloud-v1.0.4
 ```
 
 4. Wait for Action **Release Managed Cloud** (workflow file: `release-cloud-desktop.yml`) to go green. It will:
-   - **Fail early** if the tag version ≠ `app/package.json`
+   - **Fail early** if the tag is not on `release/managed-cloud` (or legacy tip) or version ≠ `app/package.json`
    - Pack `masatech-deploy.tar.gz` and attach it (plus `DEPLOY.txt` / `sql/*`) to the **GitHub Release** for that tag
    - Build Mac / Windows / Linux installers and FTPS-publish to `downloads/cloud-multi/`
 
