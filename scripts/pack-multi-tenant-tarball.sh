@@ -271,12 +271,15 @@ STEP D — Verify
      ← must be an HTML page (NOT {"ok":false,"error":"Not Found"})
 
 ════════════════════════════════════════════════════════════════
-STEP E — Real installers (later — GitHub Actions)
+STEP E — Prefer the unified CI release (API pack + desktop)
 ════════════════════════════════════════════════════════════════
-1. Add secrets: DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD,
-   DOWNLOADS_SERVER_DIR = path ending in …/downloads/cloud-multi/
-2. Tag desktop-cloud-vX.Y.Z and run workflow "Release Cloud Desktop"
-3. Re-check the downloads URL for Mac/Win/Linux buttons
+Preferred: tag desktop-cloud-vX.Y.Z on the Managed branch. Workflow
+"Release Managed Cloud" attaches this tarball to the GitHub Release AND
+publishes installers to downloads/cloud-multi/. Then download the Release
+asset instead of packing only on your Mac.
+
+Manual pack (this script) remains valid for hotfixes without a desktop bump.
+See docs/DOWNLOADS_AND_UPDATES.md — Ship Managed Cloud.
 
 ARCHIVE GUARANTEES
 ------------------

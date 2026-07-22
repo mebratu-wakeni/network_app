@@ -1,18 +1,19 @@
-# Builds PharmaSuit Cloud (multi-tenant) desktop installers for Mac, Windows, Linux
-# and publishes them to server.masatechplc.com/downloads/cloud-multi/
+# Release Managed Cloud — API tarball + desktop installers/update feed together.
 #
-# Does NOT deploy the API — API uses tarball on the Postgres host.
+# One tag produces:
+#   1) GitHub Release assets: masatech-deploy.tar.gz (+ DEPLOY.txt, sql/*)
+#   2) FTPS publish to server.masatechplc.com/downloads/cloud-multi/
 #
 # Trigger: tag desktop-cloud-v*  OR  manual "Run workflow"
 #
-# Required GitHub secrets (see docs/DOWNLOADS_AND_UPDATES.md):
-#   DOWNLOADS_HOST          — FTP/SFTP host (or reuse SERVER_HOST)
-#   DOWNLOADS_USERNAME      — FTP user
-#   DOWNLOADS_PASSWORD      — FTP password
-#   DOWNLOADS_SERVER_DIR    — relative to FTP home, e.g. server.masatechplc.com/downloads/cloud-multi/
-#                             (NOT /home/USER/... — that nests under home again)
+# Ops after green CI: download the tarball from the GitHub Release → extract at
+# domain root → NPM Install + restart Node (see docs/DOWNLOADS_AND_UPDATES.md).
+#
+# Required GitHub secrets (desktop publish):
+#   DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD, DOWNLOADS_SERVER_DIR
+#   DOWNLOADS_SERVER_DIR must be relative, e.g. server.masatechplc.com/downloads/cloud-multi/
 
-name: Release Cloud Desktop
+name: Release Managed Cloud
 
 on:
   push:
@@ -33,8 +34,105 @@ on:
         required: false
         default: ''
 
+permissions:
+  contents: write
+
 jobs:
+  version-lock:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve and lock version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-cloud-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-cloud-v}"
+          else
+            V="$(node -p "require('./app/package.json').version")"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          chmod +x scripts/assert-desktop-cloud-version.sh
+          scripts/assert-desktop-cloud-version.sh "$V"
+
+  pack-api:
+    needs: version-lock
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            masatech-admin/package-lock.json
+            api/package-lock.json
+
+      - name: Pack multi-tenant tarball
+        run: |
+          chmod +x scripts/pack-multi-tenant-tarball.sh
+          ./scripts/pack-multi-tenant-tarball.sh
+
+      - name: Upload pack artifacts (Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-api-pack
+          path: |
+            dist-release/masatech-deploy.tar.gz
+            dist-release/DEPLOY.txt
+            dist-release/sql/**
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Create / update GitHub Release with API tarball
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-cloud-v${{ needs.version-lock.outputs.version }}
+          name: Managed Cloud ${{ needs.version-lock.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            dist-release/masatech-deploy.tar.gz
+            dist-release/DEPLOY.txt
+            dist-release/sql/*
+
+      - name: API pack summary
+        shell: bash
+        run: |
+          {
+            echo "### Managed Cloud API pack"
+            echo ""
+            echo "- **Version:** ${{ needs.version-lock.outputs.version }}"
+            echo "- **Tag:** desktop-cloud-v${{ needs.version-lock.outputs.version }}"
+            echo "- **Asset:** \`masatech-deploy.tar.gz\` on the GitHub Release"
+            echo ""
+            echo "#### Ops checklist"
+            echo "1. Download \`masatech-deploy.tar.gz\` from this Release"
+            echo "2. cPanel File Manager → \`server.masatechplc.com/\` (domain root, next to \`api/\`)"
+            echo "3. Upload + Extract at domain root (not inside \`api/\`)"
+            echo "4. Setup Node.js App → Run NPM Install → Restart"
+            echo "5. Run any new SQL under Release \`sql/\` via phpPgAdmin if needed"
+            echo "6. Verify https://server.masatechplc.com/health and /api/db-health"
+            echo "7. Bump Managed URLs on masatechplc.com/downloads if first-install links lag"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
+    needs: version-lock
     strategy:
       fail-fast: false
       matrix:
@@ -63,11 +161,11 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Read package version
-        id: pkg
-        working-directory: app
+      - name: Assert package version matches release
         shell: bash
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          chmod +x scripts/assert-desktop-cloud-version.sh
+          scripts/assert-desktop-cloud-version.sh "${{ needs.version-lock.outputs.version }}"
 
       - name: Build cloud desktop (${{ matrix.platform }})
         working-directory: app
@@ -87,9 +185,9 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [version-lock, build]
     runs-on: ubuntu-latest
-    if: ${{ always() && needs.build.result != 'cancelled' }}
+    if: ${{ always() && needs.build.result != 'cancelled' && needs.version-lock.result == 'success' }}
 
     steps:
       - name: Checkout
@@ -99,20 +197,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Resolve version
-        id: ver
-        shell: bash
-        run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            V="${{ github.event.inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/desktop-cloud-v* ]]; then
-            V="${GITHUB_REF_NAME#desktop-cloud-v}"
-          else
-            V="$(node -p "require('./app/package.json').version")"
-          fi
-          echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "Publishing version $V"
 
       - name: Download Mac artifacts
         continue-on-error: true
@@ -144,10 +228,10 @@ jobs:
             exit 1
           fi
           PREPARE_ARGS=(
-            --version "${{ steps.ver.outputs.version }}"
+            --version "${{ needs.version-lock.outputs.version }}"
             --artifacts-dir staging/artifacts
             --out-dir staging/publish
-            --notes "PharmaSuit Cloud ${{ steps.ver.outputs.version }}"
+            --notes "PharmaSuit Cloud ${{ needs.version-lock.outputs.version }}"
             --base-url "https://server.masatechplc.com/downloads/cloud-multi"
           )
           if [ "${{ github.event.inputs.mandatory }}" = "true" ]; then
@@ -200,8 +284,11 @@ jobs:
       - name: Summary
         shell: bash
         run: |
-          echo "### Cloud-multi desktop published" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Version:** ${{ steps.ver.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Downloads:** https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Update feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Managed Cloud desktop published"
+            echo ""
+            echo "- **Version:** ${{ needs.version-lock.outputs.version }}"
+            echo "- **Downloads:** https://server.masatechplc.com/downloads/cloud-multi/"
+            echo "- **Update feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json"
+            echo "- **Website:** bump Managed links in masatech-website \`content/downloads.json\` to \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` if first-install URLs lag"
+          } >> "$GITHUB_STEP_SUMMARY"

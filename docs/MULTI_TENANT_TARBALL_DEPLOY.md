@@ -1,5 +1,9 @@
 # Redeploy `server.masatechplc.com` (API + admin)
 
+**Preferred release path:** bump `app/package.json`, tag `desktop-cloud-vX.Y.Z`, wait for **Release Managed Cloud**. Download `masatech-deploy.tar.gz` from that GitHub Release (same tag also publishes desktop installers). Full checklist: [`DOWNLOADS_AND_UPDATES.md`](DOWNLOADS_AND_UPDATES.md) → *Ship Managed Cloud*.
+
+This doc is the **cPanel extract / restart** half (and local pack for API-only hotfixes).
+
 Your live layout (cPanel):
 
 ```text
@@ -13,7 +17,9 @@ That is **`masatech-deploy.tar.gz`**, not a flat `api.tar.gz`.
 
 **You do not need cPanel Terminal** for this redeploy. Use File Manager + Setup Node.js App + phpPgAdmin.
 
-## Pack on your Mac
+## Pack on your Mac (API-only / hotfix)
+
+Prefer the GitHub Release asset from **Release Managed Cloud** when shipping a versioned release. Local pack remains useful when you need an API hotfix without a desktop bump:
 
 ```bash
 cd /path/to/network-desktop-app
@@ -92,6 +98,7 @@ If your host later enables Terminal/SSH, you can use `node scripts/migrate-lite.
 - https://server.masatechplc.com/api/db-health  
 - https://server.masatechplc.com/admin  
 
-## Not in this tarball
+## Not in the tarball’s job (desktop + website)
 
-Electron installers → GitHub Actions → `/downloads/cloud-multi/`
+- Electron installers + update feed → same tag’s **Release Managed Cloud** publish job → `/downloads/cloud-multi/`
+- First-install buttons on https://masatechplc.com/downloads → bump Managed URLs in `masatech-website/content/downloads.json` to the new `cloud-multi/X.Y.Z/` paths after the feed is live

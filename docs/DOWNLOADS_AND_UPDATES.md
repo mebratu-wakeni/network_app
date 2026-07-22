@@ -1,13 +1,52 @@
-# Downloads and desktop auto-update
+# Downloads and desktop auto-update (Managed Cloud)
 
 ## Deployment model
 
 | Target | Method | GitHub Actions |
 |--------|--------|----------------|
-| **API (Postgres multi-tenant)** | **Tarball** on the server — extract, `npm install`, migrate, restart | No API deploy via CI to cPanel |
-| **Desktop installers (cloud-multi)** | CI builds Mac/Windows/Linux **and uploads** to the downloads host | **Yes** — `.github/workflows/release-cloud-desktop.yml` |
+| **API + admin (Postgres multi-tenant)** | **Tarball** extract on cPanel (`masatech-deploy.tar.gz`) | Packed + attached as a **GitHub Release asset** by the same release workflow |
+| **Desktop installers (cloud-multi)** | CI builds Mac/Windows/Linux **and uploads** to the downloads host | Same workflow — FTPS to `DOWNLOADS_SERVER_DIR` |
 
 Public downloads + update feed: **`https://server.masatechplc.com/downloads/cloud-multi/`**
+
+> **Note:** [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) on this branch is a **legacy** Dedicated/SQLite SFTP stub. It does **not** deploy Managed Cloud (`server.masatechplc.com`).
+
+## Ship Managed Cloud (API + app together)
+
+One tag drives both the API pack and the desktop update feed.
+
+On `feature/cloud-multi-tenant` (or your release branch that tracks Managed):
+
+1. Bump `"version"` in [`app/package.json`](../app/package.json) (e.g. `1.0.3` → `1.0.4`).
+2. Commit and push the branch.
+3. Tag and push:
+
+```bash
+git tag desktop-cloud-v1.0.4
+git push origin feature/cloud-multi-tenant
+git push origin desktop-cloud-v1.0.4
+```
+
+4. Wait for Action **Release Managed Cloud** (workflow file: `release-cloud-desktop.yml`) to go green. It will:
+   - **Fail early** if the tag version ≠ `app/package.json`
+   - Pack `masatech-deploy.tar.gz` and attach it (plus `DEPLOY.txt` / `sql/*`) to the **GitHub Release** for that tag
+   - Build Mac / Windows / Linux installers and FTPS-publish to `downloads/cloud-multi/`
+
+5. **API host (ops):** Download `masatech-deploy.tar.gz` from the GitHub Release → extract at **domain root** (`server.masatechplc.com/`, next to `api/`) → Setup Node.js App → **Run NPM Install** → **Restart** → run any new SQL from the Release `sql/` folder via phpPgAdmin if needed. Full steps: [`MULTI_TENANT_TARBALL_DEPLOY.md`](MULTI_TENANT_TARBALL_DEPLOY.md).
+
+6. **Website first-install links:** Update Managed Cloud URLs in the company site [`masatech-website/content/downloads.json`](../../masatech-website/content/downloads.json) to `…/downloads/cloud-multi/X.Y.Z/…` for the new version, then deploy the website. In-app updates use `latest.json`; the website is for **new** installs.
+
+7. **Verify:**
+   - https://server.masatechplc.com/health → `{"ok":true}`
+   - https://server.masatechplc.com/api/db-health → database online
+   - https://server.masatechplc.com/downloads/cloud-multi/latest.json → `"version": "X.Y.Z"`
+   - https://masatechplc.com/downloads → Managed buttons hit the new `X.Y.Z` installers
+
+Optional: Actions → **Release Managed Cloud** → Run workflow (must still match `app/package.json`; creates/updates tag `desktop-cloud-v*` assets).
+
+Policy inputs on manual run:
+- `mandatory` — required in-app update
+- `min_supported_version` — oldest client still allowed (written into `latest.json`)
 
 ## Why you see `{ ok: false, error: "Not Found" }`
 
@@ -28,16 +67,11 @@ Target layout:
 
 URL `…/downloads/cloud-multi/` → Express static → that folder.
 
-## One-time server setup (remaining checklist)
+## One-time server / secrets setup
 
 1. **Redeploy API** that includes `/downloads` static serving (see `api/src/app.js`), then restart the Node app.
-2. **Create the folder** in File Manager (domain root, sibling of `api/`):
-   - `server.masatechplc.com/downloads/cloud-multi/`
-3. **Put at least a page there** (until CI publishes real installers):
-   - Upload repo file `downloads/cloud-multi/index.html` into that folder, **or**
-   - Run a desktop release (step 5) which uploads `index.html` + manifests + installers.
-4. **Restart** the Node app (Stop/Start or `api/tmp/restart.txt`) so it picks up the new `downloads/` directory if it was created after boot.
-5. **GitHub Actions secrets** (Settings → Secrets and variables → Actions):
+2. Ensure `server.masatechplc.com/downloads/cloud-multi/` exists (seeded by the tarball).
+3. **GitHub Actions secrets** (Settings → Secrets and variables → Actions):
 
 | Secret | Example | Purpose |
 |--------|---------|---------|
@@ -49,21 +83,11 @@ URL `…/downloads/cloud-multi/` → Express static → that folder.
 **Important:** `DOWNLOADS_SERVER_DIR` must be **relative to `/home/masatetw`**, not an absolute `/home/masatetw/...` path.
 
 - Correct: `server.masatechplc.com/downloads/cloud-multi/`
-- Wrong: `/home/masatetw/server.masatechplc.com/downloads/cloud-multi/`  
-  (FTP treats that as a second `home/masatetw/...` nest — “ghost” files that search finds but the live site never serves)
+- Wrong: `/home/masatetw/server.masatechplc.com/downloads/cloud-multi/`
 
-After changing the secret, re-run **Release Cloud Desktop** (or move the installers from the nested junk path into the real `server.masatechplc.com/downloads/cloud-multi/1.0.0/` folder).
+Optional env override on the Node host: `DOWNLOADS_STATIC_DIR` = absolute path to the `downloads` directory (parent of `cloud-multi/`).
 
-6. **Publish installers**: bump `app/package.json` version → tag `desktop-cloud-vX.Y.Z` → Action **Release Cloud Desktop** uploads the bundle.
-
-7. **Verify**:
-   - https://server.masatechplc.com/downloads/cloud-multi/  → HTML page (not JSON)
-   - https://server.masatechplc.com/downloads/cloud-multi/1.0.0/…Installer… → real download
-   - https://server.masatechplc.com/downloads/cloud-multi/latest.json
-
-Optional env override: `DOWNLOADS_STATIC_DIR` = absolute path to the `downloads` directory (parent of `cloud-multi/`) on the **Node** host — unrelated to the FTP secret.
-
-Protocol in the workflow is **FTPS**. If your host needs plain FTP or SFTP, change `protocol:` in the publish step of `release-cloud-desktop.yml`.
+Protocol in the workflow is **FTPS**.
 
 ## Release layout (after CI publish)
 
@@ -74,37 +98,12 @@ Protocol in the workflow is **FTPS**. If your host needs plain FTP or SFTP, chan
   latest-mac.yml             # electron-updater (macOS)
   latest.yml                 # electron-updater (Windows)
   latest-linux.yml           # electron-updater (Linux)
-  1.0.0/
-    PharmaSuit-Cloud-Mac-1.0.0-Installer.dmg
-    PharmaSuit-Cloud-Windows-1.0.0-Setup.exe
-    PharmaSuit-Cloud-Linux-1.0.0.AppImage
+  1.0.4/
+    PharmaSuit-Cloud-Mac-1.0.4-Installer.dmg
+    PharmaSuit-Cloud-Windows-1.0.4-Setup.exe
+    PharmaSuit-Cloud-Linux-1.0.4.AppImage
     *.blockmap
 ```
-
-## How to publish a new desktop version (fully automatic)
-
-On `feature/cloud-multi-tenant`:
-
-1. Bump `"version"` in `app/package.json` (e.g. `1.0.0` → `1.0.1`).
-2. Commit and push the branch.
-3. Tag and push:
-
-```bash
-git tag desktop-cloud-v1.0.1
-git push origin feature/cloud-multi-tenant
-git push origin desktop-cloud-v1.0.1
-```
-
-4. GitHub Action **Release Cloud Desktop**:
-   - Builds installers on macOS, Windows, and Linux runners
-   - Runs `scripts/prepare-cloud-multi-release.mjs`
-   - Uploads the publish bundle to `DOWNLOADS_SERVER_DIR`
-
-5. Verify:
-   - Page: https://server.masatechplc.com/downloads/cloud-multi/
-   - Manifest: https://server.masatechplc.com/downloads/cloud-multi/latest.json
-
-Optional: Actions → **Release Cloud Desktop** → Run workflow (uses `app/package.json` version if no tag).
 
 ## In-app updates
 
@@ -123,7 +122,7 @@ Policy in `latest.json`:
 Set on the **API host** (cPanel env), then restart Node:
 
 ```bash
-MIN_SUPPORTED_CLIENT_VERSION=1.0.3
+MIN_SUPPORTED_CLIENT_VERSION=1.0.4
 ```
 
 Desktop clients send `X-Client-Version` on every `/api` call. Older clients get **HTTP 426** `CLIENT_OUTDATED` and the app opens the required updater. Leave unset to allow all versions. Keep this in sync with `latest.json` `minSupportedVersion` when you force an upgrade.
@@ -132,31 +131,33 @@ Dev (`npm run dev:cloud`) does not check for updates (use the Updater test panel
 
 Override feed at build time: `VITE_CLOUD_UPDATES_URL`.
 
-## Local dry-run (prepare only)
+## Local dry-run
 
 ```bash
-# After a local npm run build:cloud
+# API pack only
+./scripts/pack-multi-tenant-tarball.sh
+
+# Desktop prepare only (after a local npm run build:cloud)
 node scripts/prepare-cloud-multi-release.mjs \
-  --version 1.0.0 \
+  --version 1.0.4 \
   --artifacts-dir app/release-cloud \
   --out-dir /tmp/cloud-multi-publish
 ```
 
-Inspect `/tmp/cloud-multi-publish` before relying on CI upload.
-
-## Channels (later)
+## Channels
 
 | Channel | Path | Status |
 |---------|------|--------|
-| `cloud-multi` | `/downloads/cloud-multi/` | **This workflow** |
-| `cloud-single` | `/downloads/cloud-single/` | Planned |
-| `lan` | `/downloads/lan/` | Planned |
+| `cloud-multi` | `/downloads/cloud-multi/` | **This workflow (Managed)** |
+| `cloud-single` / `lan` | Dedicated / Offline | Separate branches & tags |
 
 ## Repo files
 
 | Path | Role |
 |------|------|
 | `downloads/cloud-multi/index.html` | Downloads page template |
+| `scripts/pack-multi-tenant-tarball.sh` | API + admin + downloads seed tarball |
 | `scripts/prepare-cloud-multi-release.mjs` | Bundle installers + manifests |
-| `.github/workflows/release-cloud-desktop.yml` | Build + FTP publish |
+| `scripts/assert-desktop-cloud-version.sh` | Tag / package.json version lock |
+| `.github/workflows/release-cloud-desktop.yml` | **Release Managed Cloud** (API pack + desktop publish) |
 | `app/electron/cloudUpdater.js` | In-app update UI |

@@ -1,7 +1,9 @@
-# LEGACY: Single-cloud SQLite cPanel deploy. cPanel typically requires tarball upload
-# rather than this SFTP action — verify on your host before relying on this workflow.
-# Multi-tenant Postgres API: tarball deploy (see docs/DEPLOYMENT.md).
-# Multi-tenant desktop: use release-cloud-desktop.yml instead.
+# LEGACY: does NOT deploy Managed Cloud (server.masatechplc.com).
+# Historically aimed at Dedicated/SQLite cPanel via SFTP; prefer cloud-backend
+# deploy workflows / tarball docs for live hosts.
+# Managed Cloud (API + desktop): tag desktop-cloud-v* → "Release Managed Cloud"
+#   (.github/workflows/release-cloud-desktop.yml) + cPanel extract of the Release tarball.
+# See docs/DOWNLOADS_AND_UPDATES.md.
 name: Deploy to cPanel
 
 on:
