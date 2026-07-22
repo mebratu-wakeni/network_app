@@ -455,7 +455,7 @@ function applyRuntimeConfig(config) {
 
 function getApiRootForHealth() {
   const fromConfig = resolveApiBaseUrl(runtimeConfig)
-  const apiBase = fromConfig || process.env.API_BASE_URL || 'http://localhost:4000/api'
+  const apiBase = fromConfig || process.env['API_BASE_URL'] || 'http://localhost:4000/api'
   return String(apiBase).replace(/\/api\/?$/i, '')
 }
 
@@ -1071,13 +1071,19 @@ async function bootstrapRuntimeConfig() {
   }
   applyRuntimeConfig(effectiveCfg)
   console.log('[bootstrap] configPath=', getRuntimeConfigPath())
-  console.log('[bootstrap] API_BASE_URL=', process.env.API_BASE_URL || '(unset)')
+  console.log('[bootstrap] API_BASE_URL=', process.env['API_BASE_URL'] || '(unset)')
   console.log(
     '[bootstrap] client.serverUrl=',
     effectiveCfg?.client?.serverUrl || '(unset)',
     'mode=',
     effectiveCfg?.mode || '(unset)'
   )
+  try {
+    const { getApiUrl } = await import('./config/apiConfig.js')
+    console.log('[bootstrap] sample users/me URL=', getApiUrl('/users/me'))
+  } catch (err) {
+    console.warn('[bootstrap] could not resolve sample API URL:', err?.message || err)
+  }
 
   publishBootProgress('init-complete', 'Initialization complete', 100)
 
@@ -1447,6 +1453,37 @@ ipcMain.handle('setup:save-config', async (_event, payload) => {
 
 ipcMain.handle('client:test-server-url', async (_event, payload) => {
   return await validateClientServerUrl(payload?.serverUrl)
+})
+
+/** Force main-process API base (used after renderer probe / connect). */
+ipcMain.handle('runtime:set-api-base', async (_event, payload) => {
+  const serverUrl = normalizeServerUrl(payload?.serverUrl || '')
+  const explicit = typeof payload?.apiBaseUrl === 'string'
+    ? payload.apiBaseUrl.trim().replace(/\/+$/, '')
+    : ''
+  const apiBase = serverUrl ? `${serverUrl}/api` : (explicit || null)
+  if (!apiBase) {
+    return { success: false, error: 'apiBaseUrl or serverUrl required' }
+  }
+  if (IS_CLOUD_BUILD && isLocalhostApiBase(apiBase)) {
+    const fallback = cloudDefaultApiBase()
+    setApiBaseUrl(fallback)
+    if (runtimeConfig) {
+      runtimeConfig = { ...runtimeConfig, apiBaseUrl: fallback }
+    }
+    console.log('[runtime:set-api-base] rejected localhost, using', fallback)
+    return { success: true, apiBaseUrl: fallback }
+  }
+  setApiBaseUrl(apiBase)
+  if (runtimeConfig) {
+    runtimeConfig = {
+      ...runtimeConfig,
+      apiBaseUrl: apiBase,
+      ...(serverUrl ? { client: { ...(runtimeConfig.client || {}), serverUrl } } : {})
+    }
+  }
+  console.log('[runtime:set-api-base]', apiBase)
+  return { success: true, apiBaseUrl: apiBase }
 })
 
 ipcMain.handle('client:discover-server', async () => {

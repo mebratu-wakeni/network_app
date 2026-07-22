@@ -226,10 +226,24 @@ class NavigationVM extends ViewModel {
 
       try { await window.ipcRenderer?.invoke?.('auth:set-token', token) } catch (_) {}
 
-      const meResult = await window.ipcRenderer.invoke('users:get-current-user')
+      let meResult
+      try {
+        meResult = await window.ipcRenderer.invoke('users:get-current-user')
+      } catch (invokeErr) {
+        console.error(
+          '[tryRestoreAuth] users:get-current-user IPC failed:',
+          invokeErr?.message || invokeErr
+        )
+        this.updateState('server-down', false)
+        try { localStorage.removeItem('authToken') } catch (_) {}
+        try { await window.ipcRenderer?.invoke?.('auth:clear-token') } catch (_) {}
+        return false
+      }
+
       const ok = !!(meResult && (meResult.success || meResult.ok) && meResult.user)
       if (!ok) {
         // Stay on login; clear any server-down flash from a failed restore probe.
+        console.warn('[tryRestoreAuth] session restore failed:', meResult?.error || 'no user')
         this.updateState('server-down', false)
         try { localStorage.removeItem('authToken') } catch (_) {}
         try { await window.ipcRenderer?.invoke?.('auth:clear-token') } catch (_) {}
@@ -264,6 +278,22 @@ class NavigationVM extends ViewModel {
       if (res?.success) {
         let config = this.normalizeSetupConfig(res.config)
         config = await this.enrichClientConnectionState(config)
+        // Ensure main-process fetch uses the probed Managed URL before any /users/me call.
+        const serverUrl = String(config?.client?.serverUrl || '').trim()
+        const apiBaseUrl = String(config?.apiBaseUrl || '').trim()
+        if (serverUrl || apiBaseUrl) {
+          try {
+            const applied = await window.ipcRenderer.invoke('runtime:set-api-base', {
+              serverUrl,
+              apiBaseUrl
+            })
+            if (applied?.apiBaseUrl) {
+              config = { ...config, apiBaseUrl: applied.apiBaseUrl }
+            }
+          } catch (err) {
+            console.warn('[loadSetupConfig] runtime:set-api-base failed:', err?.message || err)
+          }
+        }
         this.updateState('setup-config', config)
         this.updateState('setup-defaults', res.defaults || null)
         try {
