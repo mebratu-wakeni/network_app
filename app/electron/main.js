@@ -24,6 +24,7 @@ import LicenseManager from './license/license.js'
 import { LicenseIpcHandlers } from './license/ipcHandlers.js'
 import { setToken, clearToken } from './config/authManager.js'
 import { setOnSessionExpired, setOnServerDown } from './config/apiFetch.js'
+import { setApiBaseUrl } from './config/apiConfig.js'
 import { initCloudAutoUpdater, registerCloudUpdaterIpc } from './cloudUpdater.js'
 
 const require = createRequire(import.meta.url)
@@ -158,23 +159,34 @@ function isUnderProtectedPath(dir) {
  */
 function getDataDirectory() {
   const boot = loadBootstrap()
+  const appDataRoot = getAppDataRoot()
+  const legacyDataDir = path.join(appDataRoot, 'data')
+  const dataConfigPath = path.join(legacyDataDir, 'runtime-config.json')
+
   if (boot?.dataDirectory) {
     if (isUnderProtectedPath(boot.dataDirectory)) {
       try { fs.unlinkSync(getBootstrapPath()) } catch (_) {}
       return null
     }
+    const resolvedBoot = path.resolve(boot.dataDirectory)
+    // Stale bootstrap often points at appData root (where an old localhost
+    // runtime-config.json lives) while the real Managed client config is under data/.
+    if (
+      resolvedBoot === path.resolve(appDataRoot) &&
+      fs.existsSync(dataConfigPath)
+    ) {
+      saveBootstrap(legacyDataDir)
+      return legacyDataDir
+    }
     return boot.dataDirectory
   }
-  const appDataRoot = getAppDataRoot()
-  const legacyDataDir = path.join(appDataRoot, 'data')
   // Migration 1: config in app data root (old packaged layout)
   const legacyConfigInUserData = path.join(appDataRoot, 'runtime-config.json')
   if (fs.existsSync(legacyConfigInUserData)) {
     saveBootstrap(legacyDataDir)
     try {
       fs.mkdirSync(legacyDataDir, { recursive: true })
-      const newConfigPath = path.join(legacyDataDir, 'runtime-config.json')
-      if (!fs.existsSync(newConfigPath)) fs.copyFileSync(legacyConfigInUserData, newConfigPath)
+      if (!fs.existsSync(dataConfigPath)) fs.copyFileSync(legacyConfigInUserData, dataConfigPath)
     } catch (_) {}
     return legacyDataDir
   }
@@ -189,8 +201,7 @@ function getDataDirectory() {
       if (fs.existsSync(legacyDevDb) && !fs.existsSync(newDbPath)) {
         fs.copyFileSync(legacyDevDb, newDbPath)
       }
-      const newConfigPath = path.join(legacyDataDir, 'runtime-config.json')
-      if (!fs.existsSync(newConfigPath)) {
+      if (!fs.existsSync(dataConfigPath)) {
         const cfg = JSON.parse(fs.readFileSync(legacyDevConfigPath, 'utf8'))
         if (cfg?.server) {
           cfg.server = { ...cfg.server, dbDirectory: legacyDataDir, dbFile: newDbPath }
@@ -198,7 +209,7 @@ function getDataDirectory() {
         if (cfg?.profiles?.server?.server) {
           cfg.profiles.server.server = { ...cfg.profiles.server.server, dbDirectory: legacyDataDir, dbFile: newDbPath }
         }
-        fs.writeFileSync(newConfigPath, JSON.stringify(cfg, null, 2), 'utf8')
+        fs.writeFileSync(dataConfigPath, JSON.stringify(cfg, null, 2), 'utf8')
       }
       saveBootstrap(legacyDataDir)
     } catch (_) {}
@@ -224,9 +235,16 @@ function getDefaultDbDirectory() {
 function getRuntimeConfigPath() {
   const dataDir = getDataDirectory()
   const fallback = getFallbackDataDirectory()
-  const candidate = dataDir ? path.join(dataDir, 'runtime-config.json') : path.join(fallback, 'runtime-config.json')
+  // Keep config under …/data/ — never the appData root. A leftover
+  // PharmaSuitLAN/runtime-config.json with localhost has caused Managed clients
+  // to call http://localhost:4000 while data/runtime-config.json had the real URL.
+  const candidate = dataDir
+    ? path.join(dataDir, 'runtime-config.json')
+    : path.join(fallback, 'data', 'runtime-config.json')
   // Never write under Program Files etc. (causes EPERM on Windows)
-  return isUnderProtectedPath(path.dirname(candidate)) ? path.join(fallback, 'runtime-config.json') : candidate
+  return isUnderProtectedPath(path.dirname(candidate))
+    ? path.join(fallback, 'data', 'runtime-config.json')
+    : candidate
 }
 
 function getMachineFingerprintPath() {
@@ -400,20 +418,37 @@ function normalizeRuntimeConfig(inputConfig) {
  * For Managed/cloud client installs, `client.serverUrl` is the source of truth —
  * a stale persisted `apiBaseUrl` (often localhost from an older build) must not win.
  */
+function isLocalhostApiBase(url) {
+  return /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(String(url || '').trim())
+}
+
+function cloudDefaultApiBase() {
+  const root = String(process.env.CLOUD_DEFAULT_SERVER_URL || 'https://server.masatechplc.com')
+    .trim()
+    .replace(/\/+$/, '')
+  return `${root}/api`
+}
+
 function resolveApiBaseUrl(config) {
   const serverUrl = normalizeServerUrl(config?.client?.serverUrl || '')
-  if (serverUrl) return `${serverUrl}/api`
+  if (serverUrl && !(IS_CLOUD_BUILD && isLocalhostApiBase(serverUrl))) {
+    return `${serverUrl}/api`
+  }
   const explicit = typeof config?.apiBaseUrl === 'string'
     ? config.apiBaseUrl.trim().replace(/\/+$/, '')
     : ''
-  return explicit || null
+  if (explicit) {
+    if (IS_CLOUD_BUILD && isLocalhostApiBase(explicit)) return cloudDefaultApiBase()
+    return explicit
+  }
+  if (IS_CLOUD_BUILD) return cloudDefaultApiBase()
+  return null
 }
 
 function applyRuntimeConfig(config) {
   runtimeConfig = config
   const apiBase = resolveApiBaseUrl(config)
-  if (apiBase) process.env.API_BASE_URL = apiBase
-  else delete process.env.API_BASE_URL
+  setApiBaseUrl(apiBase)
   if (config?.server?.dbFile) process.env.DB_FILE = config.server.dbFile
   else delete process.env.DB_FILE
 }
@@ -1035,7 +1070,14 @@ async function bootstrapRuntimeConfig() {
     effectiveCfg = { ...effectiveCfg, apiBaseUrl: `${serverUrl}/api` }
   }
   applyRuntimeConfig(effectiveCfg)
+  console.log('[bootstrap] configPath=', getRuntimeConfigPath())
   console.log('[bootstrap] API_BASE_URL=', process.env.API_BASE_URL || '(unset)')
+  console.log(
+    '[bootstrap] client.serverUrl=',
+    effectiveCfg?.client?.serverUrl || '(unset)',
+    'mode=',
+    effectiveCfg?.mode || '(unset)'
+  )
 
   publishBootProgress('init-complete', 'Initialization complete', 100)
 
