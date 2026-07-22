@@ -1,23 +1,21 @@
-# Builds PharmaSuit LAN (offline single-tenant) installers and publishes to
-# server.masatechplc.com/downloads/lan/
+# Release Offline LAN (bundled API) → downloads/offline/
 #
-# Does NOT touch downloads/cloud-multi/ — use a separate FTP dir secret.
+# Product branch: release/offline-lan (docs/PRODUCT_LINES.md)
+# Cut tags from that tip:
+#   git tag desktop-offline-vX.Y.Z && git push origin desktop-offline-vX.Y.Z
 #
-# Trigger: tag desktop-lan-v*  OR  manual "Run workflow"
+# Does NOT publish to downloads/lan/ (Dedicated) or downloads/cloud-multi/ (Managed).
 #
-# Required GitHub secrets:
-#   DOWNLOADS_HOST
-#   DOWNLOADS_USERNAME
-#   DOWNLOADS_PASSWORD
-#   DOWNLOADS_LAN_SERVER_DIR  — relative to FTP home, e.g. server.masatechplc.com/downloads/lan/
-#                              (NOT /home/USER/... and NOT the cloud-multi path)
+# Secrets:
+#   DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD
+#   DOWNLOADS_OFFLINE_SERVER_DIR — e.g. server.masatechplc.com/downloads/offline/
 
-name: Release LAN Desktop
+name: Release Offline LAN
 
 on:
   push:
     tags:
-      - 'desktop-lan-v*'
+      - 'desktop-offline-v*'
   workflow_dispatch:
     inputs:
       version:
@@ -25,8 +23,35 @@ on:
         required: false
         default: ''
 
+
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ensure tag is on release/offline-lan
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin release/offline-lan:refs/remotes/origin/release/offline-lan
+          git fetch origin sqlite3-windows-debugged:refs/remotes/origin/sqlite3-windows-debugged || true
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/release/offline-lan; then
+            echo "OK: on release/offline-lan"
+          elif git merge-base --is-ancestor "$GITHUB_SHA" origin/sqlite3-windows-debugged 2>/dev/null; then
+            echo "WARN: on legacy sqlite3-windows-debugged"
+          else
+            echo "ERROR: tag not on release/offline-lan"; exit 1
+          fi
+      - name: Skip note (manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: echo "Manual dispatch — tag ancestry check skipped"
+
   build:
+    needs: [guard]
+
     strategy:
       fail-fast: false
       matrix:
@@ -74,7 +99,7 @@ jobs:
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lan-desktop-${{ matrix.platform }}
+          name: offline-desktop-${{ matrix.platform }}
           path: |
             app/release/**
           retention-days: 90
@@ -100,33 +125,33 @@ jobs:
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             V="${{ github.event.inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/desktop-lan-v* ]]; then
-            V="${GITHUB_REF_NAME#desktop-lan-v}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-offline-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-offline-v}"
           else
             V="$(node -p "require('./app/package.json').version")"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "Publishing LAN version $V"
+          echo "Publishing Offline LAN version $V"
 
       - name: Download Mac artifacts
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: lan-desktop-mac
+          name: offline-desktop-mac
           path: staging/artifacts/mac
 
       - name: Download Windows artifacts
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: lan-desktop-win
+          name: offline-desktop-win
           path: staging/artifacts/win
 
       - name: Download Linux artifacts
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: lan-desktop-linux
+          name: offline-desktop-linux
           path: staging/artifacts/linux
 
       - name: Prepare publish bundle
@@ -141,8 +166,8 @@ jobs:
             --version "${{ steps.ver.outputs.version }}" \
             --artifacts-dir staging/artifacts \
             --out-dir staging/publish \
-            --notes "PharmaSuit LAN ${{ steps.ver.outputs.version }} (product create modal fix)" \
-            --base-url "https://server.masatechplc.com/downloads/lan"
+            --notes "PharmaSuit Offline LAN ${{ steps.ver.outputs.version }} (product create modal fix)" \
+            --base-url "https://server.masatechplc.com/downloads/offline"
           echo "--- publish tree ---"
           find staging/publish -type f | sort
 
@@ -152,27 +177,32 @@ jobs:
           DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
           DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
           DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
-          DOWNLOADS_LAN_SERVER_DIR: ${{ secrets.DOWNLOADS_LAN_SERVER_DIR }}
+          DOWNLOADS_OFFLINE_SERVER_DIR: ${{ secrets.DOWNLOADS_OFFLINE_SERVER_DIR }}
         run: |
           missing=0
           [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
           [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
           [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
-          [ -z "$DOWNLOADS_LAN_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_LAN_SERVER_DIR (e.g. server.masatechplc.com/downloads/lan/)" && missing=1
-          case "$DOWNLOADS_LAN_SERVER_DIR" in
-            /home/*)
-              echo "ERROR: DOWNLOADS_LAN_SERVER_DIR looks absolute ($DOWNLOADS_LAN_SERVER_DIR)."
-              echo "Use a path relative to the FTP home, e.g. server.masatechplc.com/downloads/lan/"
+          [ -z "$DOWNLOADS_OFFLINE_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_OFFLINE_SERVER_DIR (e.g. server.masatechplc.com/downloads/offline/)" && missing=1
+          case "$DOWNLOADS_OFFLINE_SERVER_DIR" in
+            /*)
+              echo "ERROR: DOWNLOADS_OFFLINE_SERVER_DIR looks absolute ($DOWNLOADS_OFFLINE_SERVER_DIR)."
+              echo "Use a path relative to the FTP account home, e.g. server.masatechplc.com/downloads/offline/"
               missing=1
               ;;
             *cloud-multi*)
-              echo "ERROR: DOWNLOADS_LAN_SERVER_DIR points at cloud-multi — refuse to overwrite cloud installers."
+              echo "ERROR: DOWNLOADS_OFFLINE_SERVER_DIR points at cloud-multi — refuse to overwrite Managed installers."
+              missing=1
+              ;;
+            */lan|*/lan/|*downloads/lan*)
+              echo "ERROR: DOWNLOADS_OFFLINE_SERVER_DIR points at downloads/lan — that feed is Dedicated Cloud."
+              echo "Use server.masatechplc.com/downloads/offline/ and set secret DOWNLOADS_OFFLINE_SERVER_DIR."
               missing=1
               ;;
           esac
           exit $missing
 
-      - name: Publish to downloads/lan (FTP/FTPS)
+      - name: Publish to downloads/offline (FTP/FTPS)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.DOWNLOADS_HOST }}
@@ -180,7 +210,7 @@ jobs:
           password: ${{ secrets.DOWNLOADS_PASSWORD }}
           protocol: ftps
           local-dir: staging/publish/
-          server-dir: ${{ secrets.DOWNLOADS_LAN_SERVER_DIR }}
+          server-dir: ${{ secrets.DOWNLOADS_OFFLINE_SERVER_DIR }}
           dangerous-clean-slate: false
           exclude: |
             **/.git*
@@ -193,5 +223,5 @@ jobs:
           echo "### LAN desktop published" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Version:** ${{ steps.ver.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Downloads:** https://server.masatechplc.com/downloads/lan/" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Downloads:** https://server.masatechplc.com/downloads/offline/" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Cloud (untouched):** https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"
