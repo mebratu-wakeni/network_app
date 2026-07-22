@@ -87,6 +87,9 @@ jobs:
         run: |
           chmod +x scripts/pack-multi-tenant-tarball.sh
           ./scripts/pack-multi-tenant-tarball.sh
+          test -f dist-release/masatech-deploy.tar.gz
+          test -f dist-release/DEPLOY.txt
+          ls -lh dist-release/masatech-deploy.tar.gz
 
       - name: Upload pack artifacts (Actions)
         uses: actions/upload-artifact@v4
