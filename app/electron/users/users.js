@@ -49,18 +49,11 @@ class UsersManager {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    let response
-    try {
-      response = await apiFetch(url, {
-        method: options.method || 'GET',
-        headers,
-        body: body
-      });
-    } catch (networkErr) {
-      const cause = networkErr?.cause?.code || networkErr?.cause?.message || ''
-      console.error('[apiRequest] fetch failed', url, networkErr?.message || networkErr, cause)
-      throw networkErr
-    }
+    const response = await apiFetch(url, {
+      method: options.method || 'GET',
+      headers,
+      body: body
+    });
     const data = await response.json();
 
     if (!response.ok) {
@@ -320,11 +313,8 @@ class UsersManager {
         user: response.user || response.data
       };
     } catch (error) {
-      console.error('[Get Current User] Error:', error?.message || error, error?.cause?.code || error?.cause?.message || '');
-      return {
-        success: false,
-        error: error?.message || 'Failed to get current user'
-      };
+      console.error('[Get Current User] Error:', error);
+      throw error;
     }
   }
 

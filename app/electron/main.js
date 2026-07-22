@@ -23,9 +23,8 @@ import { ReportsIpcHandlers } from './reports/ipcHandlers.js'
 import LicenseManager from './license/license.js'
 import { LicenseIpcHandlers } from './license/ipcHandlers.js'
 import { setToken, clearToken } from './config/authManager.js'
-import { setOnSessionExpired, setOnServerDown, setOnClientOutdated } from './config/apiFetch.js'
-import { setApiBaseUrl } from './config/apiConfig.js'
-import { initCloudAutoUpdater, registerCloudUpdaterIpc, handleClientOutdated } from './cloudUpdater.js'
+import { setOnSessionExpired, setOnServerDown } from './config/apiFetch.js'
+import { initCloudAutoUpdater, registerCloudUpdaterIpc } from './cloudUpdater.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -398,25 +397,15 @@ function normalizeRuntimeConfig(inputConfig) {
 
 function applyRuntimeConfig(config) {
   runtimeConfig = config
-  const apiBase =
-    config?.apiBaseUrl ||
-    (config?.client?.serverUrl
-      ? `${normalizeServerUrl(config.client.serverUrl)}/api`
-      : null)
-  setApiBaseUrl(apiBase)
+  if (config?.apiBaseUrl) process.env.API_BASE_URL = config.apiBaseUrl
+  else delete process.env.API_BASE_URL
   if (config?.server?.dbFile) process.env.DB_FILE = config.server.dbFile
   else delete process.env.DB_FILE
 }
 
 function getApiRootForHealth() {
-  // Prefer live runtime config over env — env can be stale after HMR / partial setup.
-  const fromConfig =
-    runtimeConfig?.apiBaseUrl ||
-    (runtimeConfig?.client?.serverUrl
-      ? `${normalizeServerUrl(runtimeConfig.client.serverUrl)}/api`
-      : null)
-  const apiBase = fromConfig || process.env.API_BASE_URL || 'http://localhost:4000/api'
-  return String(apiBase).replace(/\/api\/?$/i, '')
+  const apiBase = process.env.API_BASE_URL || 'http://localhost:4000/api'
+  return apiBase.replace(/\/api\/?$/i, '')
 }
 
 const IPv4_REGEX = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/
@@ -999,12 +988,6 @@ function createMainWindow() {
     }
   })
 
-  setOnClientOutdated((info) => {
-    handleClientOutdated(info).catch((err) => {
-      console.warn('[cloud-updater] client-outdated handler failed:', err?.message || err)
-    })
-  })
-
   // Wire up the network-failure notifier: any fetch() throw (connection refused,
   // timeout, DNS error) triggers the server-down overlay in the renderer and
   // starts background polling until the server is reachable again.
@@ -1025,18 +1008,10 @@ async function bootstrapRuntimeConfig() {
   // This branch never self-hosts a local API/server, even if a previous build
   // (pre cloud-multi-tenant pivot) left mode:'server' persisted on this machine.
   // Force client mode so we never auto-spawn a local server or license flow.
-  if (IS_CLOUD_BUILD && effectiveCfg?.mode === 'server') {
-    effectiveCfg = { ...effectiveCfg, mode: 'client' }
-  }
-  if (IS_CLOUD_BUILD && effectiveCfg?.mode !== 'client') {
-    effectiveCfg = { ...effectiveCfg, mode: 'client' }
-  }
-  const serverUrl = normalizeServerUrl(effectiveCfg?.client?.serverUrl || '')
-  if (serverUrl && !effectiveCfg?.apiBaseUrl) {
-    effectiveCfg = { ...effectiveCfg, apiBaseUrl: `${serverUrl}/api` }
+  if (effectiveCfg?.mode === 'server') {
+    effectiveCfg = { ...effectiveCfg, mode: null, setupCompleted: false }
   }
   applyRuntimeConfig(effectiveCfg)
-  console.log('[bootstrap] API_BASE_URL=', process.env.API_BASE_URL || '(unset)')
 
   publishBootProgress('init-complete', 'Initialization complete', 100)
 
@@ -1150,23 +1125,7 @@ ipcMain.handle('setup:get-config', async () => {
   const loaded = runtimeConfig || loadRuntimeConfig()
   const defaultDir = getDefaultDbDirectory()
   try { fs.mkdirSync(defaultDir, { recursive: true }) } catch (_) {}
-  let normalizedConfig = resolveConfigByDbPresence(loaded)
-
-  // Cloud builds are client-only; never leave main process on localhost defaults.
-  if (IS_CLOUD_BUILD && normalizedConfig?.mode === 'server') {
-    normalizedConfig = { ...normalizedConfig, mode: 'client' }
-  }
-  if (IS_CLOUD_BUILD && normalizedConfig?.mode !== 'client') {
-    normalizedConfig = { ...normalizedConfig, mode: 'client' }
-  }
-
-  // Always sync API base for main-process fetch (users/me, health, etc.)
-  const serverUrl = normalizeServerUrl(normalizedConfig?.client?.serverUrl || '')
-  if (serverUrl && !normalizedConfig?.apiBaseUrl) {
-    normalizedConfig = { ...normalizedConfig, apiBaseUrl: `${serverUrl}/api` }
-  }
-  applyRuntimeConfig(normalizedConfig)
-
+  const normalizedConfig = resolveConfigByDbPresence(loaded)
   // Pass through persisted license status when available (e.g. after setup).
   // Avoid blocking on network calls — license state is resolved in setup/startup flows.
   const effectiveConfig = {
@@ -1182,6 +1141,7 @@ ipcMain.handle('setup:get-config', async () => {
     (!loaded?.setupCompleted || loaded?.server?.dbFile !== normalizedConfig?.server?.dbFile)
   ) {
     saveRuntimeConfig(normalizedConfig)
+    applyRuntimeConfig(normalizedConfig)
   }
   return {
     success: true,
@@ -1189,7 +1149,7 @@ ipcMain.handle('setup:get-config', async () => {
     defaults: {
       mode: IS_CLOUD_BUILD ? 'client' : 'server',
       defaultServerUrl: IS_CLOUD_BUILD
-        ? (process.env.CLOUD_DEFAULT_SERVER_URL || 'https://server.masatechplc.com').replace(/\/+$/, '')
+        ? (process.env.CLOUD_DEFAULT_SERVER_URL || 'https://mltplc.com').replace(/\/+$/, '')
         : null,
       dbDirectory: defaultDir,
       dbFileName: DB_FILE_NAME,
@@ -1516,11 +1476,10 @@ app.on('before-quit', async () => {
   await serverManager.stopServer()
 })
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   registerRendererProtocol()
   registerCloudUpdaterIpc(ipcMain)
-  // Apply saved client/server API base BEFORE any window/IPC API traffic.
-  await bootstrapRuntimeConfig()
+  // Do not auto-start server. User must choose mode first, then we validate DB/license.
   createMainWindow()
   if (IS_CLOUD_BUILD) initCloudAutoUpdater()
 })
