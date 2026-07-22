@@ -1,5 +1,10 @@
 # Release Managed Cloud — API tarball + desktop installers/update feed together.
 #
+# Product branch: release/managed-cloud (see docs/PRODUCT_LINES.md)
+# Cut tags from that branch tip only:
+#   git checkout release/managed-cloud && git pull
+#   git tag desktop-cloud-vX.Y.Z && git push origin desktop-cloud-vX.Y.Z
+#
 # One tag produces:
 #   1) GitHub Release assets: masatech-deploy.tar.gz (+ DEPLOY.txt, sql/*)
 #   2) FTPS publish to server.masatechplc.com/downloads/cloud-multi/
@@ -45,6 +50,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag is on release/managed-cloud
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin release/managed-cloud:refs/remotes/origin/release/managed-cloud
+          # Transition: also allow legacy product tip until it is retired.
+          git fetch origin feature/cloud-multi-tenant:refs/remotes/origin/feature/cloud-multi-tenant || true
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/release/managed-cloud; then
+            echo "OK: tag commit is on release/managed-cloud"
+          elif git merge-base --is-ancestor "$GITHUB_SHA" origin/feature/cloud-multi-tenant 2>/dev/null; then
+            echo "WARN: tag is on legacy feature/cloud-multi-tenant — prefer release/managed-cloud"
+          else
+            echo "ERROR: tag commit $GITHUB_SHA is not on release/managed-cloud"
+            echo "Cut desktop-cloud-v* tags from release/managed-cloud only (docs/PRODUCT_LINES.md)."
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4

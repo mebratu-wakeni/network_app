@@ -1,22 +1,22 @@
 # Branch strategy
 
-Three product lines, three long-lived branches. Eventually `feature/cloud-multi-tenant` becomes the single maintenance trunk (`main` / release).
+**Operating model:** three product **`release/*`** branches; short-lived fix/feature branches; merge → tag → publish.
 
-**Day-to-day policy, tags, feeds, and cherry-pick rules:** see **[PRODUCT_LINES.md](PRODUCT_LINES.md)**.
+Full policy: **[PRODUCT_LINES.md](PRODUCT_LINES.md)**.
 
-| Branch | Product | API database | Deploy |
-|--------|---------|--------------|--------|
-| `cloud-backend` | Single-customer cloud (Dedicated) | SQLite on cPanel | **Tarball** / FTPS to cPanel + desktop to `downloads/lan/` |
-| `feature/cloud-multi-tenant` | Multi-tenant SaaS (Managed) | PostgreSQL | **Tarball** to Postgres host + GitHub CI for **desktop** → `downloads/cloud-multi/` |
-| `sqlite3-windows-debugged` | Offline LAN (bundled API) | SQLite local | GitHub CI for **desktop installers**; no cloud API deploy |
+| Product branch | Product | Legacy name (transition) |
+|----------------|---------|--------------------------|
+| `release/managed-cloud` | Managed Cloud (Postgres SaaS) | `feature/cloud-multi-tenant` |
+| `release/dedicated-cloud` | Dedicated Cloud (SQLite cPanel) | `cloud-backend` |
+| `release/offline-lan` | Offline LAN (bundled API) | `sqlite3-windows-debugged` |
 
 ## Rules
 
-- Multi-tenant / Managed work happens only on `feature/cloud-multi-tenant`.
-- Do **not** merge multi-tenant into `cloud-backend` unless deliberately retiring single-cloud SQLite.
-- `cloud-backend` tip before multi-tenant fork: commit `6e5eb5e`.
-- Prefix PRs with `[Managed]`, `[Dedicated]`, or `[LAN]` and keep one product per PR ([PRODUCT_LINES.md](PRODUCT_LINES.md)).
+- New work: branch off the matching `release/*`, PR back into that `release/*` (title `[Managed]` / `[Dedicated]` / `[LAN]`).
+- Do **not** merge Managed ↔ Dedicated unless deliberately retiring one line.
+- Do **not** use `main` as a product trunk.
+- Publish desktops by tagging from the product release tip (`desktop-cloud-v*` / `desktop-dedicated-v*` / `desktop-offline-v*`).
 
 ## Future
 
-When multi-tenant is stable, merge `feature/cloud-multi-tenant` → `main` and ship three **build profiles** (LAN / cloud-single / cloud-multi) from one codebase.
+When multi-tenant is stable, promote Managed into a single trunk and ship three **build profiles** from one codebase.

@@ -1,76 +1,114 @@
-# Product lines — policy & release matrix
+# Product lines — release branches & workflow
 
-This repo ships **three related products** from **three long-lived branches**. Shared code makes it easy to fix one product and break another. Follow this policy until we move to a single trunk with build profiles (see [BRANCHING.md](BRANCHING.md)).
+This repo ships **three products**. Each has a long-lived **`release/*` product branch**. Day-to-day work happens on **short-lived fix/feature branches**; you merge to the product `release/*` branch, then **tag** to publish.
+
+Legacy branch names (`feature/cloud-multi-tenant`, `cloud-backend`, `sqlite3-windows-debugged`) remain on the remote as mirrors for a transition period — **do not start new work on them**.
 
 ## Canonical map
 
-| Label (use in PRs) | Product | Long-lived branch | Desktop tag prefix | Update / download feed | API host |
-|--------------------|---------|-------------------|--------------------|------------------------|----------|
-| `[Managed]` | Managed Cloud (multi-tenant SaaS) | `feature/cloud-multi-tenant` | `desktop-cloud-v*` | `…/downloads/cloud-multi/` | `server.masatechplc.com` (Postgres) |
-| `[Dedicated]` | Dedicated Cloud (single-tenant) | `cloud-backend` | `desktop-dedicated-v*` (preferred); legacy `desktop-lan-v*` still used | `…/downloads/lan/` | Customer cPanel hosts (SQLite) |
-| `[LAN]` | Offline LAN (bundled API) | `sqlite3-windows-debugged` | `desktop-offline-v*` (preferred) | **Must not** share Dedicated’s `lan` feed long-term — target `…/downloads/offline/` | None (local SQLite in installer) |
+| Label | Product | Product branch (merge target) | Desktop tag | Update / download feed | API |
+|-------|---------|-------------------------------|-------------|------------------------|-----|
+| `[Managed]` | Managed Cloud | `release/managed-cloud` | `desktop-cloud-v*` | `…/downloads/cloud-multi/` | `server.masatechplc.com` (Postgres) |
+| `[Dedicated]` | Dedicated Cloud | `release/dedicated-cloud` | `desktop-dedicated-v*` (also accepts legacy `desktop-lan-v*`) | `…/downloads/lan/` | Customer cPanel (SQLite) |
+| `[LAN]` | Offline LAN | `release/offline-lan` | `desktop-offline-v*` | `…/downloads/offline/` (secret `DOWNLOADS_OFFLINE_SERVER_DIR`) | Bundled local SQLite |
 
-`main` is **not** a product trunk. Do not ship or validate product work from `main` unless the task is explicitly about shared ops (e.g. download restore workflows).
+`main` is **not** a product trunk (ops/restore workflows only).
 
-Website first-install links: [masatechplc.com/downloads](https://masatechplc.com/downloads) (Managed → `cloud-multi`, Dedicated → `lan`). In-app updates use each product’s `latest.json` / electron-updater yml on its feed path.
+Website first-install: [masatechplc.com/downloads](https://masatechplc.com/downloads). In-app updates use each feed’s `latest.json` / electron-updater yml.
+
+### Legacy aliases (read-only transition)
+
+| Legacy branch | Use instead |
+|---------------|-------------|
+| `feature/cloud-multi-tenant` | `release/managed-cloud` |
+| `cloud-backend` | `release/dedicated-cloud` |
+| `sqlite3-windows-debugged` | `release/offline-lan` |
+
+## How to work (every fix / feature)
+
+```text
+1. Start from the product release branch (never from main / never commit directly on release/* for long-running work)
+     git fetch origin
+     git checkout release/managed-cloud    # or dedicated-cloud / offline-lan
+     git pull origin release/managed-cloud
+
+2. Create a short-lived branch with a clear name
+     git checkout -b fix/managed-api-base-url
+     # patterns: fix/<product>-<slug> | feature/<product>-<slug> | chore/<product>-<slug>
+     # Cloud agents: cursor/<slug>-d386 is fine if the PR title still has [Managed]|[Dedicated]|[LAN]
+
+3. Implement + PR
+     - PR title: [Managed] … / [Dedicated] … / [LAN] …
+     - Base branch: the matching release/* product branch
+     - One product per PR
+
+4. Merge the PR into release/<product>
+
+5. Publish (desktop / Managed API pack)
+     - Bump app/package.json version on the release branch (or in the last PR)
+     - Tag from the release tip and push the tag → GitHub Actions publishes
+         git checkout release/managed-cloud && git pull
+         git tag desktop-cloud-v1.0.4
+         git push origin desktop-cloud-v1.0.4
+```
+
+Managed API still needs the **ops** half after CI: download `masatech-deploy.tar.gz` from the GitHub Release → cPanel extract → NPM Install → restart ([DOWNLOADS_AND_UPDATES.md](DOWNLOADS_AND_UPDATES.md)). Dedicated API FTPS may also run on push to `release/dedicated-cloud` (see that branch’s `deploy.yml`).
 
 ## Hard rules
 
-1. **One product per change.** PR title starts with `[Managed]`, `[Dedicated]`, or `[LAN]`. Base branch must match the table above.
-2. **No cross-product drive-bys.** Do not mix Managed/Dedicated/LAN fixes in one PR “while you’re here.”
-3. **Do not merge** Managed ↔ Dedicated (Postgres/tenants vs SQLite cPanel). Only **cherry-pick** with the checklist below.
-4. **Pin agents and local work** to the product branch named in the task. Do not auto-commit WIP from another product line onto the active branch.
-5. **Ship gate is per product:** green release workflow for *that* branch’s tag, then verify *that* product’s `latest.json` version (and website links if first-install URLs changed).
+1. **One product per change.** PR title `[Managed]` | `[Dedicated]` | `[LAN]`; base = matching `release/*`.
+2. **No drive-bys** across products in one PR.
+3. **Do not merge** Managed ↔ Dedicated (Postgres/tenants vs SQLite). Cherry-pick only with the checklist below.
+4. **Do not commit long-running work on `release/*`.** Use a fix/feature branch → PR → merge.
+5. **Tags publish.** Cutting a product tag from a commit that is **not** on that product’s `release/*` history will fail CI (guard job).
+6. **Feeds stay separate.** Never point Managed builds at `downloads/lan` or Offline at `cloud-multi`.
 
-## Tag & feed hygiene (prevent overwrites)
+## Tag & feed hygiene
 
-| Risk | Policy |
-|------|--------|
-| Dedicated and Offline both used `desktop-lan-v*` → `downloads/lan/` | New Offline tags: `desktop-offline-v*`. Move Offline publish to `downloads/offline/` before the next Offline release. Dedicated keeps `downloads/lan/` for now. |
-| Managed vs Dedicated same Electron `appId` (`com.masatech.pharmasuit`) | Feeds **must** stay separate (`cloud-multi` vs `lan`). Never point a Managed build at the Dedicated update URL (or the reverse). |
-| Misleading “lan” name on Dedicated | Prefer tags `desktop-dedicated-v*`; update website/docs when renaming. Legacy `desktop-lan-v*` may still exist on `cloud-backend` until workflows are renamed. |
+| Product | Tag | Workflow (on that release branch) | Publish path |
+|---------|-----|-----------------------------------|--------------|
+| Managed | `desktop-cloud-v*` | `Release Managed Cloud` (`release-cloud-desktop.yml`) | `DOWNLOADS_SERVER_DIR` → `…/cloud-multi/` |
+| Dedicated | `desktop-dedicated-v*` (+ legacy `desktop-lan-v*`) | `Release Dedicated Cloud` | `DOWNLOADS_LAN_SERVER_DIR` → `…/lan/` |
+| Offline | `desktop-offline-v*` | `Release Offline LAN` | `DOWNLOADS_OFFLINE_SERVER_DIR` → `…/offline/` |
+
+Offline must **not** keep publishing to `downloads/lan/` (that overwrote Dedicated). Set GitHub secret `DOWNLOADS_OFFLINE_SERVER_DIR=server.masatechplc.com/downloads/offline/` before the next Offline tag.
 
 ## Cherry-pick checklist
 
-Before cherry-picking a commit onto another product branch, confirm each item and **adapt** if it differs:
+Before cherry-picking onto another product’s `release/*`:
 
-- [ ] Build mode: `dev` / `build` vs `dev:cloud` / `build:cloud`; `VITE_CLOUD_MODE` / `IS_CLOUD_BUILD` (hardcoded vs injected)
-- [ ] Electron builder config (`electron-builder.json5` vs `electron-builder.cloud.json5`); bundled API `extraResources` (LAN only)
-- [ ] `appId` / `productName` / artifact names
-- [ ] Update feed URL (`CLOUD_UPDATES_URL` / `VITE_CLOUD_UPDATES_URL`)
-- [ ] DB assumptions (Postgres + tenants vs SQLite; no tenant `client_code` on Dedicated/LAN)
-- [ ] Deploy path (Managed tarball + cPanel Node vs Dedicated FTPS API vs LAN installer-only)
-- [ ] Tests that encode product-specific behavior still pass on the **target** branch
+- [ ] Build mode (`dev`/`build` vs `dev:cloud`/`build:cloud`; `IS_CLOUD_BUILD`)
+- [ ] Electron builder + bundled API (LAN only)
+- [ ] `appId` / artifact names / update feed URL
+- [ ] DB (Postgres+tenants vs SQLite; no `client_code` on Dedicated/LAN)
+- [ ] Deploy path / workflows for that product
+- [ ] Tests pass on the **target** product branch
 
-If more than two checklist items need rewriting, prefer a small native fix on the target branch instead of a blind cherry-pick.
-
-## PR checklist (copy into description)
+## PR checklist
 
 ```text
-- [ ] PR title prefixed [Managed] | [Dedicated] | [LAN]
-- [ ] Base branch matches product table
-- [ ] No unrelated product changes in this PR
-- [ ] If cherry-pick: checklist above completed
-- [ ] Local verify: correct npm script for this product
-- [ ] If release: tag prefix + feed path match product; latest.json checked on the right URL
+- [ ] Title prefixed [Managed] | [Dedicated] | [LAN]
+- [ ] Base = release/managed-cloud | release/dedicated-cloud | release/offline-lan
+- [ ] Branched from that release tip (not from main / not from another product)
+- [ ] No unrelated product changes
+- [ ] If cherry-pick: checklist above done
+- [ ] If publishing: version bump + correct tag prefix; verify latest.json on the right feed
 ```
 
-## Local verify (quick)
+## Local verify
 
 | Product | Branch | Dev | Build |
 |---------|--------|-----|-------|
-| Managed | `feature/cloud-multi-tenant` | `cd app && npm run dev:cloud` | `npm run build:cloud` |
-| Dedicated | `cloud-backend` | `cd app && npm run dev:cloud` | `npm run build:cloud` |
-| LAN Offline | `sqlite3-windows-debugged` | `cd app && npm run dev` | `npm run build` |
+| Managed | `release/managed-cloud` | `cd app && npm run dev:cloud` | `npm run build:cloud` |
+| Dedicated | `release/dedicated-cloud` | `cd app && npm run dev:cloud` | `npm run build:cloud` |
+| Offline | `release/offline-lan` | `cd app && npm run dev` | `npm run build` |
 
-After Managed connect/bootstrap, Electron should log API base for `server.masatechplc.com` (not `localhost`) when using a saved Managed client config.
+## Related docs
 
-## Release pointers
-
-- Managed ship checklist: [DOWNLOADS_AND_UPDATES.md](DOWNLOADS_AND_UPDATES.md)
+- Managed ship: [DOWNLOADS_AND_UPDATES.md](DOWNLOADS_AND_UPDATES.md)
 - Managed API tarball: [MULTI_TENANT_TARBALL_DEPLOY.md](MULTI_TENANT_TARBALL_DEPLOY.md)
-- Branch overview: [BRANCHING.md](BRANCHING.md)
+- Short branch overview: [BRANCHING.md](BRANCHING.md)
 
-## Future (single trunk)
+## Future
 
-When Managed is stable enough to be the maintenance trunk: merge `feature/cloud-multi-tenant` → `main`, then ship **three build profiles** (LAN / cloud-single / cloud-multi) from one codebase instead of three diverging trees. Until then, this policy is the safety net.
+When Managed is stable as the single maintenance trunk: fold profiles (LAN / cloud-single / cloud-multi) into one codebase. Until then, `release/*` + fix branches + tags is the operating model.
