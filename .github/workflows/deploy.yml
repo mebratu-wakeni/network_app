@@ -1,3 +1,4 @@
+# Product branch: release/dedicated-cloud (legacy: cloud-backend). See docs/PRODUCT_LINES.md.
 # Deploy PharmaSuit API → dedicated-cloud cPanel hosts via FTPS.
 # Live SQLite stays outside api/ (sibling db/); this workflow must never upload *.db.
 # After a real sync: cPanel → Setup Node.js App → Restart (SSH not used).
@@ -32,7 +33,8 @@ on:
   # Real FTPS on push (both sites). Manual Run workflow is optional when the button is available.
   push:
     branches:
-      - cloud-backend
+      - release/dedicated-cloud
+      - cloud-backend  # legacy alias during transition
     paths:
       - 'api/**'
       - '.github/workflows/deploy.yml'
