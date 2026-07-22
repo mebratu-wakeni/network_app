@@ -395,17 +395,33 @@ function normalizeRuntimeConfig(inputConfig) {
   }
 }
 
+/**
+ * Resolve the main-process API base.
+ * For Managed/cloud client installs, `client.serverUrl` is the source of truth —
+ * a stale persisted `apiBaseUrl` (often localhost from an older build) must not win.
+ */
+function resolveApiBaseUrl(config) {
+  const serverUrl = normalizeServerUrl(config?.client?.serverUrl || '')
+  if (serverUrl) return `${serverUrl}/api`
+  const explicit = typeof config?.apiBaseUrl === 'string'
+    ? config.apiBaseUrl.trim().replace(/\/+$/, '')
+    : ''
+  return explicit || null
+}
+
 function applyRuntimeConfig(config) {
   runtimeConfig = config
-  if (config?.apiBaseUrl) process.env.API_BASE_URL = config.apiBaseUrl
+  const apiBase = resolveApiBaseUrl(config)
+  if (apiBase) process.env.API_BASE_URL = apiBase
   else delete process.env.API_BASE_URL
   if (config?.server?.dbFile) process.env.DB_FILE = config.server.dbFile
   else delete process.env.DB_FILE
 }
 
 function getApiRootForHealth() {
-  const apiBase = process.env.API_BASE_URL || 'http://localhost:4000/api'
-  return apiBase.replace(/\/api\/?$/i, '')
+  const fromConfig = resolveApiBaseUrl(runtimeConfig)
+  const apiBase = fromConfig || process.env.API_BASE_URL || 'http://localhost:4000/api'
+  return String(apiBase).replace(/\/api\/?$/i, '')
 }
 
 const IPv4_REGEX = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/
@@ -1007,11 +1023,19 @@ async function bootstrapRuntimeConfig() {
 
   // This branch never self-hosts a local API/server, even if a previous build
   // (pre cloud-multi-tenant pivot) left mode:'server' persisted on this machine.
-  // Force client mode so we never auto-spawn a local server or license flow.
+  // Clear server mode so we never auto-spawn a local server or license flow.
+  // Do NOT invent mode:'client' without a saved connection — that skips the connect screen.
   if (effectiveCfg?.mode === 'server') {
     effectiveCfg = { ...effectiveCfg, mode: null, setupCompleted: false }
   }
+
+  // Ensure client installs expose a concrete apiBaseUrl before any renderer IPC.
+  const serverUrl = normalizeServerUrl(effectiveCfg?.client?.serverUrl || '')
+  if (serverUrl && !effectiveCfg?.apiBaseUrl) {
+    effectiveCfg = { ...effectiveCfg, apiBaseUrl: `${serverUrl}/api` }
+  }
   applyRuntimeConfig(effectiveCfg)
+  console.log('[bootstrap] API_BASE_URL=', process.env.API_BASE_URL || '(unset)')
 
   publishBootProgress('init-complete', 'Initialization complete', 100)
 
@@ -1125,7 +1149,19 @@ ipcMain.handle('setup:get-config', async () => {
   const loaded = runtimeConfig || loadRuntimeConfig()
   const defaultDir = getDefaultDbDirectory()
   try { fs.mkdirSync(defaultDir, { recursive: true }) } catch (_) {}
-  const normalizedConfig = resolveConfigByDbPresence(loaded)
+  let normalizedConfig = resolveConfigByDbPresence(loaded)
+
+  // Keep main-process fetch pointed at the saved Managed/cloud server on every
+  // startup read — otherwise auth restore /users/me hits localhost and flips server-down.
+  const serverUrl = normalizeServerUrl(normalizedConfig?.client?.serverUrl || '')
+  if (serverUrl) {
+    normalizedConfig = {
+      ...normalizedConfig,
+      apiBaseUrl: `${serverUrl}/api`
+    }
+  }
+  applyRuntimeConfig(normalizedConfig)
+
   // Pass through persisted license status when available (e.g. after setup).
   // Avoid blocking on network calls — license state is resolved in setup/startup flows.
   const effectiveConfig = {
@@ -1141,7 +1177,6 @@ ipcMain.handle('setup:get-config', async () => {
     (!loaded?.setupCompleted || loaded?.server?.dbFile !== normalizedConfig?.server?.dbFile)
   ) {
     saveRuntimeConfig(normalizedConfig)
-    applyRuntimeConfig(normalizedConfig)
   }
   return {
     success: true,
@@ -1149,7 +1184,7 @@ ipcMain.handle('setup:get-config', async () => {
     defaults: {
       mode: IS_CLOUD_BUILD ? 'client' : 'server',
       defaultServerUrl: IS_CLOUD_BUILD
-        ? (process.env.CLOUD_DEFAULT_SERVER_URL || 'https://mltplc.com').replace(/\/+$/, '')
+        ? (process.env.CLOUD_DEFAULT_SERVER_URL || 'https://server.masatechplc.com').replace(/\/+$/, '')
         : null,
       dbDirectory: defaultDir,
       dbFileName: DB_FILE_NAME,
@@ -1476,10 +1511,11 @@ app.on('before-quit', async () => {
   await serverManager.stopServer()
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerRendererProtocol()
   registerCloudUpdaterIpc(ipcMain)
-  // Do not auto-start server. User must choose mode first, then we validate DB/license.
+  // Apply saved client API base BEFORE renderer startup IPC (auth restore, health).
+  await bootstrapRuntimeConfig()
   createMainWindow()
   if (IS_CLOUD_BUILD) initCloudAutoUpdater()
 })

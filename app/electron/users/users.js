@@ -313,8 +313,12 @@ class UsersManager {
         user: response.user || response.data
       };
     } catch (error) {
-      console.error('[Get Current User] Error:', error);
-      throw error;
+      console.error('[Get Current User] Error:', error?.message || error, error?.cause?.code || error?.cause?.message || '');
+      // Soft-fail so startup auth restore can stay on login instead of crashing IPC.
+      return {
+        success: false,
+        error: error?.message || 'Failed to get current user'
+      };
     }
   }
 

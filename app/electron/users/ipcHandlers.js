@@ -57,7 +57,15 @@ export function UserIpcHandlers() {
   })
 
   ipcMain.handle('users:get-current-user', async (event) => {
-    return await usersManager.getCurrentUser(getToken())
+    try {
+      return await usersManager.getCurrentUser(getToken())
+    } catch (error) {
+      console.error('[users:get-current-user]', error?.message || error)
+      return {
+        success: false,
+        error: error?.message || 'Failed to get current user'
+      }
+    }
   })
 
   ipcMain.handle("users:update-avatar", async (event, payload) => {

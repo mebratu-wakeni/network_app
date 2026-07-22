@@ -216,19 +216,44 @@ class NavigationVM extends ViewModel {
     this.updateState('startup-mode', null)
   }
 
-  // Try to restore session from localStorage token (optimistic)
+  // Try to restore session from localStorage token — only mark authenticated after
+  // /users/me succeeds. Optimistic auth left the app on MainLayout while a failed
+  // fetch flipped server-down (localhost API base before applyRuntimeConfig).
   async tryRestoreAuth() {
     try {
       const token = localStorage.getItem('authToken')
-      if (token) {
-        try { await window.ipcRenderer?.invoke?.('auth:set-token', token) } catch (_) {}
-        const auth = this.getState('auth') || {}
-        this.updateState('auth', { ...auth, isAuthenticated: true, token })
-        await permissionChecker.loadPermissions()
-        return true
+      if (!token) return false
+
+      try { await window.ipcRenderer?.invoke?.('auth:set-token', token) } catch (_) {}
+
+      const meResult = await window.ipcRenderer.invoke('users:get-current-user')
+      const ok = !!(meResult && (meResult.success || meResult.ok) && meResult.user)
+      if (!ok) {
+        // Stay on login; clear any server-down flash from a failed restore probe.
+        this.updateState('server-down', false)
+        try { localStorage.removeItem('authToken') } catch (_) {}
+        try { await window.ipcRenderer?.invoke?.('auth:clear-token') } catch (_) {}
+        return false
       }
-    } catch (e) { /* ignore */ }
-    return false
+
+      const auth = this.getState('auth') || {}
+      this.updateState('auth', {
+        ...auth,
+        isAuthenticated: true,
+        token,
+        user: meResult.user,
+        loading: false,
+        error: null
+      })
+      permissionChecker.setUserRules(meResult.user?.rules || [])
+      this.updateState('server-down', false)
+      return true
+    } catch (e) {
+      this.updateState('server-down', false)
+      try { localStorage.removeItem('authToken') } catch (_) {}
+      try { await window.ipcRenderer?.invoke?.('auth:clear-token') } catch (_) {}
+      return false
+    }
   }
 
   async loadSetupConfig() {

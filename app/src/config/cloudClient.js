@@ -14,6 +14,9 @@ export function getDefaultServerUrl() {
   if (import.meta.env.VITE_DEFAULT_SERVER_URL) {
     return String(import.meta.env.VITE_DEFAULT_SERVER_URL).replace(/\/+$/, '')
   }
+  if (import.meta.env.VITE_CLOUD_MODE === 'true') {
+    return 'https://server.masatechplc.com'
+  }
   if (import.meta.env.DEV) {
     return 'http://localhost:4000'
   }

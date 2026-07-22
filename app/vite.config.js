@@ -198,7 +198,9 @@ export default defineConfig(({ mode }) => {
   const isCloudBuild = env.VITE_CLOUD_MODE === 'true'
   const cloudDefaultServer =
     env.VITE_DEFAULT_SERVER_URL ||
-    (mode === 'development' ? 'http://localhost:4000' : 'https://mltplc.com')
+    (isCloudBuild
+      ? 'https://server.masatechplc.com'
+      : (mode === 'development' ? 'http://localhost:4000' : 'https://mltplc.com'))
   const cloudUpdatesUrl =
     env.VITE_CLOUD_UPDATES_URL ||
     'https://server.masatechplc.com/downloads/cloud-multi'
