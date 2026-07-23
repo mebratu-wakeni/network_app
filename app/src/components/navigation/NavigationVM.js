@@ -68,7 +68,8 @@ class NavigationVM extends ViewModel {
       percent: 0,
       error: null,
       currentVersion: null,
-      simulated: false
+      simulated: false,
+      manualDownloadUrl: null
     });
     this.setState('app-update-dev-panel', { show: false, note: '' });
 

@@ -1,10 +1,10 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { createRequire } from 'node:module'
 import { compareVersions } from './versionCompare.js'
 
 const require = createRequire(import.meta.url)
-const { version: APP_VERSION } = require('../package.json')
+const { version: PACKAGE_VERSION } = require('../package.json')
 
 /** Managed Cloud (multi-tenant) update feed — do not point at downloads/lan. */
 const DEFAULT_UPDATES_BASE = 'https://server.masatechplc.com/downloads/cloud-multi'
@@ -12,6 +12,14 @@ const DEFAULT_UPDATES_BASE = 'https://server.masatechplc.com/downloads/cloud-mul
 function getUpdatesFeedUrl() {
   const fromEnv = String(process.env.CLOUD_UPDATES_URL || '').trim().replace(/\/+$/, '')
   return fromEnv || DEFAULT_UPDATES_BASE
+}
+
+function installedVersion() {
+  try {
+    // Packaged builds: Electron reads version from the built app (matches installer filename).
+    if (app?.isPackaged) return String(app.getVersion() || PACKAGE_VERSION)
+  } catch (_) {}
+  return String(PACKAGE_VERSION)
 }
 
 let updateCheckStarted = false
@@ -24,12 +32,17 @@ let currentState = {
   mandatory: false,
   percent: 0,
   error: null,
-  currentVersion: APP_VERSION,
-  simulated: false
+  currentVersion: installedVersion(),
+  simulated: false,
+  manualDownloadUrl: null
 }
 
 function broadcast(payload) {
-  currentState = { ...currentState, ...payload, currentVersion: APP_VERSION }
+  currentState = {
+    ...currentState,
+    ...payload,
+    currentVersion: installedVersion()
+  }
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send('updater:state', currentState)
@@ -54,7 +67,8 @@ async function fetchUpdatePolicy(feedUrl) {
       version: data?.version || null,
       releaseNotes: data?.releaseNotes || '',
       mandatory: data?.mandatory === true,
-      minSupportedVersion: data?.minSupportedVersion || null
+      minSupportedVersion: data?.minSupportedVersion || null,
+      artifacts: data?.artifacts || null
     }
   } catch (err) {
     console.warn('[cloud-updater] policy fetch failed:', err?.message || err)
@@ -62,17 +76,61 @@ async function fetchUpdatePolicy(feedUrl) {
   }
 }
 
+function pickManualDownloadUrl(policy) {
+  const artifacts = policy?.artifacts || {}
+  const platform = process.platform
+  if (platform === 'darwin') {
+    return artifacts.mac?.url || null
+  }
+  if (platform === 'win32') {
+    return artifacts.win?.url || artifacts.win32?.url || null
+  }
+  if (platform === 'linux') {
+    return artifacts.linux?.url || null
+  }
+  return artifacts.mac?.url || artifacts.win?.url || artifacts.linux?.url || null
+}
+
 function classifyUpdate(policy, availableVersion) {
   const target = availableVersion || policy?.version
   let mandatory = policy?.mandatory === true
-  if (policy?.minSupportedVersion && compareVersions(APP_VERSION, policy.minSupportedVersion) < 0) {
+  const current = installedVersion()
+  if (policy?.minSupportedVersion && compareVersions(current, policy.minSupportedVersion) < 0) {
     mandatory = true
   }
   return {
     version: target,
     releaseNotes: policy?.releaseNotes || '',
-    mandatory
+    mandatory,
+    manualDownloadUrl: pickManualDownloadUrl(policy)
   }
+}
+
+/**
+ * If electron-updater cannot advertise an update (e.g. macOS feed pointed at DMG only)
+ * but latest.json is newer than the installed build, still surface a banner with a
+ * manual download link so users know a newer installer exists.
+ */
+async function maybeOfferPolicyUpdate(feedUrl, { preferManual = false } = {}) {
+  const policy = await fetchUpdatePolicy(feedUrl)
+  if (!policy?.version) return false
+  const current = installedVersion()
+  if (compareVersions(current, policy.version) >= 0) return false
+
+  const classified = classifyUpdate(policy, policy.version)
+  broadcast({
+    status: 'available',
+    version: classified.version,
+    releaseNotes: classified.releaseNotes,
+    mandatory: classified.mandatory,
+    percent: 0,
+    error: preferManual
+      ? 'Automatic update package unavailable — download the installer instead.'
+      : null,
+    simulated: false,
+    manualDownloadUrl: classified.manualDownloadUrl
+  })
+  return true
 }
 
 function bumpPatch(version) {
@@ -89,7 +147,7 @@ function bumpPatch(version) {
 function startSimulatedUpdate({ mandatory = false } = {}) {
   clearSimulateTimer()
   simulateMode = true
-  const nextVersion = bumpPatch(APP_VERSION)
+  const nextVersion = bumpPatch(installedVersion())
   broadcast({
     status: 'available',
     version: nextVersion,
@@ -99,7 +157,8 @@ function startSimulatedUpdate({ mandatory = false } = {}) {
     mandatory: !!mandatory,
     percent: 0,
     error: null,
-    simulated: true
+    simulated: true,
+    manualDownloadUrl: null
   })
   return { success: true, state: currentState }
 }
@@ -138,10 +197,12 @@ export function initCloudAutoUpdater() {
 
   const feedUrl = getUpdatesFeedUrl()
   autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl })
-  console.log('[cloud-updater] feed:', feedUrl)
+  console.log('[cloud-updater] feed:', feedUrl, 'installed:', installedVersion())
 
-  autoUpdater.on('error', (err) => {
+  autoUpdater.on('error', async (err) => {
     console.warn('[cloud-updater]', err?.message || err)
+    const offered = await maybeOfferPolicyUpdate(feedUrl, { preferManual: true })
+    if (offered) return
     broadcast({
       status: 'error',
       error: err?.message || String(err),
@@ -151,7 +212,7 @@ export function initCloudAutoUpdater() {
   })
 
   autoUpdater.on('checking-for-update', () => {
-    broadcast({ status: 'checking', error: null, simulated: false })
+    broadcast({ status: 'checking', error: null, simulated: false, manualDownloadUrl: null })
   })
 
   autoUpdater.on('update-available', async (info) => {
@@ -164,18 +225,23 @@ export function initCloudAutoUpdater() {
       mandatory: classified.mandatory,
       percent: 0,
       error: null,
-      simulated: false
+      simulated: false,
+      // Keep manual URL as fallback if auto-download later fails (unsigned mac, etc.)
+      manualDownloadUrl: classified.manualDownloadUrl
     })
   })
 
-  autoUpdater.on('update-not-available', () => {
+  autoUpdater.on('update-not-available', async () => {
+    const offered = await maybeOfferPolicyUpdate(feedUrl, { preferManual: true })
+    if (offered) return
     broadcast({
       status: 'up-to-date',
       version: null,
       mandatory: false,
       percent: 0,
       error: null,
-      simulated: false
+      simulated: false,
+      manualDownloadUrl: null
     })
   })
 
@@ -189,15 +255,20 @@ export function initCloudAutoUpdater() {
   })
 
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((err) => {
+    autoUpdater.checkForUpdates().catch(async (err) => {
       console.warn('[cloud-updater] check failed:', err?.message || err)
+      const offered = await maybeOfferPolicyUpdate(feedUrl, { preferManual: true })
+      if (offered) return
       broadcast({ status: 'error', error: err?.message || String(err), simulated: false })
     })
   }, 8000)
 }
 
 export function registerCloudUpdaterIpc(ipcMain) {
-  ipcMain.handle('updater:get-state', async () => currentState)
+  ipcMain.handle('updater:get-state', async () => {
+    currentState = { ...currentState, currentVersion: installedVersion() }
+    return currentState
+  })
 
   ipcMain.handle('updater:simulate', async (_event, payload = {}) => {
     if (app.isPackaged) {
@@ -210,11 +281,14 @@ export function registerCloudUpdaterIpc(ipcMain) {
     if (!app.isPackaged) {
       return startSimulatedUpdate({ mandatory: false })
     }
+    const feedUrl = getUpdatesFeedUrl()
     try {
       broadcast({ status: 'checking', error: null, simulated: false })
       await autoUpdater.checkForUpdates()
       return { success: true, state: currentState }
     } catch (err) {
+      const offered = await maybeOfferPolicyUpdate(feedUrl, { preferManual: true })
+      if (offered) return { success: true, state: currentState, manual: true }
       broadcast({ status: 'error', error: err?.message || String(err), simulated: false })
       return { success: false, error: err?.message || String(err) }
     }
@@ -224,12 +298,45 @@ export function registerCloudUpdaterIpc(ipcMain) {
     if (!app.isPackaged || simulateMode || currentState.simulated) {
       return startSimulatedDownload()
     }
+    // Manual path when auto package is missing (e.g. macOS DMG-only feed / unsigned)
+    if (currentState.manualDownloadUrl && currentState.error) {
+      try {
+        await shell.openExternal(currentState.manualDownloadUrl)
+        return { success: true, manual: true }
+      } catch (err) {
+        broadcast({ status: 'error', error: err?.message || String(err), simulated: false })
+        return { success: false, error: err?.message || String(err) }
+      }
+    }
     try {
       broadcast({ status: 'downloading', percent: 0, error: null, simulated: false })
       await autoUpdater.downloadUpdate()
       return { success: true }
     } catch (err) {
+      const url = currentState.manualDownloadUrl
+      if (url) {
+        try {
+          await shell.openExternal(url)
+          broadcast({
+            status: 'available',
+            error: 'Opened installer download in your browser. Install manually, then restart PharmaSuit.',
+            simulated: false
+          })
+          return { success: true, manual: true }
+        } catch (_) {}
+      }
       broadcast({ status: 'error', error: err?.message || String(err), simulated: false })
+      return { success: false, error: err?.message || String(err) }
+    }
+  })
+
+  ipcMain.handle('updater:open-download', async () => {
+    const url = currentState.manualDownloadUrl
+    if (!url) return { success: false, error: 'No download URL available.' }
+    try {
+      await shell.openExternal(url)
+      return { success: true }
+    } catch (err) {
       return { success: false, error: err?.message || String(err) }
     }
   })
@@ -245,7 +352,8 @@ export function registerCloudUpdaterIpc(ipcMain) {
         mandatory: false,
         percent: 0,
         error: null,
-        simulated: false
+        simulated: false,
+        manualDownloadUrl: null
       })
       return {
         success: true,
@@ -271,7 +379,8 @@ export function registerCloudUpdaterIpc(ipcMain) {
         mandatory: false,
         percent: 0,
         error: null,
-        simulated: false
+        simulated: false,
+        manualDownloadUrl: null
       })
     }
     return { success: true }

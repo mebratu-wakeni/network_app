@@ -19,15 +19,15 @@ One tag drives both the API pack and the desktop update feed.
 
 Work on a short-lived branch off **`release/managed-cloud`**, merge the PR, then:
 
-1. On `release/managed-cloud`, bump `"version"` in [`app/package.json`](../app/package.json) (e.g. `1.0.3` → `1.0.4`) if not already bumped in the PR.
+1. On `release/managed-cloud`, bump `"version"` in [`app/package.json`](../app/package.json) (e.g. `1.0.4` → `1.0.5`) if not already bumped in the PR.
 2. Commit/push the release branch if needed.
 3. Tag and push **from that tip**:
 
 ```bash
 git checkout release/managed-cloud
 git pull origin release/managed-cloud
-git tag desktop-cloud-v1.0.4
-git push origin desktop-cloud-v1.0.4
+git tag desktop-cloud-v1.0.5
+git push origin desktop-cloud-v1.0.5
 ```
 
 4. Wait for Action **Release Managed Cloud** (workflow file: `release-cloud-desktop.yml`) to go green. It will:
@@ -98,13 +98,14 @@ Protocol in the workflow is **FTPS**.
 /downloads/cloud-multi/
   index.html                 # Downloads page (loads latest.json)
   latest.json                # Version + Mac/Win/Linux URLs
-  latest-mac.yml             # electron-updater (macOS)
+  latest-mac.yml             # electron-updater (macOS — must reference .zip)
   latest.yml                 # electron-updater (Windows)
   latest-linux.yml           # electron-updater (Linux)
-  1.0.4/
-    PharmaSuit-Cloud-Mac-1.0.4-Installer.dmg
-    PharmaSuit-Cloud-Windows-1.0.4-Setup.exe
-    PharmaSuit-Cloud-Linux-1.0.4.AppImage
+  1.0.5/
+    PharmaSuit-Cloud-Mac-1.0.5-Installer.dmg
+    PharmaSuit-Cloud-Mac-1.0.5-Installer.zip   # required for in-app Mac updates
+    PharmaSuit-Cloud-Windows-1.0.5-x64-Setup.exe
+    PharmaSuit-Cloud-Linux-1.0.5.AppImage
     *.blockmap
 ```
 
@@ -115,6 +116,13 @@ Packaged cloud clients call `initCloudAutoUpdater()` and poll:
 `https://server.masatechplc.com/downloads/cloud-multi/`
 
 (`latest-mac.yml` / `latest.yml` / `latest-linux.yml`). Users get a banner/wizard to download and restart.
+
+**macOS requirements**
+- Build publishes **both** `.dmg` (website / first install) and `.zip` (electron-updater).
+- `latest-mac.yml` must point at the **zip**. A DMG-only feed will not show an in-app update.
+- Apple Developer ID code signing (`CSC_LINK` / `CSC_KEY_PASSWORD` in CI) is strongly recommended; unsigned Mac auto-install often fails. If auto-update cannot run, the client still compares `latest.json` and offers a **Download installer** link.
+
+**Footer version:** the app chrome footer shows `import.meta.env.VITE_APP_VERSION` / `app.getVersion()`, which match `app/package.json` and the installer filename (e.g. `…-1.0.5-…`). It must never be hard-coded.
 
 Policy in `latest.json`:
 - `mandatory: true` — required update UI (no permanent Later)
@@ -132,7 +140,7 @@ Override feed at build time: `VITE_CLOUD_UPDATES_URL`.
 
 # Desktop prepare only (after a local npm run build:cloud)
 node scripts/prepare-cloud-multi-release.mjs \
-  --version 1.0.4 \
+  --version 1.0.5 \
   --artifacts-dir app/release-cloud \
   --out-dir /tmp/cloud-multi-publish
 ```

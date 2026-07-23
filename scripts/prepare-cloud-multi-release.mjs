@@ -88,7 +88,9 @@ function rewriteUpdaterYml(content, version) {
 
 function detectPlatformArtifact(fileName) {
   const n = fileName.toLowerCase()
-  if (n.endsWith('.dmg') || (n.includes('-mac-') && n.endsWith('.zip'))) return 'mac'
+  if (n.endsWith('.dmg') || (n.includes('-mac-') && n.endsWith('.zip')) || n.endsWith('.zip') && n.includes('mac')) {
+    return 'mac'
+  }
   if (n.endsWith('.exe') || n.includes('-windows-')) {
     // Prefer explicit arch markers from artifactName (...-${arch}-Setup.exe)
     if (n.includes('-ia32-') || n.includes('_ia32') || n.includes('-ia32.')) return 'win32'
@@ -98,6 +100,26 @@ function detectPlatformArtifact(fileName) {
   }
   if (n.endsWith('.appimage') || n.includes('-linux-')) return 'linux'
   return null
+}
+
+/** Human first-install link in latest.json — prefer DMG over ZIP on macOS. */
+function preferDownloadArtifact(current, candidate) {
+  if (!current) return candidate
+  const cur = current.toLowerCase()
+  const next = candidate.toLowerCase()
+  if (next.endsWith('.dmg') && !cur.endsWith('.dmg')) return candidate
+  if (cur.endsWith('.zip') && next.endsWith('.dmg')) return candidate
+  return current
+}
+
+/** electron-updater mac stubs must point at ZIP (not DMG). */
+function preferUpdaterArtifact(current, candidate) {
+  if (!current) return candidate
+  const cur = current.toLowerCase()
+  const next = candidate.toLowerCase()
+  if (next.endsWith('.zip') && !cur.endsWith('.zip')) return candidate
+  if (cur.endsWith('.dmg') && next.endsWith('.zip')) return candidate
+  return current
 }
 
 function updaterYmlName(fileName) {
@@ -129,6 +151,7 @@ function main() {
 
   const files = walkFiles(args.artifactsDir)
   const artifacts = { mac: null, win: null, win32: null, linux: null }
+  const updaterArtifacts = { mac: null, win: null, win32: null, linux: null }
   const copiedInstallers = []
 
   for (const file of files) {
@@ -150,8 +173,9 @@ function main() {
       const dest = path.join(versionDir, base)
       copyFile(file, dest)
       copiedInstallers.push(base)
-      if (platform && !isBlockmap && !artifacts[platform]) {
-        artifacts[platform] = base
+      if (platform && !isBlockmap) {
+        artifacts[platform] = preferDownloadArtifact(artifacts[platform], base)
+        updaterArtifacts[platform] = preferUpdaterArtifact(updaterArtifacts[platform], base)
       }
       console.log('Copied', base, '→', `${args.version}/`)
     }
@@ -160,7 +184,9 @@ function main() {
   // Infer missing platforms from copied names if needed
   for (const name of copiedInstallers) {
     const p = detectPlatformArtifact(name)
-    if (p && !artifacts[p] && !name.endsWith('.blockmap')) artifacts[p] = name
+    if (!p || name.endsWith('.blockmap')) continue
+    artifacts[p] = preferDownloadArtifact(artifacts[p], name)
+    updaterArtifacts[p] = preferUpdaterArtifact(updaterArtifacts[p], name)
   }
 
   const publishedAt = new Date().toISOString()
@@ -203,15 +229,22 @@ function main() {
   for (const [key, yml] of requiredYml) {
     const dest = path.join(args.outDir, yml)
     if (fs.existsSync(dest)) continue
-    if (!artifacts[key]) {
+    const file = updaterArtifacts[key] || artifacts[key]
+    if (!file) {
       console.warn(`No ${key} installer or ${yml}; skipping stub`)
+      continue
+    }
+    if (key === 'mac' && !String(file).toLowerCase().endsWith('.zip')) {
+      console.warn(
+        `Stub ${yml} would point at ${file}; macOS electron-updater needs a .zip. Skipping stub.`
+      )
       continue
     }
     const stub = [
       `version: ${args.version}`,
       `files:`,
-      `  - url: ${args.version}/${artifacts[key]}`,
-      `path: ${args.version}/${artifacts[key]}`,
+      `  - url: ${args.version}/${file}`,
+      `path: ${args.version}/${file}`,
       `releaseDate: ${publishedAt}`
     ].join('\n') + '\n'
     fs.writeFileSync(dest, stub, 'utf8')

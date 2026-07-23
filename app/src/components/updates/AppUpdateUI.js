@@ -15,7 +15,8 @@ function defaultUpdateState() {
     percent: 0,
     error: null,
     currentVersion: null,
-    simulated: false
+    simulated: false,
+    manualDownloadUrl: null
   }
 }
 
@@ -129,9 +130,14 @@ function DevUpdateTester(props, devPanel) {
 function UpdateAvailableBanner(props, state) {
   const mandatory = !!state.mandatory
   const version = state.version || 'new'
+  const manualOnly = !!state.manualDownloadUrl && !!state.error
 
   const onUpdate = async () => {
     try {
+      if (manualOnly && window.ipcRenderer.openUpdateDownload) {
+        await window.ipcRenderer.openUpdateDownload()
+        return
+      }
       await window.ipcRenderer.startUpdateDownload()
     } catch (_) {}
   }
@@ -148,7 +154,7 @@ function UpdateAvailableBanner(props, state) {
       variant: 'primary',
       class: 'text-sm',
       onClick: onUpdate
-    }, 'Update now')
+    }, manualOnly ? 'Download installer' : 'Update now')
   ]
   if (!mandatory) {
     actions.unshift(
@@ -165,10 +171,16 @@ function UpdateAvailableBanner(props, state) {
       mandatory ? `Required update: PharmaSuit ${version}` : `Update available: PharmaSuit ${version}`
     )
   ]
+  if (state.currentVersion) {
+    copy.push(Row({ class: 'text-xs text-gray-500 mt-0.5' }, `Installed: ${state.currentVersion}`))
+  }
   if (state.releaseNotes) {
     copy.push(Row({ class: 'text-xs text-gray-600 mt-0.5 truncate' }, String(state.releaseNotes)))
   }
-  if (mandatory) {
+  if (manualOnly) {
+    copy.push(Row({ class: 'text-xs text-amber-700 mt-1' },
+      'Automatic in-app install is unavailable on this build — download the installer and replace the app.'))
+  } else if (mandatory) {
     copy.push(Row({ class: 'text-xs text-amber-700 mt-1' }, 'This update is required to continue using PharmaSuit safely.'))
   }
 

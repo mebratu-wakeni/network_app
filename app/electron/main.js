@@ -1326,6 +1326,7 @@ ipcMain.handle('app:quit', async () => {
 })
 
 ipcMain.handle('app:is-packaged', async () => app.isPackaged)
+ipcMain.handle('app:get-version', async () => app.getVersion())
 
 ipcMain.handle('setup:save-config', async (_event, payload) => {
   const mode = payload?.mode === 'client' ? 'client' : 'server'

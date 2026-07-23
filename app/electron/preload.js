@@ -36,7 +36,9 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   startUpdateDownload: () => ipcRenderer.invoke('updater:start-download'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
   dismissUpdate: () => ipcRenderer.invoke('updater:dismiss'),
+  openUpdateDownload: () => ipcRenderer.invoke('updater:open-download'),
   isPackaged: () => ipcRenderer.invoke('app:is-packaged'),
+  getAppVersion: () => ipcRenderer.invoke('app:get-version'),
   onUpdateState: (listener) => {
     const wrapped = (_event, state) => listener(state)
     ipcRenderer.on('updater:state', wrapped)

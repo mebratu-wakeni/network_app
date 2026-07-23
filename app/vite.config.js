@@ -206,11 +206,16 @@ export default defineConfig(({ mode }) => {
   const cloudUpdatesUrl =
     env.VITE_CLOUD_UPDATES_URL ||
     'https://server.masatechplc.com/downloads/cloud-multi'
+  // Keep footer / UI version in lockstep with package.json (and installer filenames).
+  const appVersion = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')
+  ).version
 
   return {
     define: {
       'import.meta.env.VITE_CLOUD_MODE': JSON.stringify(isCloudBuild ? 'true' : ''),
       'import.meta.env.VITE_DEFAULT_SERVER_URL': JSON.stringify(isCloudBuild ? cloudDefaultServer : ''),
+      'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
     },
     plugins: [
       tailwindcss(),
