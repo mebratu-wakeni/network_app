@@ -11,7 +11,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PKG_VERSION="$(node -p "require('$ROOT/app/package.json').version")"
+cd "$ROOT"
+# Use a relative require so Git Bash paths on Windows runners work with Node.
+PKG_VERSION="$(node -p "require('./app/package.json').version")"
 RESOLVED="${1:-}"
 
 if [ -z "$RESOLVED" ]; then
