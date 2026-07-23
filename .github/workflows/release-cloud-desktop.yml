@@ -215,7 +215,9 @@ jobs:
   publish:
     needs: [version-lock, build]
     runs-on: ubuntu-latest
-    if: ${{ always() && needs.build.result != 'cancelled' && needs.version-lock.result == 'success' }}
+    # Do NOT publish a partial feed. A failed Windows (or Mac/Linux) matrix leg used to
+    # still upload latest.json without that platform and wipe the previous download link.
+    if: ${{ always() && needs.build.result == 'success' && needs.version-lock.result == 'success' }}
 
     steps:
       - name: Checkout
@@ -227,21 +229,18 @@ jobs:
           node-version: '20'
 
       - name: Download Mac artifacts
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: cloud-desktop-mac
           path: staging/artifacts/mac
 
       - name: Download Windows artifacts
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: cloud-desktop-win
           path: staging/artifacts/win
 
       - name: Download Linux artifacts
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: cloud-desktop-linux
@@ -253,6 +252,25 @@ jobs:
           set -euo pipefail
           if [ ! -d staging/artifacts ] || [ -z "$(find staging/artifacts -type f 2>/dev/null | head -1)" ]; then
             echo "No installer artifacts downloaded — cannot publish."
+            exit 1
+          fi
+          # Hard require all three platforms so latest.json never drops Windows/Mac/Linux.
+          missing=0
+          if [ -z "$(find staging/artifacts/mac -type f \( -iname '*.dmg' -o -iname '*.zip' \) 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Mac installer (.dmg/.zip)"
+            missing=1
+          fi
+          if [ -z "$(find staging/artifacts/win -type f -iname '*.exe' 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Windows installer (.exe)"
+            missing=1
+          fi
+          if [ -z "$(find staging/artifacts/linux -type f -iname '*.AppImage' 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Linux installer (.AppImage)"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "Refusing to publish a partial cloud-multi feed."
+            find staging/artifacts -type f | sort || true
             exit 1
           fi
           PREPARE_ARGS=(
@@ -271,6 +289,20 @@ jobs:
           node scripts/prepare-cloud-multi-release.mjs "${PREPARE_ARGS[@]}"
           echo "--- publish tree ---"
           find staging/publish -type f | sort
+          test -f staging/publish/latest.json
+          test -f staging/publish/latest.yml
+          test -f staging/publish/latest-mac.yml
+          test -f staging/publish/latest-linux.yml
+          node -e "
+            const j = require('./staging/publish/latest.json');
+            for (const k of ['mac','win','linux']) {
+              if (!j.artifacts?.[k]?.url) {
+                console.error('latest.json missing artifacts.' + k);
+                process.exit(1);
+              }
+            }
+            console.log('latest.json platforms OK:', Object.keys(j.artifacts).join(', '));
+          "
 
       - name: Check downloads secrets
         shell: bash

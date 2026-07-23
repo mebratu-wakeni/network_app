@@ -97,7 +97,7 @@ Protocol in the workflow is **FTPS**.
 ```text
 /downloads/cloud-multi/
   index.html                 # Downloads page (loads latest.json)
-  latest.json                # Version + Mac/Win/Linux URLs
+  latest.json                # Version + Mac/Win/Linux URLs (all three required)
   latest-mac.yml             # electron-updater (macOS — must reference .zip)
   latest.yml                 # electron-updater (Windows)
   latest-linux.yml           # electron-updater (Linux)
@@ -105,9 +105,12 @@ Protocol in the workflow is **FTPS**.
     PharmaSuit-Cloud-Mac-1.0.5-Installer.dmg
     PharmaSuit-Cloud-Mac-1.0.5-Installer.zip   # required for in-app Mac updates
     PharmaSuit-Cloud-Windows-1.0.5-x64-Setup.exe
+    PharmaSuit-Cloud-Windows-1.0.5-ia32-Setup.exe
     PharmaSuit-Cloud-Linux-1.0.5.AppImage
     *.blockmap
 ```
+
+Publish refuses a **partial** feed: if Windows (or Mac/Linux) CI fails, FTPS upload does not run, so a previous good Windows link is not wiped.
 
 ## In-app updates
 
