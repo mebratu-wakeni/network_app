@@ -189,7 +189,8 @@ cp -f "$DEPLOY_TGZ" "$ROOT/masatech-deploy.tar.gz"
 
 # Sanity: must look like the live archive; must NOT contain ._* or .md
 echo "==> Archive preview (must include ./api/ ./masatech-admin/ ./downloads/):"
-tar -tzf "$DEPLOY_TGZ" | head -16
+# head closes the pipe early — ignore SIGPIPE under pipefail
+tar -tzf "$DEPLOY_TGZ" | head -16 || true
 echo "…"
 tar -tzf "$DEPLOY_TGZ" | grep -E 'downloads/cloud-multi/(index\.html|latest\.json)$' || {
   echo "ERROR: downloads seed missing from archive"
