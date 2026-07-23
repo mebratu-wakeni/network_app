@@ -9,6 +9,8 @@ import tailwindcss from '@tailwindcss/vite'
  * Prefer string literals in source so the scanner picks them up automatically.
  */
 const EXTRA_ICONS = [
+  'add-circle-outline', // purchase/sales add buttons — must never be stripped in packaged builds
+  'add-outline',
   'cube',
   'flash',
   'server',
