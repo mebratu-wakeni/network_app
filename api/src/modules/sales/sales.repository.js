@@ -16,13 +16,14 @@ export class SalesRepository {
   }
 
   /**
-   * Get last product balance for bin card (from bin_cards by product_id).
+   * Opening for the next bin-card row: last posted balance for this product.
+   * Uses posting order (id), not document date — backdated sales must not
+   * reopen from a later-dated correction/adjustment.
    */
   async getLastProductBalance(productId, trx = null) {
     const db = trx || this.knex
     const last = await db('bin_cards')
       .where({ product_id: productId })
-      .orderBy('transaction_date', 'desc')
       .orderBy('id', 'desc')
       .select('balance')
       .first()

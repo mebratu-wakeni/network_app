@@ -19,6 +19,7 @@
     "db:clear-financial": "node scripts/clear-financial-data.js",
     "db:reset-operational-full": "node scripts/clear-financial-data.js --yes --scope=full",
     "db:audit-fy": "node scripts/audit-fiscal-year-coverage.js",
+    "db:repair-bin-balances": "node scripts/repair-bin-card-balances.js",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

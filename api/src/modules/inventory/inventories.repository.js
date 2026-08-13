@@ -12,14 +12,12 @@ export class InventoriesRepository {
   }
 
   /**
-   * Get the last balance for a product from bin cards
-   * Returns the most recent balance for the product, or 0 if no transactions exist
+   * Last posted balance for a product (by id / posting order, not document date).
    */
   async getLastProductBalance(productId, trx = null) {
     const db = trx || this.knex
     const lastTransaction = await db('bin_cards')
       .where({ product_id: productId })
-      .orderBy('transaction_date', 'desc')
       .orderBy('id', 'desc')
       .select('balance')
       .first()
