@@ -11,13 +11,12 @@ export class PurchaseRepository {
   }
 
   /**
-   * Helper: Get last product balance for bin card
+   * Opening for the next bin-card row: last posted balance (by id, not date).
    */
   async getLastProductBalance(productId, trx = null) {
     const db = trx || this.knex
     const lastTransaction = await db('bin_cards')
       .where({ product_id: productId })
-      .orderBy('transaction_date', 'desc')
       .orderBy('id', 'desc')
       .select('balance')
       .first()
