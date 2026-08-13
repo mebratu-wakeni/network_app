@@ -6,7 +6,8 @@ const settingKeys = [
   'company_address',
   'company_phone',
   'company_email',
-  'company_tin'
+  'company_tin',
+  'company_logo_url'
 ]
 
 export const updateSettingsSchema = z.object({
@@ -15,7 +16,9 @@ export const updateSettingsSchema = z.object({
   company_address: z.string().max(1000).optional().nullable(),
   company_phone: z.string().max(100).optional().nullable(),
   company_email: z.union([z.string().email().max(255), z.literal('')]).optional().nullable(),
-  company_tin: z.string().max(100).optional().nullable()
+  company_tin: z.string().max(100).optional().nullable(),
+  // Desktop Settings form always includes this key; .strict() rejected it before.
+  company_logo_url: z.string().max(2000).optional().nullable()
 }).strict()
 
 export const allowedSettingKeys = settingKeys
