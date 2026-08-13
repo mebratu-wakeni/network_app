@@ -17,7 +17,8 @@ export class SettingsService {
       company_address: raw.company_address ?? '',
       company_phone: raw.company_phone ?? '',
       company_email: raw.company_email ?? '',
-      company_tin: raw.company_tin ?? ''
+      company_tin: raw.company_tin ?? '',
+      company_logo_url: raw.company_logo_url ?? ''
     }
   }
 
@@ -31,6 +32,7 @@ export class SettingsService {
     if (input.hasOwnProperty('company_phone')) updates.company_phone = input.company_phone ?? ''
     if (input.hasOwnProperty('company_email')) updates.company_email = input.company_email ?? ''
     if (input.hasOwnProperty('company_tin')) updates.company_tin = input.company_tin ?? ''
+    if (input.hasOwnProperty('company_logo_url')) updates.company_logo_url = input.company_logo_url ?? ''
     if (Object.keys(updates).length === 0) return this.getSettings(tenantId)
     await this.repository.setMany(tenantId, updates)
     return this.getSettings(tenantId)
