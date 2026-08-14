@@ -43,8 +43,7 @@ export function App() {
       if (!auth.isAuthenticated) {
         content = LoginLayout(props);
       } else {
-        const serverDown = !!props.viewModel.getState('server-down')
-        content = serverDown ? ServerDownOverlay(props) : MainLayout(props, main, router);
+        content = MainLayout(props, main, router);
       }
     }
 
@@ -55,7 +54,7 @@ export function App() {
     ])
   };
 
-  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'auth', 'server-down', 'app-update-state', 'app-update-dev-panel'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'auth', 'app-update-state', 'app-update-dev-panel'], viewModel: navigationVM }, render);
 }
 
 function ClientConnectionLayout(props) {
@@ -146,35 +145,6 @@ function ClientConnectionLayout(props) {
           disabled: loading
         }, loading ? 'Connecting…' : 'Connect')
       ])
-    ])
-  ])
-}
-
-function ServerDownOverlay(props) {
-  const setupConfig = props.viewModel.getState('setup-config') || {}
-  const serverUrl = setupConfig?.client?.serverUrl || setupConfig?.apiBaseUrl || ''
-
-  const handleRetry = async () => {
-    await props.viewModel.retryServerConnection()
-  }
-
-  return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-900/80 backdrop-blur-sm p-4' }, [
-    Row({ class: 'w-full max-w-sm bg-white rounded-2xl shadow-2xl flex flex-col items-center gap-5 px-8 py-10 text-center' }, [
-      Row({ tagType: 'div', class: 'text-5xl' }, [
-        Row({ tagType: 'ion-icon', attributes: { name: 'cloud-offline-outline' }, class: 'text-red-400' })
-      ]),
-      Row({ tagType: 'h2', class: 'text-xl font-bold text-gray-800' }, 'Server Unavailable'),
-      Row({ class: 'text-sm text-gray-500 leading-relaxed' }, 'The connection to the server was lost. This may be a temporary network issue or the server is restarting.'),
-      serverUrl ? Row({ class: 'text-xs text-gray-400 font-mono bg-gray-50 rounded px-3 py-1 w-full truncate' }, serverUrl) : null,
-      Row({ class: 'flex items-center gap-2 text-sm text-indigo-600' }, [
-        BootSpinner({ class: 'h-4 w-4 text-indigo-500 shrink-0' }),
-        Row({}, 'Retrying automatically every 15 seconds…')
-      ]),
-      Button({
-        variant: 'primary',
-        onClick: handleRetry,
-        class: 'w-full'
-      }, 'Retry Now')
     ])
   ])
 }

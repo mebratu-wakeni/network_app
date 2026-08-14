@@ -59,6 +59,7 @@ class NavigationVM extends ViewModel {
     this.setState('startup-selected-mode', null);
     this.setState('startup-loading-expanded', false);
     this.setState('startup-error-details-open', false);
+    // Connectivity is non-blocking (header indicator); kept only for legacy clears during auth restore.
     this.setState('server-down', false);
     this.setState('app-update-state', {
       status: 'idle',
@@ -111,26 +112,9 @@ class NavigationVM extends ViewModel {
         })
       })
 
-      // Sent by main process when a network-level fetch error occurs (server unreachable).
-      window.ipcRenderer.on('server:down', () => {
-        this.updateState('server-down', true)
-      })
-
-      // Sent by main process when recovery polling confirms the server is back up.
-      window.ipcRenderer.on('server:up', () => {
-        this.updateState('server-down', false)
-      })
+      // Network failures are non-blocking: HeaderVM listens for server:down / server:up
+      // and updates the green/gray connection indicator. Do not swap the main layout.
     }
-  }
-
-  // Called by the renderer's "Retry Now" button on the server-down overlay.
-  async retryServerConnection() {
-    try {
-      const result = await window.ipcRenderer.invoke('server:retry-health')
-      if (result?.healthy) {
-        this.updateState('server-down', false)
-      }
-    } catch (_) {}
   }
 
   // Update the login form fields
