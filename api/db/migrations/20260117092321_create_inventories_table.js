@@ -1,7 +1,9 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('inventories', (t) => {
     t.bigIncrements('id').primary()
-    
+    t.bigInteger('tenant_id').unsigned().notNullable()
+
     // Product Reference
     t.bigInteger('product_id').notNullable()
     
@@ -37,13 +39,15 @@ export const up = async (knex) => {
     t.string('sync_status', 255).defaultTo('pending')
     
     // Foreign Keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('product_id').references('id').inTable('products').onDelete('CASCADE')
     
     // Unique Constraints
-    t.unique('inventory_code', 'inventories_inventory_code_unique')
-    t.unique(['product_id', 'batch_no', 'expiry_date', 'purchase_price'], 'inventories_product_batch_expiry_price_unique')
+    t.unique(['tenant_id', 'inventory_code'], 'inventories_tenant_id_inventory_code_unique')
+    t.unique(['tenant_id', 'product_id', 'batch_no', 'expiry_date', 'purchase_price'], 'inventories_product_batch_expiry_price_unique')
     
     // Indexes
+    t.index('tenant_id', 'inventories_tenant_id_index')
     t.index('product_id', 'inventories_product_id_index')
     t.index('settlement_status', 'inventories_settlement_status_index')
     t.index('location', 'inventories_location_index')
@@ -52,18 +56,19 @@ export const up = async (knex) => {
     t.index('quantity', 'inventories_quantity_index')
   })
   
-  // Add CHECK constraints using raw SQL
-  await knex.raw(`
-    ALTER TABLE inventories 
-    ADD CONSTRAINT check_acquisition_type 
-    CHECK (acquisition_type IN ('purchase', 'cash', 'credit', 'cheque', 'borrow'))
-  `)
-  
-  await knex.raw(`
-    ALTER TABLE inventories 
-    ADD CONSTRAINT check_settlement_status 
-    CHECK (settlement_status IN ('unsettled', 'partially_settled', 'fully_settled'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE inventories 
+      ADD CONSTRAINT check_acquisition_type 
+      CHECK (acquisition_type IN ('purchase', 'cash', 'credit', 'cheque', 'borrow'))
+    `)
+    
+    await knex.raw(`
+      ALTER TABLE inventories 
+      ADD CONSTRAINT check_settlement_status 
+      CHECK (settlement_status IN ('unsettled', 'partially_settled', 'fully_settled'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

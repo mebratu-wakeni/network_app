@@ -1,0 +1,354 @@
+# Release Managed Cloud — API tarball + desktop installers/update feed together.
+#
+# Product branch: release/managed-cloud (see docs/PRODUCT_LINES.md)
+# Cut tags from that branch tip only:
+#   git checkout release/managed-cloud && git pull
+#   git tag desktop-cloud-vX.Y.Z && git push origin desktop-cloud-vX.Y.Z
+#
+# One tag produces:
+#   1) GitHub Release assets: masatech-deploy.tar.gz (+ DEPLOY.txt, sql/*)
+#   2) FTPS publish to server.masatechplc.com/downloads/cloud-multi/
+#
+# Trigger: tag desktop-cloud-v*  OR  manual "Run workflow"
+#
+# Ops after green CI: download the tarball from the GitHub Release → extract at
+# domain root → NPM Install + restart Node (see docs/DOWNLOADS_AND_UPDATES.md).
+#
+# Required GitHub secrets (desktop publish):
+#   DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD, DOWNLOADS_SERVER_DIR
+#   DOWNLOADS_SERVER_DIR must be relative, e.g. server.masatechplc.com/downloads/cloud-multi/
+
+name: Release Managed Cloud
+
+on:
+  push:
+    tags:
+      - 'desktop-cloud-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version to build (must match app/package.json unless you bump first)'
+        required: false
+        default: ''
+      mandatory:
+        description: 'Mark this release as a required in-app update'
+        type: boolean
+        default: false
+      min_supported_version:
+        description: 'Oldest client version still allowed (empty = no floor)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  version-lock:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag is on release/managed-cloud
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin release/managed-cloud:refs/remotes/origin/release/managed-cloud
+          # Transition: also allow legacy product tip until it is retired.
+          git fetch origin feature/cloud-multi-tenant:refs/remotes/origin/feature/cloud-multi-tenant || true
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/release/managed-cloud; then
+            echo "OK: tag commit is on release/managed-cloud"
+          elif git merge-base --is-ancestor "$GITHUB_SHA" origin/feature/cloud-multi-tenant 2>/dev/null; then
+            echo "WARN: tag is on legacy feature/cloud-multi-tenant — prefer release/managed-cloud"
+          else
+            echo "ERROR: tag commit $GITHUB_SHA is not on release/managed-cloud"
+            echo "Cut desktop-cloud-v* tags from release/managed-cloud only (docs/PRODUCT_LINES.md)."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve and lock version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-cloud-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-cloud-v}"
+          else
+            V="$(node -p "require('./app/package.json').version")"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          chmod +x scripts/assert-desktop-cloud-version.sh
+          scripts/assert-desktop-cloud-version.sh "$V"
+
+  pack-api:
+    needs: version-lock
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            masatech-admin/package-lock.json
+            api/package-lock.json
+
+      - name: Pack multi-tenant tarball
+        run: |
+          chmod +x scripts/pack-multi-tenant-tarball.sh
+          ./scripts/pack-multi-tenant-tarball.sh
+          test -f dist-release/masatech-deploy.tar.gz
+          test -f dist-release/DEPLOY.txt
+          ls -lh dist-release/masatech-deploy.tar.gz
+
+      - name: Upload pack artifacts (Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-api-pack
+          path: |
+            dist-release/masatech-deploy.tar.gz
+            dist-release/DEPLOY.txt
+            dist-release/sql/**
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Create / update GitHub Release with API tarball
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-cloud-v${{ needs.version-lock.outputs.version }}
+          name: Managed Cloud ${{ needs.version-lock.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            dist-release/masatech-deploy.tar.gz
+            dist-release/DEPLOY.txt
+            dist-release/sql/*
+
+      - name: API pack summary
+        shell: bash
+        run: |
+          {
+            echo "### Managed Cloud API pack"
+            echo ""
+            echo "- **Version:** ${{ needs.version-lock.outputs.version }}"
+            echo "- **Tag:** desktop-cloud-v${{ needs.version-lock.outputs.version }}"
+            echo "- **Asset:** \`masatech-deploy.tar.gz\` on the GitHub Release"
+            echo ""
+            echo "#### Ops checklist"
+            echo "1. Download \`masatech-deploy.tar.gz\` from this Release"
+            echo "2. cPanel File Manager → \`server.masatechplc.com/\` (domain root, next to \`api/\`)"
+            echo "3. Upload + Extract at domain root (not inside \`api/\`)"
+            echo "4. Setup Node.js App → Run NPM Install → Restart"
+            echo "5. Run any new SQL under Release \`sql/\` via phpPgAdmin if needed"
+            echo "6. Verify https://server.masatechplc.com/health and /api/db-health"
+            echo "7. Bump Managed URLs on masatechplc.com/downloads if first-install links lag"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: version-lock
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Assert package version matches release
+        shell: bash
+        run: |
+          chmod +x scripts/assert-desktop-cloud-version.sh
+          scripts/assert-desktop-cloud-version.sh "${{ needs.version-lock.outputs.version }}"
+
+      - name: Build cloud desktop (${{ matrix.platform }})
+        working-directory: app
+        env:
+          VITE_CLOUD_MODE: 'true'
+          VITE_DEFAULT_SERVER_URL: https://server.masatechplc.com
+          VITE_CLOUD_UPDATES_URL: https://server.masatechplc.com/downloads/cloud-multi
+        run: npm run build:cloud -- --publish never
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-desktop-${{ matrix.platform }}
+          path: |
+            app/release-cloud/**
+          retention-days: 90
+          if-no-files-found: error
+
+  publish:
+    needs: [version-lock, build]
+    runs-on: ubuntu-latest
+    # Do NOT publish a partial feed. A failed Windows (or Mac/Linux) matrix leg used to
+    # still upload latest.json without that platform and wipe the previous download link.
+    if: ${{ always() && needs.build.result == 'success' && needs.version-lock.result == 'success' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download Mac artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cloud-desktop-mac
+          path: staging/artifacts/mac
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cloud-desktop-win
+          path: staging/artifacts/win
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cloud-desktop-linux
+          path: staging/artifacts/linux
+
+      - name: Prepare publish bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d staging/artifacts ] || [ -z "$(find staging/artifacts -type f 2>/dev/null | head -1)" ]; then
+            echo "No installer artifacts downloaded — cannot publish."
+            exit 1
+          fi
+          # Hard require all three platforms so latest.json never drops Windows/Mac/Linux.
+          missing=0
+          if [ -z "$(find staging/artifacts/mac -type f \( -iname '*.dmg' -o -iname '*.zip' \) 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Mac installer (.dmg/.zip)"
+            missing=1
+          fi
+          if [ -z "$(find staging/artifacts/win -type f -iname '*.exe' 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Windows installer (.exe)"
+            missing=1
+          fi
+          if [ -z "$(find staging/artifacts/linux -type f -iname '*.AppImage' 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Linux installer (.AppImage)"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "Refusing to publish a partial cloud-multi feed."
+            find staging/artifacts -type f | sort || true
+            exit 1
+          fi
+          PREPARE_ARGS=(
+            --version "${{ needs.version-lock.outputs.version }}"
+            --artifacts-dir staging/artifacts
+            --out-dir staging/publish
+            --notes "PharmaSuit Cloud ${{ needs.version-lock.outputs.version }}"
+            --base-url "https://server.masatechplc.com/downloads/cloud-multi"
+          )
+          if [ "${{ github.event.inputs.mandatory }}" = "true" ]; then
+            PREPARE_ARGS+=(--mandatory)
+          fi
+          if [ -n "${{ github.event.inputs.min_supported_version }}" ]; then
+            PREPARE_ARGS+=(--min-supported-version "${{ github.event.inputs.min_supported_version }}")
+          fi
+          node scripts/prepare-cloud-multi-release.mjs "${PREPARE_ARGS[@]}"
+          echo "--- publish tree ---"
+          find staging/publish -type f | sort
+          test -f staging/publish/latest.json
+          test -f staging/publish/latest.yml
+          test -f staging/publish/latest-mac.yml
+          test -f staging/publish/latest-linux.yml
+          node -e "
+            const j = require('./staging/publish/latest.json');
+            for (const k of ['mac','win','linux']) {
+              if (!j.artifacts?.[k]?.url) {
+                console.error('latest.json missing artifacts.' + k);
+                process.exit(1);
+              }
+            }
+            console.log('latest.json platforms OK:', Object.keys(j.artifacts).join(', '));
+          "
+
+      - name: Check downloads secrets
+        shell: bash
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          missing=0
+          [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
+          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
+          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
+          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR (relative e.g. server.masatechplc.com/downloads/cloud-multi/)" && missing=1
+          case "$DOWNLOADS_SERVER_DIR" in
+            /home/*)
+              echo "ERROR: DOWNLOADS_SERVER_DIR looks absolute ($DOWNLOADS_SERVER_DIR)."
+              echo "Use a path relative to the FTP home, e.g. server.masatechplc.com/downloads/cloud-multi/"
+              missing=1
+              ;;
+          esac
+          exit $missing
+
+      - name: Publish to downloads host (FTP/FTPS)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.DOWNLOADS_HOST }}
+          username: ${{ secrets.DOWNLOADS_USERNAME }}
+          password: ${{ secrets.DOWNLOADS_PASSWORD }}
+          protocol: ftps
+          local-dir: staging/publish/
+          server-dir: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### Managed Cloud desktop published"
+            echo ""
+            echo "- **Version:** ${{ needs.version-lock.outputs.version }}"
+            echo "- **Downloads:** https://server.masatechplc.com/downloads/cloud-multi/"
+            echo "- **Update feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json"
+            echo "- **Website:** bump Managed links in masatech-website \`content/downloads.json\` to \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` if first-install URLs lag"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -9,11 +9,19 @@ export class BinCardsRepository {
 
   /**
    * Get all bin card transactions for a product
+   * @param {number} tenantId - Tenant ID
    * @param {number} productId - Product ID
    * @param {Object} options - { limit, offset, sortBy, orderBy, search, filter }
    * @returns {Array} Array of bin card transactions
    */
-  async findByProductId(productId, options = {}) {
+  async findByProductId(tenantId, productId, options = {}) {
+    const product = await this.knex('products')
+      .where({ id: productId, tenant_id: tenantId })
+      .first()
+    if (!product) {
+      return []
+    }
+
     const { 
       limit, 
       offset = 0, 
@@ -24,9 +32,16 @@ export class BinCardsRepository {
     } = options
 
     let query = this.knex('bin_cards')
+      .where('bin_cards.tenant_id', tenantId)
       .where('bin_cards.product_id', productId)
-      .leftJoin('users', 'bin_cards.created_by', 'users.id')
-      .leftJoin('inventories', 'bin_cards.inventory_id', 'inventories.id')
+      .leftJoin('users', function () {
+        this.on('bin_cards.created_by', 'users.id')
+          .andOn('users.tenant_id', '=', 'bin_cards.tenant_id')
+      })
+      .leftJoin('inventories', function () {
+        this.on('bin_cards.inventory_id', 'inventories.id')
+          .andOn('inventories.tenant_id', '=', 'bin_cards.tenant_id')
+      })
       .select(
         'bin_cards.id',
         'bin_cards.product_id',
@@ -124,17 +139,32 @@ export class BinCardsRepository {
 
   /**
    * Get total count of bin card transactions for a product
+   * @param {number} tenantId - Tenant ID
    * @param {number} productId - Product ID
    * @param {Object} options - { search, filter }
    * @returns {number} Total count
    */
-  async countByProductId(productId, options = {}) {
+  async countByProductId(tenantId, productId, options = {}) {
+    const product = await this.knex('products')
+      .where({ id: productId, tenant_id: tenantId })
+      .first()
+    if (!product) {
+      return 0
+    }
+
     const { search = '', filter = {} } = options
 
     let query = this.knex('bin_cards')
+      .where('bin_cards.tenant_id', tenantId)
       .where('bin_cards.product_id', productId)
-      .leftJoin('users', 'bin_cards.created_by', 'users.id')
-      .leftJoin('inventories', 'bin_cards.inventory_id', 'inventories.id')
+      .leftJoin('users', function () {
+        this.on('bin_cards.created_by', 'users.id')
+          .andOn('users.tenant_id', '=', 'bin_cards.tenant_id')
+      })
+      .leftJoin('inventories', function () {
+        this.on('bin_cards.inventory_id', 'inventories.id')
+          .andOn('inventories.tenant_id', '=', 'bin_cards.tenant_id')
+      })
 
     // Apply search filter (same as findByProductId)
     if (search && search.trim()) {

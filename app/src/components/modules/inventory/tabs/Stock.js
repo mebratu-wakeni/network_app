@@ -14,7 +14,7 @@ import ImportModalContent from '../ImportStockModal';
 import BorrowFromModalContent from '../BorrowFromModal';
 import { showAlert, showConfirmation } from '../../../utils/ModalHelpers';
 import { permissionChecker } from '../../../utils/PermissionChecker';
-import { formatDateDDMMYYYY } from '../../../utils/DateUtils';
+import { formatDateDDMMYYYY, toDateInputValue } from '../../../utils/DateUtils';
 
 const { Row } = Liteframe;
 
@@ -124,28 +124,6 @@ function StockUI(props) {
       tertiary: stats.totalQuantity ? `${(stats.totalQuantity || 0).toLocaleString()} total qty` : null
     },
     { 
-      key: 'out-of-stock', 
-      title: 'Out of Stock', 
-      icon: 'close-circle-outline', 
-      value: (stats.outOfStock || 0).toLocaleString(), 
-      subtitle: 'Items with zero quantity',
-      color: 'text-red-600', 
-      bgColor: 'bg-red-50',
-      borderColor: 'border-red-200',
-      hoverBg: 'hover:bg-red-100'
-    },
-    { 
-      key: 'low-stock', 
-      title: 'Low Stock', 
-      icon: 'warning-outline', 
-      value: (stats.lowStock || 0).toLocaleString(), 
-      subtitle: 'Below reorder point',
-      color: 'text-orange-600', 
-      bgColor: 'bg-orange-50',
-      borderColor: 'border-orange-200',
-      hoverBg: 'hover:bg-orange-100'
-    },
-    { 
       key: 'expiring-soon', 
       title: 'Expiring Soon', 
       icon: 'time-outline', 
@@ -202,9 +180,9 @@ function StockUI(props) {
     },
   ];
 
-  return Row({ class: 'w-full flex-1 flex flex-col overflow-hidden' }, [
+  return Row({ class: 'w-full flex flex-col' }, [
     // Header Section with Actions
-    Row({ class: 'flex items-center justify-between gap-6 p-6 border-b border-gray-200' }, [
+    Row({ class: 'flex items-center justify-between gap-6 px-4 py-2 border-b border-gray-200' }, [
       Row({ class: 'flex items-center gap-4' }, [
         Button({ 
           variant: 'primary', 
@@ -220,10 +198,16 @@ function StockUI(props) {
         Button({ 
           variant: 'outline', 
           class: 'text-nowrap flex items-center gap-2',
-          onClick: () => openImportStockModal(props),
-          delegator: props.delegator
+          onClick: async () => {
+            const hasPermission = await permissionChecker.checkPermission('CanImportStock', {
+              actionName: 'import stock'
+            });
+            if (hasPermission) {
+              openImportStockModal(props);
+            }
+          }
         }, [
-          IonIcon({ name: 'cloud-upload-outline', class: 'text-lg text-white font-bold' }),
+          IonIcon({ name: 'cloud-upload-outline', class: 'text-lg' }),
           'Import Stock'
         ]),
       ]),
@@ -274,7 +258,7 @@ function StockUI(props) {
         //   ])
         // ])
       ]),
-      Row({ class: 'w-full grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3' }, 
+      Row({ class: 'w-full grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(170px,1fr))]' }, 
         stockStatsArray.map(stat => 
           StockCard({
             ...stat,
@@ -285,12 +269,10 @@ function StockUI(props) {
       )
     ]),
 
-    // Row 1: Filters only (smaller), full row flex
+    // Row 1: Filters only (Out of stock / Low stock moved to Products tab)
     Row({ class: 'flex items-center gap-2 flex-wrap px-6 py-2 border-b border-gray-200 bg-gray-50' }, [
       Row({ tagType: 'span', class: 'text-xs text-gray-600' }, 'Filter:'),
       Button({ variant: selectedFilter === 'all' ? 'primary' : 'outline', class: 'text-xs py-0.5 px-2 min-h-0', onClick: () => handleFilterClick('all') }, 'All'),
-      Button({ variant: selectedFilter === 'out-of-stock' ? 'primary' : 'outline', class: 'text-xs py-0.5 px-2 min-h-0', onClick: () => handleFilterClick('out-of-stock') }, 'Out of Stock'),
-      Button({ variant: selectedFilter === 'low-stock' ? 'primary' : 'outline', class: 'text-xs py-0.5 px-2 min-h-0', onClick: () => handleFilterClick('low-stock') }, 'Low Stock'),
       Button({ variant: selectedFilter === 'expiring-soon' ? 'primary' : 'outline', class: 'text-xs py-0.5 px-2 min-h-0', onClick: () => handleFilterClick('expiring-soon') }, 'Expiring Soon'),
       Button({ variant: selectedFilter === 'expired' ? 'primary' : 'outline', class: 'text-xs py-0.5 px-2 min-h-0', onClick: () => handleFilterClick('expired') }, 'Expired'),
       Button({ variant: selectedFilter === 'borrowed-from' ? 'primary' : 'outline', class: 'text-xs py-0.5 px-2 min-h-0', onClick: () => handleFilterClick('borrowed-from') }, 'Borrowed From'),
@@ -387,7 +369,7 @@ function StockSearchAndPaginationRow(props, { searchInputValue, handleSearchChan
   const totalItems = totalCount;
   const initRow = totalItems > 0 ? paginationOffset + 1 : 0;
   const endRow = totalItems > 0 ? Math.min(paginationOffset + paginationLimit, totalItems) : 0;
-  return Row({ class: 'flex items-center justify-between gap-4 px-6 py-3 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
+  return Row({ class: 'sticky top-0 z-30 flex items-center justify-between gap-4 px-6 py-3 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
     Row({ class: 'flex-1 min-w-[200px] max-w-md' }, [
       Row({ class: 'relative' }, [
         IonIcon({ name: 'search-outline', class: 'absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xl pointer-events-none' }),
@@ -437,9 +419,9 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
   const paginationOffset = tableConfig.offset || 0;
   const paginationLimit = tableConfig.limit || 25;
   
-  // High value threshold - unit cost in dollars (per unit)
+  // Threshold for high-value filter (unit cost >= this)
   const HIGH_VALUE_THRESHOLD = 1000;
-  
+
   // Use stockList from viewModel (real data from API)
   const stockItems = stockList || [];
 
@@ -458,8 +440,9 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
     return daysUntilExpiry >= 0 && daysUntilExpiry <= expiryThreshold;
   };
 
-  // Helper function to check if date is expired
+  // Helper function to check if date is expired (null/undefined expiry = not expired, exclude from filter)
   const isExpired = (expiryDate) => {
+    if (!expiryDate) return false;
     const expiry = new Date(expiryDate);
     const today = new Date();
     return expiry < today;
@@ -475,15 +458,10 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
     return (item.unitCost || 0) >= HIGH_VALUE_THRESHOLD;
   };
 
-  // Filter items based on selected filter
-  // Note: For 'borrowed-from' and 'borrowed-to', the backend already returns filtered data
-  // so we don't need to filter again on the client side
-  const filteredItems = (filter === 'borrowed-from' || filter === 'borrowed-to') 
-    ? stockItems // Backend already filtered, use as-is
+  const filteredItems = (filter === 'borrowed-from' || filter === 'borrowed-to')
+    ? stockItems
     : stockItems.filter(item => {
         if (filter === 'all') return true;
-        if (filter === 'out-of-stock') return item.quantity === 0;
-        if (filter === 'low-stock') return item.quantity > 0 && item.quantity < 50;
         if (filter === 'expiring-soon') {
           const expiryThreshold = item.expiry_threshold || item.product?.expiry_threshold || 30;
           return isExpiringSoon(item.expiryDate, expiryThreshold);
@@ -536,31 +514,26 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
     props.viewModel.loadStock(); // Reload data for next page
   };
 
-  const getStatusBadge = (status, quantity, expiryDate, item = null) => {
+  // Status badge for Stock tab: only borrowed and expiry badges; no "In Stock" / low / out-of-stock (those are on Products)
+  const badgeClass = 'w-fit inline-flex px-2 py-1 rounded-full text-xs font-medium';
+  const getStatusBadge = (status, expiryDate, item = null) => {
     if (status === 'borrowed-from') {
-      return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700' }, 'Borrowed From');
+      return Row({ class: `${badgeClass} bg-blue-100 text-blue-700` }, 'Borrowed From');
     }
     if (status === 'borrowed-to') {
-      return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700' }, 'Borrowed To');
+      return Row({ class: `${badgeClass} bg-purple-100 text-purple-700` }, 'Borrowed To');
     }
     if (isExpired(expiryDate)) {
-      return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-red-200 text-red-800' }, 'Expired');
+      return Row({ class: `${badgeClass} bg-red-200 text-red-800` }, 'Expired');
     }
-    // Use product-specific expiry_threshold if available
     const expiryThreshold = item?.expiry_threshold || item?.product?.expiry_threshold || 30;
     if (isExpiringSoon(expiryDate, expiryThreshold)) {
-      return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700' }, 'Expiring Soon');
+      return Row({ class: `${badgeClass} bg-yellow-100 text-yellow-700` }, 'Expiring Soon');
     }
-    if (quantity === 0) {
-      return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700' }, 'Out of Stock');
-    }
-    if (quantity < 50) {
-      return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700' }, 'Low Stock');
-    }
-    return Row({ class: 'px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700' }, 'In Stock');
+    return null;
   };
 
-  // Table type: inventories | borrow_from | borrow_to (determines columns/labels)
+  // Table type: inventories | borrow_from | borrow_to (out-of-stock / low-stock filters moved to Products tab)
   const tableType = filter === 'borrowed-from' ? 'borrow_from' : filter === 'borrowed-to' ? 'borrow_to' : 'inventories';
 
   // Sort icon helper function
@@ -575,56 +548,36 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
     return false;
   };
 
-  return Row({ class: 'flex-1 flex flex-col overflow-hidden min-h-0' }, [
+  return Row({ class: 'flex flex-col' }, [
     // Stock Table (search + pagination are in parent row)
-    Row({ class: 'flex-1 flex flex-col overflow-hidden min-h-0 pb-6' }, [
-      Row({ class: 'px-4 py-2 text-sm text-gray-500 border-b border-gray-100' }, 
-        tableType === 'inventories' ? 'Showing: Inventories' : 
-        tableType === 'borrow_from' ? 'Showing: Borrowed From (borrow_from_inventories)' : 
-        'Showing: Borrowed To (borrow_to_inventories)'
-      ),
+    Row({ class: 'flex flex-col pb-2' }, [
       Table({ 
-        class: 'flex-1 flex flex-col min-h-0', 
-        getOpenActionState: () => props.getLocalState('actionId'), 
-        setOpenActionState: () => props.setLocalState('actionId', null)  
+        class: 'flex flex-col',
+        tableClass: 'min-w-[1050px]',
+        pageScrollable: true
       }, [
-      TableHeader({ class: 'sticky top-0 z-10 bg-white' }, [
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('product_code') }, [
-          'Product Code',
-          sortIcon('product_code')
-        ]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('name') }, [
-          'Product Name',
-          sortIcon('name')
-        ]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('category') }, [
-          'Category',
-          sortIcon('category')
-        ]),
+      TableHeader({ class: 'bg-white' }, [
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('product_code') }, ['Product Code', sortIcon('product_code')]),
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('name') }, ['Product Name', sortIcon('name')]),
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('category') }, ['Category', sortIcon('category')]),
         tableType === 'inventories'
-          ? TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('location') }, [
-              'Location',
-              sortIcon('location')
-            ])
-          : TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Partner'),
-        TableHCell({ class: 'text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('quantity') }, [
-          tableType === 'inventories' ? 'Quantity' : 
-          (tableType === 'borrow_from' || tableType === 'borrow_to') ? 'Remaining' : 
-          'Qty Lent',
+          ? TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('location') }, ['Location', sortIcon('location')])
+          : TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide` }, 'Partner'),
+        TableHCell({ class: `text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('quantity') }, [
+          tableType === 'inventories' ? 'Quantity' : (tableType === 'borrow_from' || tableType === 'borrow_to') ? 'Remaining' : 'Qty Lent',
           sortIcon('quantity')
         ]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('unit') }, [
-          'Unit',
-          sortIcon('unit')
-        ]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', onClick: () => props.viewModel.setStockSort('expiry_date') }, [
-          'Expiry Date',
-          sortIcon('expiry_date')
-        ]),
-        TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Status'),
-        TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Action')
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('unit') }, ['Unit', sortIcon('unit')]),
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50`, onClick: () => props.viewModel.setStockSort('expiry_date') }, ['Expiry Date', sortIcon('expiry_date')]),
+        TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide` }, 'Status'),
+        TableHCell({ class: `text-center text-xs font-semibold text-gray-500 uppercase tracking-wide` }, 'Action')
       ]),
-      TableBody({ class: 'flex-1 overflow-y-auto bg-white' }, 
+      TableBody({
+        class: 'bg-white',
+        showEndMarker: paginatedItems.length > 0,
+        endMarkerLabel: 'End of table',
+        endMarkerColspan: 9
+      }, 
         paginatedItems.length === 0 
           ? TableRow({}, [
               TableDCell({ 
@@ -633,115 +586,48 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
               }, 'No stock items found')
             ])
           : paginatedItems.map(item => 
-              TableRow({ 
-                class: `transition-colors duration-150 cursor-pointer ${selectedRowId === item.id ? 'bg-blue-50 border-l-2 border-indigo-500' : ''} hover:bg-blue-50` 
-              }, [
-                TableDCell({ class: 'px-4 py-3 text-sm font-medium text-gray-900' }, item.productCode ?? ''),
-                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.name ?? ''),
-                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.category ?? ''),
-                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, 
-                  tableType === 'inventories' ? (item.location ?? '—') : (item.partnerName ?? '—')
-                ),
-                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-medium' }, 
-                  (tableType === 'borrow_from' || tableType === 'borrow_to') && item.remaining !== undefined
-                    ? (item.remaining ?? 0).toLocaleString()
-                    : (item.quantity ?? 0).toLocaleString()
-                ),
-                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, item.unit ?? ''),
-                TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, formatDateDDMMYYYY(item.expiryDate)),
-                TableDCell({ class: 'px-4 py-3 text-sm' }, getStatusBadge(item.status, item.quantity, item.expiryDate, item)),
-                ActionDropdown({
-                  actionId: item.id,
-                  open: item.id === actionId,
-                  class: 'text-center px-4 py-3',
-                  onToggle: () => props.setLocalState('actionId', actionId === item.id ? null : item.id)
+                TableRow({ 
+                  class: `transition-colors duration-150 cursor-pointer ${selectedRowId === item.id ? 'bg-blue-50 border-l-2 border-indigo-500' : ''} hover:bg-blue-50` 
                 }, [
-                  ActionItem({
-                    label: 'View Details',
-                    icon: 'eye-outline',
-                    onClick: async () => {
-                      const hasPermission = await permissionChecker.checkPermission('CanSeeStockItemDetails', {
-                        actionName: 'view stock details'
-                      });
-                      if (hasPermission) {
-                        props.viewModel.openStockDrawer(item, 'view-details');
-                        props.setLocalState('actionId', null);
-                      } else {
-                        props.setLocalState('actionId', null);
-                      }
-                    }
-                  }),
-                  // Return Borrowed From action (only for borrowed-from items that are not fully returned)
-                  (item.status === 'borrowed-from' || item.borrowFromId || filter === 'borrowed-from') && 
-                  item.borrowStatus !== 'returned' && 
-                  ActionItem({
-                    label: 'Return Borrowed From',
-                    icon: 'return-down-back-outline',
-                    onClick: async () => {
-                      const hasPermission = await permissionChecker.checkPermission('CanReturnBorrowedFromStock', {
-                        actionName: 'return borrowed from items'
-                      });
-                      if (hasPermission) {
-                        props.viewModel.openStockDrawer(item, 'return-borrowed');
-                        props.setLocalState('actionId', null);
-                      } else {
-                        props.setLocalState('actionId', null);
-                      }
-                    }
-                  }),
-                  // Return Borrowed To action (only for borrowed-to items that are not fully returned)
-                  (item.status === 'borrowed-to' || item.borrowToId || filter === 'borrowed-to') && 
-                  item.borrowStatus !== 'returned' && 
-                  ActionItem({
-                    label: 'Return Borrowed To',
-                    icon: 'return-up-forward-outline',
-                    onClick: async () => {
-                      const hasPermission = await permissionChecker.checkPermission('CanReturnBorrowedToStock', {
-                        actionName: 'return borrowed to items'
-                      });
-                      if (hasPermission) {
-                        props.viewModel.openStockDrawer(item, 'return-borrowed-to');
-                        props.setLocalState('actionId', null);
-                      } else {
-                        props.setLocalState('actionId', null);
-                      }
-                    }
-                  }),
-                  // Adjust Stock action (hide for borrowed items)
-                  !(item.status === 'borrowed-from' || item.status === 'borrowed-to' || item.borrowFromId || item.borrowToId || filter === 'borrowed-from' || filter === 'borrowed-to') && ActionItem({
-                    label: 'Adjust Stock',
-                    icon: 'create-outline',
-                    onClick: async () => {
-                      const hasPermission = await permissionChecker.checkPermission('CanAdjustStockItemQuantities', {
-                        actionName: 'adjust stock quantities'
-                      });
-                      if (hasPermission) {
-                        props.viewModel.openStockDrawer(item, 'adjust-stock');
-                        props.setLocalState('actionId', null);
-                      } else {
-                        props.setLocalState('actionId', null);
-                      }
-                    }
-                  }),
-                  // Transfer action (hide for borrowed items)
-                  !(item.status === 'borrowed-from' || item.status === 'borrowed-to' || item.borrowFromId || item.borrowToId || filter === 'borrowed-from' || filter === 'borrowed-to') && ActionItem({
-                    label: 'Transfer',
-                    icon: 'swap-horizontal-outline',
-                    onClick: async () => {
-                      const hasPermission = await permissionChecker.checkPermission('CanTransferItemShelf', {
-                        actionName: 'transfer stock items'
-                      });
-                      if (hasPermission) {
-                        props.viewModel.openStockDrawer(item, 'transfer');
-                        props.setLocalState('actionId', null);
-                      } else {
-                        props.setLocalState('actionId', null);
-                      }
-                    }
-                  })
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm font-medium text-gray-900' }, item.productCode ?? ''),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[220px] lg:max-w-[320px] truncate', attributes: { title: item.name ?? '' } }, item.name ?? ''),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[160px] truncate', attributes: { title: item.category ?? '' } }, item.category ?? ''),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[170px] truncate', attributes: { title: tableType === 'inventories' ? (item.location ?? '—') : (item.partnerName ?? '—') } }, tableType === 'inventories' ? (item.location ?? '—') : (item.partnerName ?? '—')),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 text-right font-medium' }, 
+                    (tableType === 'borrow_from' || tableType === 'borrow_to') && item.remaining !== undefined ? (item.remaining ?? 0).toLocaleString() : (item.quantity ?? 0).toLocaleString()
+                  ),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900' }, item.unit ?? ''),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900' }, formatDateDDMMYYYY(item.expiryDate)),
+                  TableDCell({ class: 'px-3 md:px-4 py-2 text-sm' }, getStatusBadge(item.status, item.expiryDate, item)),
+                  ActionDropdown({
+                    actionId: item.id,
+                    open: item.id === actionId,
+                    class: 'text-center px-4 py-3',
+                    onToggle: () => props.setLocalState('actionId', actionId === item.id ? null : item.id)
+                  }, [
+                    ActionItem({ label: 'View Details', icon: 'eye-outline', onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanSeeStockItemDetails', { actionName: 'view stock details' });
+                      if (hasPermission) { props.viewModel.openStockDrawer(item, 'view-details'); props.setLocalState('actionId', null); } else { props.setLocalState('actionId', null); }
+                    } }),
+                    (item.status === 'borrowed-from' || item.borrowFromId || filter === 'borrowed-from') && item.borrowStatus !== 'returned' && ActionItem({ label: 'Return Borrowed From', icon: 'return-down-back-outline', onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanReturnBorrowedFromStock', { actionName: 'return borrowed from items' });
+                      if (hasPermission) { props.viewModel.openStockDrawer(item, 'return-borrowed'); props.setLocalState('actionId', null); } else { props.setLocalState('actionId', null); }
+                    } }),
+                    (item.status === 'borrowed-to' || item.borrowToId || filter === 'borrowed-to') && item.borrowStatus !== 'returned' && ActionItem({ label: 'Return Borrowed To', icon: 'return-up-forward-outline', onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanReturnBorrowedToStock', { actionName: 'return borrowed to items' });
+                      if (hasPermission) { props.viewModel.openStockDrawer(item, 'return-borrowed-to'); props.setLocalState('actionId', null); } else { props.setLocalState('actionId', null); }
+                    } }),
+                    !(item.status === 'borrowed-from' || item.status === 'borrowed-to' || item.borrowFromId || item.borrowToId || filter === 'borrowed-from' || filter === 'borrowed-to') && ActionItem({ label: 'Adjust Stock', icon: 'create-outline', onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanAdjustStockItemQuantities', { actionName: 'adjust stock quantities' });
+                      if (hasPermission) { props.viewModel.openStockDrawer(item, 'adjust-stock'); props.setLocalState('actionId', null); } else { props.setLocalState('actionId', null); }
+                    } }),
+                    !(item.status === 'borrowed-from' || item.status === 'borrowed-to' || item.borrowFromId || item.borrowToId || filter === 'borrowed-from' || filter === 'borrowed-to') && ActionItem({ label: 'Transfer', icon: 'swap-horizontal-outline', onClick: async () => {
+                      const hasPermission = await permissionChecker.checkPermission('CanTransferItemShelf', { actionName: 'transfer stock items' });
+                      if (hasPermission) { props.viewModel.openStockDrawer(item, 'transfer'); props.setLocalState('actionId', null); } else { props.setLocalState('actionId', null); }
+                    } })
+                  ])
                 ])
-              ])
-            )
+              )
       )
       ])
     ])
@@ -852,17 +738,6 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
       
       // Normalize expiryDate: empty string becomes null, otherwise use the value
       const normalizedExpiryDate = (formExpiryDate === '' || formExpiryDate === null || formExpiryDate === undefined) ? null : formExpiryDate;
-      
-      console.log('[Stock.js] handleSaveDetails - Using fresh form state:', {
-        currentForm: JSON.stringify(currentForm, null, 2),
-        formExpiryDate,
-        normalizedExpiryDate,
-        formBatchNo,
-        formUnitCost,
-        isBorrowedItem,
-        staleExpiryDate: expiryDate, // This is the stale value from render
-        staleBatchNo: batchNo // This is the stale value from render
-      });
       
       await props.viewModel.updateStock(stockItem.id, {
         inventoryCode: formInventoryCode,
@@ -999,14 +874,9 @@ function ViewDetailsDrawer({ stockItem, showSlide, onClose, ...props }) {
                 editMode: detailsEditMode && !isBorrowedItem, // Editable for regular items, read-only for borrowed items
                 inputProps: detailsEditMode && !isBorrowedItem ? {
                   type: 'date',
-                  value: expiryDate || '',
+                  value: toDateInputValue(expiryDate),
                   onChange: (e) => {
                     const newValue = e.target.value || null;
-                    console.log('[Stock.js] Expiry date onChange:', {
-                      targetValue: e.target.value,
-                      newValue,
-                      currentFormValue: stockDetailsForm.expiryDate
-                    });
                     props.viewModel.updateStockDetailsForm('expiryDate', newValue);
                   },
                   placeholder: 'Select expiry date',
@@ -1148,36 +1018,38 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
   const partnerSearchQuery = adjustStockForm.partnerSearchQuery || '';
   const showPartnerDropdown = adjustStockForm.showPartnerDropdown || false;
   
-  // Get partner list for "Borrow To" dropdown
-  // For borrow-to operations, we need all customers, not just suppliers
-  // The drawer opening already triggers loadPartners('all'), but we check here as a fallback
-  const partnerList = props.viewModel.getPartnerList() || [];
+  const partnerDdLoading = props.viewModel.getState('adjust-drawer-partner-dd-loading') === true;
+  // Partner list for "Borrow To" — server search (customers), not full in-memory list
+  const partnerList = props.viewModel.getState('adjust-drawer-partner-options') || [];
   const selectedPartner = partnerList.find(p => p.id === partnerId) || null;
   
-  // Check if we have all customer types (supplier, retailer, both, other)
-  // If not, reload with 'all' to ensure all customers are available for borrow-to
-  const hasAllCustomerTypes = partnerList.some(p => 
-    p.customer_type && ['retailer', 'both', 'other'].includes(p.customer_type)
-  );
-  
-  // Reload with 'all' if we don't have all customer types (fallback check)
-  // This ensures customers with type 'both', 'retailer', 'other' are available
-  if (!hasAllCustomerTypes && partnerList.length > 0) {
-    // List exists but doesn't have all types - reload with 'all'
-    props.viewModel.loadPartners('all');
-  } else if (partnerList.length === 0) {
-    // If no partners loaded at all, load all customers
-    props.viewModel.loadPartners('all');
+  const filteredPartners = partnerList.filter(partner => partner.type === 'partner');
+
+  const partnerDropdownChildren = [];
+  if (partnerDdLoading) {
+    partnerDropdownChildren.push(Row({ key: 'adj-p-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'));
+  } else if (filteredPartners.length === 0) {
+    partnerDropdownChildren.push(
+      Row(
+        { key: 'adj-p-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+        partnerSearchQuery.trim() ? 'No partners match your search.' : 'Type to search customers.'
+      )
+    );
+  } else {
+    partnerDropdownChildren.push(
+      ...filteredPartners.map((partner) =>
+        DropdownSearchItem({
+          onSelect: () => {
+            props.viewModel.updateAdjustStockForm('partnerId', partner.id);
+            props.viewModel.updateAdjustStockForm('showPartnerDropdown', false);
+            props.viewModel.updateAdjustStockForm('partnerSearchQuery', '');
+          },
+          key: partner.id,
+          delegator: props.delegator,
+        }, `${partner.name} (${partner.code || 'N/A'})`)
+      )
+    );
   }
-  
-  // Filter partners based on search query
-  const filteredPartners = partnerList.filter(partner => {
-    if (partner.type !== 'partner') return false;
-    if (!partnerSearchQuery) return true;
-    const query = partnerSearchQuery.toLowerCase();
-    return (partner.name || '').toLowerCase().includes(query) ||
-           (partner.code || '').toLowerCase().includes(query);
-  });
 
   // Current stock quantity
   const currentQuantity = stockItem.quantity || 0;
@@ -1365,6 +1237,8 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
               // Clear partner when reason changes away from "Borrow To"
               if (e.target.value !== 'Borrow To') {
                 props.viewModel.updateAdjustStockForm('partnerId', null);
+              } else {
+                props.viewModel.loadAdjustDrawerPartnersForDropdown(adjustStockForm.partnerSearchQuery || '');
               }
             },
             delegator: props.delegator
@@ -1384,8 +1258,12 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
             onInput: (query) => {
               props.viewModel.updateAdjustStockForm('partnerSearchQuery', query);
               props.viewModel.updateAdjustStockForm('showPartnerDropdown', true);
+              props.viewModel.scheduleAdjustDrawerPartnerSearch(query);
             },
-            onFocus: () => props.viewModel.updateAdjustStockForm('showPartnerDropdown', true),
+            onFocus: () => {
+              props.viewModel.updateAdjustStockForm('showPartnerDropdown', true);
+              props.viewModel.loadAdjustDrawerPartnersForDropdown(partnerSearchQuery || '');
+            },
             getOpenState: () => {
               const form = props.viewModel.getState('adjust-stock-form');
               return form ? (form.showPartnerDropdown || false) : false;
@@ -1393,17 +1271,7 @@ function AdjustStockDrawer({ stockItem, showSlide, onClose, ...props }) {
             setOpenState: () => props.viewModel.updateAdjustStockForm('showPartnerDropdown', false),
             class: 'w-full relative',
             delegator: props.delegator
-          }, filteredPartners.length > 0 ? filteredPartners.map(partner => 
-            DropdownSearchItem({
-              onSelect: () => {
-                props.viewModel.updateAdjustStockForm('partnerId', partner.id);
-                props.viewModel.updateAdjustStockForm('showPartnerDropdown', false);
-                props.viewModel.updateAdjustStockForm('partnerSearchQuery', '');
-              },
-              key: partner.id,
-              delegator: props.delegator
-            }, `${partner.name} (${partner.code || 'N/A'})`)
-          ) : [])
+          }, partnerDropdownChildren)
         })] : []),
 
         formRow({
@@ -1507,13 +1375,6 @@ function TransferStockDrawer({ stockItem, showSlide, onClose, ...props }) {
     }
 
     // Handle stock transfer save
-    console.log('Transferring stock:', {
-      item: stockItem,
-      quantity: transferQuantity,
-      from: transferFromLocation,
-      to: transferToLocation,
-      notes: transferNotes
-    });
     onClose();
   };
 
@@ -1644,26 +1505,9 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
   const totalBorrowed = returnStatus?.totalBorrowed ?? 0;
   const totalReturned = returnStatus?.totalReturned ?? 0;
   
-  // Debug logging for return status display
-  console.log('[ReturnBorrowedDrawer] Return status display:', {
-    returnStatus,
-    remaining,
-    totalBorrowed,
-    totalReturned,
-    returnStatusLoaded,
-    formStateReturnStatus: formState.returnStatus
-  });
-
   // Use borrowFromId when from borrowed-from list (row id = borrow_from_inventories.id)
   const borrowFromId = stockItem?.borrowFromId ?? stockItem?.id;
   const productId = stockItem?.productId ?? null;
-  
-  // Debug: Log stockItem to see what fields are available
-  console.log('[ReturnBorrowedDrawer] stockItem:', stockItem);
-  console.log('[ReturnBorrowedDrawer] stockItem.inventoryId:', stockItem?.inventoryId);
-  console.log('[ReturnBorrowedDrawer] stockItem keys:', stockItem ? Object.keys(stockItem) : 'stockItem is null');
-  console.log('[ReturnBorrowedDrawer] productId:', productId);
-  console.log('[ReturnBorrowedDrawer] showSlide:', showSlide, 'availableStocksLoaded:', availableStocksLoaded);
 
   // Fetch return status when drawer opens
   // Frontend must always provide borrowFromId and borrowedInventoryId
@@ -1677,11 +1521,6 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
       ? Number(stockItem.inventoryId) 
       : (stockItem?.inventory_id ? Number(stockItem.inventory_id) : null);
     
-    console.log('[ReturnBorrowedDrawer] Extracted borrowedInventoryId:', borrowedInventoryId, 'from stockItem:', {
-      inventoryId: stockItem?.inventoryId,
-      inventory_id: stockItem?.inventory_id
-    });
-    
     if (!borrowedInventoryId) {
       console.error('[ReturnBorrowedDrawer] Error: stockItem.inventoryId is missing. Full stockItem:', JSON.stringify(stockItem, null, 2));
       showAlert({
@@ -1693,11 +1532,9 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
       return;
     }
     
-    props.viewModel.getBorrowFromReturnStatus({ 
+    props.viewModel.getBorrowFromReturnStatus({
       borrowFromId: Number(borrowFromId),
       borrowedInventoryId: borrowedInventoryId
-    }).then((status) => {
-      console.log('[ReturnBorrowedDrawer] Return status received:', status);
     }).catch((error) => {
       console.error('[ReturnBorrowedDrawer] Error fetching return status:', error);
     });
@@ -1705,10 +1542,7 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
   // Fetch available stock from inventories by product (all have valid inventory id)
   if (showSlide && productId && !availableStocksLoaded) {
     props.setLocalState('available-stocks-loaded', true);
-    console.log('[ReturnBorrowedDrawer] Loading inventories for productId:', productId);
-    props.viewModel.loadInventoriesByProduct(Number(productId)).then((items) => {
-      console.log('[ReturnBorrowedDrawer] Loaded inventories:', items?.length || 0, items);
-    }).catch((error) => {
+    props.viewModel.loadInventoriesByProduct(Number(productId)).catch((error) => {
       console.error('[ReturnBorrowedDrawer] Error loading inventories:', error);
     });
   }
@@ -1820,19 +1654,6 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
       const unitPrice = Number(stock?.purchaseUnitPrice || stock?.unitCost || 0);
       const totalValue = quantity * unitPrice;
       
-      console.log('[ReturnBorrowedDrawer] Summary item calculation:', {
-        inventory_id: s.inventory_id,
-        quantity,
-        unitPrice,
-        totalValue,
-        stock: stock ? {
-          id: stock.id,
-          inventoryCode: stock.inventoryCode,
-          purchaseUnitPrice: stock.purchaseUnitPrice,
-          unitCost: stock.unitCost
-        } : 'stock not found'
-      });
-      
       return {
         inventoryCode: stock?.inventoryCode || `ID: ${s.inventory_id}`,
         quantity: quantity,
@@ -1847,11 +1668,6 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
     return sum + value;
   }, 0);
   
-  console.log('[ReturnBorrowedDrawer] Summary calculation:', {
-    summaryData,
-    totalReturnValue,
-    summaryDataLength: summaryData.length
-  });
   const showSummary = summaryData.length > 0 && returnDate && returnQuantity > 0;
 
   const handleProcessReturn = async () => {
@@ -2327,16 +2143,6 @@ function ReturnBorrowedToDrawer({ stockItem, showSlide, onClose, ...props }) {
         return;
       }
       
-      console.log('[ReturnBorrowedToDrawer] Preparing return items:', {
-        stockItem: {
-          productId: stockItem.productId,
-          unitCost: stockItem.unitCost,
-          borrowToId: stockItem.borrowToId
-        },
-        normalized: { productId, unitCost },
-        validItemsCount: validItems.length
-      });
-      
       const returnItemsData = validItems.map(item => ({
         product_id: productId, // Use normalized number
         unit_cost: unitCost, // Use normalized number
@@ -2346,8 +2152,6 @@ function ReturnBorrowedToDrawer({ stockItem, showSlide, onClose, ...props }) {
         location: item.location || null
       }));
       
-      console.log('[ReturnBorrowedToDrawer] Sending returnItemsData:', returnItemsData);
-
       // Show confirmation modal before processing
       const confirmed = await showConfirmation({
         title: 'Confirm Return',
@@ -2601,11 +2405,13 @@ function getStatusText(item) {
   const today = new Date();
   const expiry = new Date(item.expiryDate);
   const daysUntilExpiry = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
-  
+  const totalQty = item.productTotalQuantity ?? item.quantity ?? 0;
+  const lowThreshold = item.low_stock_threshold ?? 50;
+
   if (expiry < today) return 'Expired';
   if (daysUntilExpiry <= 30) return `Expiring in ${daysUntilExpiry} days`;
-  if (item.quantity === 0) return 'Out of Stock';
-  if (item.quantity < 50) return 'Low Stock';
+  if (totalQty === 0) return 'Out of Stock';
+  if (totalQty < lowThreshold) return 'Low Stock';
   return 'In Stock';
 }
 
@@ -2626,13 +2432,10 @@ async function handleExportCSV(props) {
 }
 
 async function openBorrowFromModal(props) {
-  // Load data before opening modal to avoid infinite re-rendering
-  console.log('[Stock] openBorrowFromModal - Loading products and partners...');
   await Promise.all([
-    props.viewModel.loadAllProducts(),
-    props.viewModel.loadPartners()
+    props.viewModel.loadBorrowFromProductsForDropdown(''),
+    props.viewModel.loadBorrowFromPartnersForDropdown(''),
   ]);
-  console.log('[Stock] openBorrowFromModal - Data loaded, opening modal');
   Modal({}, (delegator, closeHandler) => BorrowFromModalContent(props.viewModel, delegator, closeHandler));
 }
 

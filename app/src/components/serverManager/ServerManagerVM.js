@@ -31,16 +31,20 @@ export default class ServerManagerVM extends ViewModel {
   }
 
   initializeState() {
-    this.setState('docker-status', null);
+    this.setState('docker-status', { installed: false, running: false, error: 'Not used in sqlite-only mode' });
     this.setState('server-status', null);
     this.setState('api-health', null);
+    this.setState('connection-info', null);
+    this.setState('license-status', null);
+    this.setState('license-expiry-info', null);
     this.setState('starting', false);
     this.setState('stopping', false);
     this.setState('refreshing', false);
     this.setState('error', null);
     this.setState('success', null);
     this.setState('lastUpdated', null);
-    this.setState('mode', 'docker'); // 'docker' or 'dev'
+    this.setState('mode', 'server');
+    this.setState('fingerprint', null);
     this.setState('dev-server-status', null);
     this.refreshDebounceTimer = null;
   }
@@ -54,7 +58,6 @@ export default class ServerManagerVM extends ViewModel {
   }
 
   destroy() {
-    console.log('Destroying ServerManagerVM, clearing intervals and timers');
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
@@ -77,9 +80,11 @@ export default class ServerManagerVM extends ViewModel {
     this.updateState('error', null);
     
     try {
-      // Check Docker
-      const docker = await window.ipcRenderer.checkDocker()
-      this.updateState('docker-status', docker)
+      const setup = await window.ipcRenderer.invoke('setup:get-config')
+      const mode = setup?.config?.mode || 'server'
+      const fingerprint = setup?.defaults?.deviceFingerprint || null
+      this.updateState('mode', mode)
+      this.updateState('fingerprint', fingerprint)
 
       // Check server status
       const status = await window.ipcRenderer.getServerStatus()
@@ -89,11 +94,19 @@ export default class ServerManagerVM extends ViewModel {
       const health = await window.ipcRenderer.checkServerHealth()
       this.updateState('api-health', health)
       
-      // Check dev server status if in dev mode
-      const mode = this.getState('mode');
-      if (mode === 'dev') {
-        const devStatus = await window.ipcRenderer.checkDevServerStatus()
-        this.updateState('dev-server-status', devStatus)
+      const devStatus = await window.ipcRenderer.checkDevServerStatus()
+      this.updateState('dev-server-status', devStatus)
+
+      const connectionInfo = await window.ipcRenderer.getConnectionInfo()
+      this.updateState('connection-info', connectionInfo)
+
+      if (mode === 'server') {
+        const licenseStatus = await window.ipcRenderer.invoke('license:get-status', fingerprint)
+        this.updateState('license-status', licenseStatus)
+        this.updateState('license-expiry-info', this.computeLicenseExpiryInfo(licenseStatus))
+      } else {
+        this.updateState('license-status', null)
+        this.updateState('license-expiry-info', null)
       }
       
       // Update last refreshed timestamp
@@ -119,17 +132,15 @@ export default class ServerManagerVM extends ViewModel {
     try {
       const mode = this.getState('mode');
       const result = await window.ipcRenderer.startServer(mode)
-      console.log('start result: ', result);
-      
       if (result.success) {
-        const modeLabel = mode === 'dev' ? 'Development server' : 'Server';
+        const modeLabel = 'Server';
         this.updateState('success', `${modeLabel} started successfully`);
         // Auto-dismiss success message after 3 seconds
         setTimeout(() => this.updateState('success', null), 3000);
         
         setTimeout(async () => {
           await this.checkStatus(false) // Silent refresh after start
-        }, mode === 'dev' ? 3000 : 2000) // Dev server takes a bit longer to start
+        }, 2500)
       } else {
         // Store error in state for UI to display
         console.error('Failed to start server:', result.error);
@@ -151,14 +162,12 @@ export default class ServerManagerVM extends ViewModel {
     this.updateState('stopping', true);
     this.updateState('error', null);
     this.updateState('success', null);
-    console.log(`${this.getState('mode')} server is stopping: ${this.getState('stopping')}`);
     try {
       const mode = this.getState('mode');
       const result = await window.ipcRenderer.stopServer(mode)
-      console.log('stop result: ', result);
-      
+
       if (result.success) {
-        const modeLabel = mode === 'dev' ? 'Development server' : 'Server';
+        const modeLabel = 'Server';
         this.updateState('success', `${modeLabel} stopped successfully`);
         // Auto-dismiss success message after 3 seconds
         setTimeout(() => this.updateState('success', null), 3000);
@@ -183,19 +192,34 @@ export default class ServerManagerVM extends ViewModel {
     }
   }
 
-  async toggleMode() {
-    const currentMode = this.getState('mode');
-    const newMode = currentMode === 'docker' ? 'dev' : 'docker';
-    
-    // Warn user if server is running (they should stop it first)
-    const apiHealth = this.getState('api-health');
-    if (apiHealth?.healthy) {
-      // Server is running - warn but allow switch
-      console.warn(`Switching from ${currentMode} to ${newMode} mode while server is running`);
+  async toggleMode() {}
+
+  computeLicenseExpiryInfo(licenseStatus) {
+    const license = licenseStatus?.license
+    if (!license || !licenseStatus?.valid) {
+      return { expiringSoon: false, expired: false, daysLeft: null, label: null }
     }
-    
-    this.updateState('mode', newMode);
-    // Refresh status to update UI
-    await this.checkStatus(false);
+
+    const type = String(license.subscription_type || '').toLowerCase()
+    if (type === 'lifetime') {
+      return { expiringSoon: false, expired: false, daysLeft: null, label: 'Lifetime' }
+    }
+
+    if (!license.expires_at) {
+      return { expiringSoon: false, expired: false, daysLeft: null, label: 'No expiry date' }
+    }
+
+    const now = new Date()
+    const expiryDate = new Date(String(license.expires_at).slice(0, 10))
+    const msPerDay = 24 * 60 * 60 * 1000
+    const daysLeft = Math.ceil((expiryDate.getTime() - now.getTime()) / msPerDay)
+    const expired = daysLeft < 0
+    const expiringSoon = !expired && daysLeft <= 30
+    return {
+      expiringSoon,
+      expired,
+      daysLeft,
+      label: expired ? 'Expired' : `${daysLeft} day(s) remaining`
+    }
   }
 }

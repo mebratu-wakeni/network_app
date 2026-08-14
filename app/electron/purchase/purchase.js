@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import { apiFetch } from '../config/apiFetch.js';
 
 /**
  * PurchaseManager - Handles all API communication for purchase management
@@ -24,9 +25,7 @@ class PurchaseManager {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    console.log(`[PurchaseManager] ${options.method || 'GET'} ${url}`);
-
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method: options.method || 'GET',
       headers,
       body: options.body
@@ -368,7 +367,8 @@ class PurchaseManager {
       const response = await this.apiRequest(url, { method: 'GET' }, token);
       return {
         success: response.ok === true,
-        stats: response.stats || {}
+        stats: response.stats || {},
+        period_summary: response.period_summary || null
       };
     } catch (error) {
       console.error('[PurchaseManager] getStats error:', error);
@@ -382,7 +382,7 @@ class PurchaseManager {
   async exportPurchaseOrder(token) {
     try {
       const url = getApiUrl('/purchases/export');
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',

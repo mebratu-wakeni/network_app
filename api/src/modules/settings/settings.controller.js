@@ -8,7 +8,7 @@ export class SettingsController {
 
   getSettings = async (req, res, next) => {
     try {
-      const settings = await this.service.getSettings()
+      const settings = await this.service.getSettings(req.tenantId)
       res.json({ ok: true, settings })
     } catch (err) {
       next(err)
@@ -18,7 +18,7 @@ export class SettingsController {
   updateSettings = async (req, res, next) => {
     try {
       const body = req.validBody || req.body
-      const settings = await this.service.updateSettings(body)
+      const settings = await this.service.updateSettings(req.tenantId, body)
       res.json({ ok: true, settings })
     } catch (err) {
       next(err)

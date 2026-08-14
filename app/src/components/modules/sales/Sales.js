@@ -16,19 +16,54 @@ import { showAlert } from '../../utils/ModalHelpers';
 
 const { Row, StatefulRow } = Liteframe;
 
-export function SalesUI() {
+export function SalesUI(props = {}) {
+  const { router, navigationVM } = props
   const viewModel = new SalesVM();
 
-  const render = (props) => {
-    props.ensureLocalStateKey('isExpanded', false);
+  const render = (renderProps) => {
+    const mergedProps = { ...renderProps, router, navigationVM }
+    mergedProps.ensureLocalStateKey('isExpanded', false);
+
+    // Handle cross-module navigation: open Sales History with specific order (from ReceivablesTab)
+    const pendingOpen = navigationVM?.getState?.('pending-sales-open')
+    if (pendingOpen && mergedProps.viewModel.getActiveTab() !== 'sales-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateTab('sales-history')
+        mergedProps.setLocalState('isExpanded', true)
+      }, 0)
+    }
+
+    // Handle cross-module navigation: open Sales History with date filter (from Dashboard)
+    const pendingFilter = navigationVM?.getState?.('pending-sales-filter')
+    if (pendingFilter && mergedProps.viewModel.getActiveTab() !== 'sales-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateTab('sales-history')
+        mergedProps.viewModel.updateSalesOrderTableConfig({
+          date_from: pendingFilter.date_from,
+          date_to: pendingFilter.date_to,
+          offset: 0
+        })
+        mergedProps.setLocalState('isExpanded', true)
+        if (navigationVM) navigationVM.updateState('pending-sales-filter', null)
+      }, 0)
+    } else if (pendingFilter && mergedProps.viewModel.getActiveTab() === 'sales-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateSalesOrderTableConfig({
+          date_from: pendingFilter.date_from,
+          date_to: pendingFilter.date_to,
+          offset: 0
+        })
+        if (navigationVM) navigationVM.updateState('pending-sales-filter', null)
+      }, 0)
+    }
 
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden' }, [
       CardHeader({
         class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0'
       }, 'Sales Management'),
-      CardBody({ class: 'p-6 flex flex-row h-full overflow-hidden gap-4' }, [
-        LeftPanel(props),
-        RightPanel(props),
+      CardBody({ class: 'px-3 md:px-4 py-2 flex flex-row h-full overflow-hidden gap-3' }, [
+        LeftPanel(mergedProps),
+        RightPanel(mergedProps),
       ]),
     ]);
   };
@@ -36,12 +71,21 @@ export function SalesUI() {
   return StatefulRow({
     class: 'w-full h-full overflow-hidden',
     viewModel,
-    stateKeys: ['loading'],
-  }, render);
+    stateKeys: [
+      'loading',
+      'sales-tab',
+      'customer-list',
+      'customer-search-query',
+      'customer-dropdown-loading',
+      'product-list',
+      'product-search-query',
+      'product-dropdown-loading',
+    ],
+  }, render)
 }
 
 function LeftPanel(props) {
-  const isExpanded = props.getLocalState('isExpanded');
+  const isExpanded = props.getLocalState('isExpanded')
   return Row({
     class: `flex-shrink-0 flex flex-col min-h-0 overflow-hidden gap-4 transition-[width,min-width] duration-300 ease-in-out ${isExpanded ? 'w-0 min-w-0' : 'w-1/3 min-w-0'}`,
   }, [
@@ -51,7 +95,7 @@ function LeftPanel(props) {
 }
 
 function RightPanel(props) {
-  const isExpanded = props.getLocalState('isExpanded');
+  const isExpanded = props.getLocalState('isExpanded')
 
   const handleImportSalesOrder = () => {
     OpenImportSalesOrderModal(props);
@@ -67,9 +111,9 @@ function RightPanel(props) {
       showAlert({ message: error.message || 'Failed to export sales order', variant: 'error' });
     }
   };
-  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-4 min-h-0 overflow-hidden border border-gray-200 rounded-lg min-w-0` }, [
+  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-2 min-h-0 overflow-x-visible overflow-y-hidden border border-gray-200 rounded-lg min-w-0` }, [
     SalesTabs(props),
-    Row({ class: 'flex justify-between pt-4 px-6 items-center' }, [
+    Row({ class: 'flex flex-wrap justify-between px-3 md:px-6 py-1 items-center gap-2' }, [
         Row({ class: 'flex items-center gap-4'}, [
           Button({ variant: 'outline', class: 'text-nowrap', onClick: handleImportSalesOrder }, 'Import Sales Order'),
           props.viewModel.getActiveTab() === 'sales-history' ? Button({ variant: 'secondary', class: 'text-nowrap', onClick: handleExportSalesOrder }, 'Export Sales Order') : null,
@@ -111,22 +155,23 @@ function SalesTabs(props) {
 }
 
 function SalesTabContents(props) {
-  const activeTab = props.viewModel.getActiveTab();
+  const activeTab = props.viewModel.getActiveTab()
+  const pendingOpen = props.navigationVM?.getState?.('pending-sales-open')
 
   const tabContent = () => {
     switch (activeTab) {
       case 'current-sale':
-        return CurrentSale(props);
+        return CurrentSale(props)
       case 'sales-history':
-        return SalesHistory(props);
+        return SalesHistory({ ...props, pendingSalesOpen: pendingOpen })
       case 'hold-orders':
-        return HoldOrders(props);
+        return HoldOrders(props)
       default:
-        return CurrentSale(props);
+        return CurrentSale(props)
     }
-  };
+  }
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
+  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-auto' }, [
     tabContent(),
   ]);
 }

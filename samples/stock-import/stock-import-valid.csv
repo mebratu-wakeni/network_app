@@ -1,0 +1,5 @@
+product name,unit,unit cost,quantity,category,location,expiry date,batch number,selling price,product code
+Fixture Valid Alpha,Box,10.50,12,Fixture Category,Warehouse A,31/12/2026,FX-B001,15.99,
+Fixture Valid Beta,Strip,2.25,48,Fixture Category,Main Store,15/06/2027,,3.75,
+Fixture Valid Gamma,Bottle,4.00,24,Fixture Category,,01/01/2028,FX-B003,6.00,EXT-99999
+Fixture Valid No Unit,,9.99,6,Fixture Category,Main Store,,,,

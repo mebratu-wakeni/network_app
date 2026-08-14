@@ -2,6 +2,35 @@
  * Controller: HTTP layer for customers
  * Handles request/response, delegates business logic to service
  */
+import { parseCSVText } from '../../utils/csvImportParse.js'
+import {
+  csvRowsToCustomersForBulkImport,
+  MAX_UPLOAD_ROWS
+} from './importCustomerCsvHelpers.js'
+
+/** Keeps API JSON small: success rows only include id; failures keep error + csv row. */
+function compactCustomerImportApiResults (results) {
+  if (!Array.isArray(results)) return []
+  return results.map((r) => {
+    if (r.success) {
+      return {
+        index: r.index,
+        csvRowNumber: r.csvRowNumber,
+        success: true,
+        customerId: r.customer?.id != null ? r.customer.id : null
+      }
+    }
+    return {
+      index: r.index,
+      csvRowNumber: r.csvRowNumber,
+      success: false,
+      error: r.error ?? 'Unknown error',
+      skipped: r.skipped === true,
+      ...(r.validationFailed ? { validationFailed: true } : {})
+    }
+  })
+}
+
 export class CustomersController {
   constructor(service) {
     this.service = service
@@ -14,15 +43,25 @@ export class CustomersController {
   list = async (req, res, next) => {
     try {
       const params = req.query || {}
-      const { limit, offset, search, sortBy, orderBy, customer_type } = params
+      const { limit, offset, search, sortBy, orderBy, customer_type, customer_types, prefer_walk_in } = params
 
-      const result = await this.service.findAll({
+      let typesList = null
+      if (customer_types != null && String(customer_types).trim() !== '') {
+        typesList = String(customer_types)
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      }
+
+      const result = await this.service.findAll(req.tenantId, {
         limit: limit ? parseInt(limit, 10) : 10,
         offset: offset ? parseInt(offset, 10) : 0,
         search: search || '',
         sortBy: sortBy || 'id',
         orderBy: orderBy || 'desc',
-        customer_type: customer_type || null
+        customer_type: customer_type || null,
+        customer_types: typesList && typesList.length > 0 ? typesList : null,
+        prefer_walk_in: prefer_walk_in === '1' || prefer_walk_in === 'true'
       })
 
       res.json({
@@ -42,7 +81,7 @@ export class CustomersController {
   getOne = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      const customer = await this.service.findById(id)
+      const customer = await this.service.findById(req.tenantId, id)
 
       res.json({
         ok: true,
@@ -59,7 +98,7 @@ export class CustomersController {
    */
   create = async (req, res, next) => {
     try {
-      const customer = await this.service.create(req.validBody)
+      const customer = await this.service.create(req.tenantId, req.validBody)
 
       res.status(201).json({
         ok: true,
@@ -77,14 +116,7 @@ export class CustomersController {
   update = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      console.log('[CustomersController] update - Customer ID:', id);
-      console.log('[CustomersController] update - Request Body:', req.body);
-      console.log('[CustomersController] update - Validated Body:', req.validBody);
-      
-      const customer = await this.service.update(id, req.validBody)
-      
-      console.log('[CustomersController] update - Updated Customer:', customer);
-      console.log('[CustomersController] update - Success!');
+      const customer = await this.service.update(req.tenantId, id, req.validBody)
 
       res.json({
         ok: true,
@@ -103,7 +135,7 @@ export class CustomersController {
   delete = async (req, res, next) => {
     try {
       const { id } = req.validParams || { id: Number(req.params.id) }
-      await this.service.delete(id)
+      await this.service.delete(req.tenantId, id)
 
       res.json({
         ok: true
@@ -115,37 +147,85 @@ export class CustomersController {
 
   /**
    * POST /api/customers/bulk-import
-   * Bulk import customers from CSV
+   * Bulk import customers from JSON (partial success; compact result payload)
    */
   bulkImport = async (req, res, next) => {
     try {
       const { customers } = req.validBody
 
-      console.log(`[CustomersController] Bulk import request: ${customers.length} customers`)
+      const result = await this.service.bulkImport(req.tenantId, customers)
 
-      const result = await this.service.bulkImport(customers)
-
-      console.log(`[CustomersController] Import summary: ${result.successful} successful, ${result.failed} failed`)
-
-      if (result.failed > 0) {
-        console.log(`[CustomersController] Import failed for ${result.failed} customers:`)
-        result.results
-          .filter(r => !r.success)
-          .forEach(r => {
-            console.log(`  Row ${r.index + 1}: ${r.error}`)
-          })
-      }
+      const skipped = result.results.filter((r) => !r.success && r.skipped).length
+      const validationFailed = result.results.filter((r) => !r.success && r.validationFailed).length
 
       res.json({
         ok: true,
+        success: result.failed === 0,
         summary: {
           total: result.total,
           successful: result.successful,
-          failed: result.failed
+          failed: result.failed,
+          skipped,
+          errors: result.failed - skipped,
+          validationFailed
         },
-        results: result.results
+        results: compactCustomerImportApiResults(result.results)
       })
     } catch (error) {
+      next(error)
+    }
+  }
+
+  /**
+   * POST /api/customers/bulk-import-upload
+   * Multipart CSV — parse on server; insert valid rows; skip invalid / duplicate contact person.
+   */
+  bulkImportUpload = async (req, res, next) => {
+    try {
+      if (!req.file?.buffer) {
+        return res.status(400).json({ ok: false, error: 'No file uploaded' })
+      }
+      const text = req.file.buffer.toString('utf8')
+      const { rows } = parseCSVText(text)
+      if (rows.length > MAX_UPLOAD_ROWS) {
+        return res.status(400).json({
+          ok: false,
+          error: `Too many data rows (max ${MAX_UPLOAD_ROWS})`
+        })
+      }
+
+      const customers = csvRowsToCustomersForBulkImport(rows)
+
+      if (customers.length === 0) {
+        return res.status(400).json({ ok: false, error: 'No data rows found in CSV' })
+      }
+
+      const importResult = await this.service.bulkImport(req.tenantId, customers)
+
+      const mergedResults = [...importResult.results].sort(
+        (a, b) => (a.csvRowNumber ?? 0) - (b.csvRowNumber ?? 0)
+      )
+      const successful = mergedResults.filter((r) => r.success).length
+      const failed = mergedResults.filter((r) => !r.success).length
+      const skippedCount = mergedResults.filter((r) => !r.success && r.skipped).length
+      const validationFailedCount = mergedResults.filter((r) => !r.success && r.validationFailed).length
+      const errorRowsOnly = failed - skippedCount
+
+      res.json({
+        ok: true,
+        success: failed === 0,
+        summary: {
+          total: importResult.total,
+          successful,
+          failed,
+          skipped: skippedCount,
+          errors: errorRowsOnly,
+          validationFailed: validationFailedCount
+        },
+        results: compactCustomerImportApiResults(mergedResults)
+      })
+    } catch (error) {
+      console.error('[CustomersController] Bulk import upload error:', error)
       next(error)
     }
   }
@@ -159,23 +239,13 @@ export class CustomersController {
       const params = req.query || {}
       const { limit, offset, search, sortBy, orderBy } = params
 
-      console.log(`[CustomersController] Export request:`, {
-        limit: limit || 10000,
-        offset: offset || 0,
-        search: search || '',
-        sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
-      })
-
-      const csvContent = await this.service.exportToCSV({
+      const csvContent = await this.service.exportToCSV(req.tenantId, {
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
         search: search || '',
         sortBy: sortBy || 'id',
         orderBy: orderBy || 'desc'
       })
-
-      console.log(`[CustomersController] Export response: ${csvContent.split('\n').length - 1} rows`)
 
       // Set headers for CSV download
       res.setHeader('Content-Type', 'text/csv')

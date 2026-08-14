@@ -21,12 +21,25 @@ export const customerSchema = z.object({
   customer_type: z.enum(['supplier', 'retailer', 'both', 'other']).default('supplier')
 })
 
+const CUSTOMER_TYPES = ['supplier', 'retailer', 'both', 'other']
+
 /**
- * Schema for bulk import customers request body
+ * Bulk import JSON body: only structural check. Validation / normalization live in CustomersService.bulkImport
+ * (same split as products: route validates shape; service owns business rules per row).
  */
 export const bulkImportCustomersSchema = z.object({
-  customers: z.array(customerSchema).min(1, 'At least one customer is required')
+  customers: z
+    .array(
+      z.any().refine(
+        (row) => row != null && typeof row === 'object' && !Array.isArray(row),
+        { message: 'Each customer must be an object' }
+      )
+    )
+    .min(1, 'At least one customer is required')
 })
+
+/** Shared enum for create/update and docs */
+export const customerTypeEnumSchema = z.enum(CUSTOMER_TYPES)
 
 /**
  * Schema for creating a new customer

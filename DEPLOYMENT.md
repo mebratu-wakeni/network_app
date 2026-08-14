@@ -1,8 +1,35 @@
 # Deployment Workflow
 
-This repo supports deployment of the Express API via Docker. The Electron app is typically distributed as installers/binaries (built separately).
+This repo supports two different delivery paths:
 
-## API (Docker)
+1. **API (cPanel / Postgres host)** — **tarball deploy** (extract on server, `npm install`, `npm run migrate`, restart). cPanel does not support reliable GitHub→server CI; ignore `.github/workflows/deploy.yml` for multi-tenant production unless you explicitly use it for a legacy SQLite host.
+2. **Desktop installers** — GitHub Actions builds Mac/Windows/Linux; you upload artifacts to `server.masatechplc.com/downloads/`. See [DOWNLOADS_AND_UPDATES.md](./DOWNLOADS_AND_UPDATES.md).
+
+Branch policy: [BRANCHING.md](./BRANCHING.md). Multi-tenant readiness: [MULTI_TENANT_READINESS.md](./MULTI_TENANT_READINESS.md).
+
+## API (cPanel / Postgres host)
+
+**Multi-tenant production (`server.masatechplc.com`):** upload **`masatech-deploy.tar.gz`** and extract at the **domain root** (sibling folders `api/` + `masatech-admin/`), matching the live cPanel layout.
+
+```bash
+./scripts/pack-multi-tenant-tarball.sh
+# → dist-release/masatech-deploy.tar.gz
+```
+
+Extract in `/home/…/server.masatechplc.com/` (not inside `api/`).
+
+Migrations: use `node scripts/migrate-lite.mjs` over SSH, or phpPgAdmin SQL under `dist-release/sql/` — see [docs/MULTI_TENANT_TARBALL_DEPLOY.md](./docs/MULTI_TENANT_TARBALL_DEPLOY.md).
+
+```bash
+cd /home/…/server.masatechplc.com/api
+npm install --production
+# migrate via migrate-lite or phpPgAdmin SQL (not cPanel package.json)
+mkdir -p tmp && touch tmp/restart.txt
+```
+
+Desktop installers are **not** in the API tarball. They are published by GitHub Actions to `/downloads/cloud-multi/` — see [docs/DOWNLOADS_AND_UPDATES.md](./docs/DOWNLOADS_AND_UPDATES.md).
+
+## API (Docker — local dev)
 
 ### Images and Compose
 - Image built from `api/Dockerfile`

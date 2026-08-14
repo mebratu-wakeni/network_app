@@ -7,6 +7,7 @@ import { SelectFluid, SelectOptions, SelectRelative } from '../../../utils/Selec
 import { showAlert } from '../../../utils/ModalHelpers';
 import { formatDateDDMMYYYY } from '../../../utils/DateUtils';
 import { openReceiptModal } from '../ReceiptModal';
+import { openBulkCustomerPaymentModal } from '../BulkCustomerPaymentModal';
 import { SalesOrderDetailsDrawer } from '../SalesOrderDetailsDrawer';
 
 const { Row } = Liteframe;
@@ -16,11 +17,39 @@ const FILTER_SMALL_CLASS = 'text-xs py-1 px-2 min-h-0';
 const SELECT_SMALL_CLASS = 'text-xs py-1 pl-2 pr-6 min-h-0';
 
 export function SalesHistory(props) {
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
+  const { pendingSalesOpen, navigationVM } = props
+  props.ensureLocalStateKey('pendingSalesOpenProcessed', false)
+  const processed = props.getLocalState('pendingSalesOpenProcessed')
+
+  // Cross-module: open drawer when navigated from ReceivablesTab (View in Sales / Make Payment)
+  props.ensureLocalStateKey('drawerOrderId', null)
+  props.ensureLocalStateKey('showOrderDrawer', false)
+
+  if (pendingSalesOpen && !processed) {
+    props.setLocalState('pendingSalesOpenProcessed', true)
+    const openFromPending = async () => {
+      try {
+        await props.viewModel.loadOrderDetails(pendingSalesOpen.orderId)
+        props.setLocalState('drawerOrderId', pendingSalesOpen.orderId)
+        props.setLocalState('drawerContentType', pendingSalesOpen.contentType === 'payment' ? 'payment' : 'details')
+        requestAnimationFrame(() => props.setLocalState('showOrderDrawer', true))
+      } catch (error) {
+        await showAlert({ message: error.message || 'Failed to load order details', variant: 'error' })
+        props.setLocalState('pendingSalesOpenProcessed', false)
+      } finally {
+        if (navigationVM) navigationVM.updateState('pending-sales-open', null)
+      }
+    }
+    openFromPending()
+  } else if (!pendingSalesOpen && processed) {
+    props.setLocalState('pendingSalesOpenProcessed', false)
+  }
+
+  return Row({ class: 'flex flex-col' }, [
     SalesHistoryStatsAndFilters(props),
     SalesHistoryTableSection(props),
     props.getLocalState('drawerOrderId') && salesOrderDetailsDrawer(props),
-  ]);
+  ])
 }
 
 function SalesHistoryStatsAndFilters(props) {
@@ -311,8 +340,8 @@ function SalesHistoryTableSection(props) {
     return null;
   };
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden py-4' }, [
-    Row({ class: 'flex items-center justify-between gap-4 px-4 py-4 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
+  return Row({ class: 'flex flex-col py-4' }, [
+    Row({ class: 'flex flex-wrap items-center justify-between gap-4 px-4 py-4 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
       Row({ class: 'flex-1 min-w-[200px] max-w-md' }, [
         Row({ class: 'relative' }, [
           IonIcon({ name: 'search-outline', class: 'absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xl pointer-events-none' }),
@@ -320,6 +349,17 @@ function SalesHistoryTableSection(props) {
         ]),
       ]),
       Row({ class: 'flex items-center gap-4' }, [
+        Button({
+          variant: 'outline',
+          class: 'text-xs px-2 py-1.5 min-h-0 whitespace-nowrap',
+          onClick: async () => {
+            try {
+              await openBulkCustomerPaymentModal({ viewModel: props.viewModel });
+            } catch (e) {
+              console.error(e);
+            }
+          },
+        }, 'Receive payment (customer)'),
         Row({ tagType: 'p', class: 'text-sm text-gray-400 text-nowrap' }, 'Rows per page'),
         SelectRelative({ name: 'sales-limit', onChange: (e) => handleSetLimit(parseInt(e.target.value, 10)), value: paginationLimit }, SelectOptions({ options: ['10', '25', '50', '100'], selectedOption: String(paginationLimit) })),
         Row({ tagType: 'p' }, '|'),
@@ -334,8 +374,8 @@ function SalesHistoryTableSection(props) {
       ? Row({ class: 'p-8 text-center text-gray-500' }, 'Loading sales...')
       : orders.length === 0
         ? Row({ class: 'p-8 text-center text-gray-500' }, 'No sales found')
-        : Row({ class: 'flex-1 flex flex-col min-h-0 border border-gray-200 rounded-lg overflow-hidden px-4 py-4' }, [
-            Table({ class: 'flex-1 min-w-full overflow-hidden', getOpenActionState: () => props.getLocalState('actionId'), setOpenActionState: () => props.setLocalState('actionId', null) }, [
+        : Row({ class: 'flex flex-col border border-gray-200 rounded-lg' }, [
+            Table({ class: 'min-w-full', pageScrollable: true }, [
               TableHeader({}, [
                 TableRow({}, [
                   TableHCell({ class: 'text-nowrap', onClick: () => handleSortChange('receipt_no') }, [
@@ -363,9 +403,9 @@ function SalesHistoryTableSection(props) {
                   TableHCell({ class: 'w-24' }, 'Actions'),
                 ]),
               ]),
-              TableBody({ class: 'flex-1 min-h-0 overflow-y-auto' }, orders.map((order) =>
+              TableBody({}, orders.map((order) =>
                 TableRow({ key: order.id }, [
-                  TableDCell({ class: 'font-medium' }, order.receipt_no || `SO${order.id}`),
+                  TableDCell({ class: 'font-medium' }, order.receipt_no || '—'),
                   TableDCell({}, order.customer_name || 'Walk-in'),
                   TableDCell({}, formatDateDDMMYYYY(order.order_date)),
                   TableDCell({ class: 'font-medium' }, `Br ${financeFormat(order.net_amount)}`),

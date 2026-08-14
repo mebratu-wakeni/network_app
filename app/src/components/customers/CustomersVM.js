@@ -31,7 +31,7 @@ export class CustomersVM extends ViewModel {
     this.setState('customer-table-config', {
       limit: 10,
       offset: 0,
-      sortBy: 'id',
+      sortBy: 'customer_code',
       orderBy: 'desc'
     });
     this.setState('customer-search-query', '');
@@ -130,29 +130,22 @@ export class CustomersVM extends ViewModel {
       ...customerData
     };
 
-    console.log('[CustomersVM] updateCustomer - Payload:', payload);
-    console.log('[CustomersVM] updateCustomer - Customer ID:', customerId);
-    console.log('[CustomersVM] updateCustomer - Customer Data:', customerData);
-
     try {
       const result = await window.ipcRenderer.invoke('customers:update-customer', payload);
-      
-      console.log('[CustomersVM] updateCustomer - IPC Result:', result);
 
       if (result.success) {
-        console.log('[CustomersVM] updateCustomer - Success! Updated customer:', result.customer);
         this.updateState('success', { message: 'Customer updated successfully' });
         
         // Update the selected customer with the updated data
         const currentSelectedCustomer = this.getState('selected-customer');
         if (currentSelectedCustomer && currentSelectedCustomer.id === customerId && result.customer) {
-          console.log('[CustomersVM] updateCustomer - Updating selected customer state');
           this.updateState('selected-customer', {
             ...currentSelectedCustomer,
             ...result.customer
           });
           // Also update the form with the new values
           this.updateState('customer-form', {
+            customer_code: result.customer.customer_code || '',
             name: result.customer.name || '',
             contact_person: result.customer.contact_person || '',
             phone: result.customer.phone || '',
@@ -214,6 +207,63 @@ export class CustomersVM extends ViewModel {
     }
   }
 
+  async bulkImportCustomersFromFile (file) {
+    const maxBytes = 50 * 1024 * 1024
+    if (file.size > maxBytes) {
+      throw new Error('File must be 50MB or smaller')
+    }
+    if (this.getState('loading')) return
+
+    this.updateState('loading', true)
+    this.updateState('error', null)
+    this.updateState('success', null)
+
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer())
+      const result = await window.ipcRenderer.invoke('customers:bulk-import-customers-upload', {
+        fileBuffer: buf,
+        fileName: file.name
+      })
+
+      if (result?.summary != null) {
+        const s = result.summary
+        const failed = s.failed || 0
+        const ok = s.successful || 0
+        if (ok > 0) {
+          // loadCustomers() bails out while `loading` is true — clear first (same as create/update/delete).
+          this.updateState('loading', false)
+          this.updateState('customer-table-config', {
+            ...this.getState('customer-table-config'),
+            offset: 0
+          })
+          await this.loadCustomers()
+        }
+        if (failed > 0 && ok > 0) {
+          this.updateState('success', {
+            message: `Imported ${ok} customer(s); ${failed} row(s) not imported (see import dialog for details).`
+          })
+        } else if (failed > 0 && ok === 0) {
+          this.updateState('error', {
+            message: `No customers imported. ${failed} row(s) failed or were skipped — see import dialog for row details.`
+          })
+        } else {
+          this.updateState('success', {
+            message: `Successfully imported ${ok} customer(s).`
+          })
+        }
+        return result
+      }
+
+      throw new Error(result?.error || 'Failed to import customers')
+    } catch (error) {
+      console.error('Error importing customers from file:', error)
+      this.updateState('error', { message: error.message || 'Failed to import customers' })
+      throw error
+    } finally {
+      this.updateState('loading', false)
+    }
+  }
+
   async bulkImportCustomers(customers) {
     if (this.getState('loading')) return;
     
@@ -228,7 +278,11 @@ export class CustomersVM extends ViewModel {
         this.updateState('success', { 
           message: `Successfully imported ${result.summary?.successful || 0} customer(s)` 
         });
-        // Reload customers list
+        this.updateState('loading', false)
+        this.updateState('customer-table-config', {
+          ...this.getState('customer-table-config'),
+          offset: 0
+        })
         await this.loadCustomers();
         return result;
       }
@@ -348,6 +402,7 @@ export class CustomersVM extends ViewModel {
     // Populate form with customer data
     if (customer) {
       this.updateState('customer-form', {
+        customer_code: customer.customer_code || '',
         name: customer.name || '',
         contact_person: customer.contact_person || '',
         phone: customer.phone || '',

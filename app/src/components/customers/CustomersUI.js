@@ -28,7 +28,7 @@ export function CustomersUI() {
     ])
   } 
 
-  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading', 'customer-drawer-open', 'customer-drawer-type', 'selected-customer', 'customer-details-edit-mode', 'customer-form']}, render)
+  return StatefulRow({ class: 'w-full h-full overflow-hidden', viewModel, stateKeys: ['loading', 'customer-list', 'customer-total-count', 'customer-drawer-open', 'customer-drawer-type', 'selected-customer', 'customer-details-edit-mode', 'customer-form']}, render)
 }
 
 function CustomersContent(props) {
@@ -301,20 +301,18 @@ function CustomerTable(props) {
   return Table({ 
     class: 'flex-1 min-h-0', 
     id: 'customers-table',
-    getOpenActionState: () => props.getLocalState('actionId'),
-    setOpenActionState: () => props.setLocalState('actionId', null)
   }, [
     TableHeader({class: 'sticky top-0 z-10 bg-white'}, [
       TableHCell({ 
         class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', 
         onClick: () => {
           const config = props.viewModel.getState('customer-table-config');
-          props.viewModel.setCustomerSort('id', config.orderBy === 'asc' ? 'desc' : 'asc');
+          props.viewModel.setCustomerSort('customer_code', config.orderBy === 'asc' ? 'desc' : 'asc');
           props.viewModel.loadCustomers();
         }
       }, [
-        'ID',
-        sortIcon('id')
+        'Customer Code',
+        sortIcon('customer_code')
       ]),
       TableHCell({ 
         class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-50', 
@@ -350,7 +348,7 @@ function CustomerTable(props) {
           class: `transition-colors duration-150 cursor-pointer ${isSelected ? 'bg-blue-50 border-l-2 border-blue-500' : 'hover:bg-gray-50'}`,
           onClick: () => handleRowClick(customer),
         }, [
-          TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, customer.id),
+          TableDCell({ class: 'px-4 py-3 text-sm font-mono text-gray-700' }, customer.customer_code || '—'),
           TableDCell({ class: 'px-4 py-3 text-sm font-medium text-gray-900' }, customer.name),
           TableDCell({ class: 'px-4 py-3 text-sm text-gray-600' }, customer.contact_person || '—'),
           TableDCell({ class: 'px-4 py-3 text-sm text-gray-600' }, customer.phone || '—'),
@@ -420,7 +418,6 @@ function CustomerDetailsDrawer({ customer, showSlide, onClose, ...props }) {
       actionName: 'edit customers'
     });
     if (!hasPermission) {
-      console.log('[CustomerDetailsDrawer] handleSave - Permission denied');
       return;
     }
 
@@ -429,12 +426,8 @@ function CustomerDetailsDrawer({ customer, showSlide, onClose, ...props }) {
       return;
     }
 
-    console.log('[CustomerDetailsDrawer] handleSave - Customer ID:', currentCustomer.id);
-    console.log('[CustomerDetailsDrawer] handleSave - Form Data:', customerForm);
-
     try {
       await props.viewModel.updateCustomer(currentCustomer.id, customerForm);
-      console.log('[CustomerDetailsDrawer] handleSave - Update successful, exiting edit mode');
       props.viewModel.setCustomerDetailsEditMode(false);
     } catch (error) {
       // Error is handled by viewModel
@@ -495,7 +488,14 @@ function CustomerDetailsDrawer({ customer, showSlide, onClose, ...props }) {
             )
           ),
           
-          Row({ class: 'flex flex-col gap-6' }, [
+            Row({ class: 'flex flex-col gap-6' }, [
+            !editMode && Row({ class: 'mb-2' }, [
+              DetailField({
+                label: 'Customer Code',
+                value: customerForm.customer_code || '—',
+                editMode: false
+              })
+            ]),
             // In edit mode, show customer name field first (full width)
             editMode && Row({ class: 'flex justify-center' }, [
               Row({ class: 'w-full max-w-md' }, [

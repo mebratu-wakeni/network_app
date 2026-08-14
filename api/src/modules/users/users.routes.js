@@ -10,7 +10,7 @@ import {
   validate, validateParams, updateUserSchema, idParamSchema, 
   assignRoleSchema, removeRoleSchema, assignRuleSchema, removeRuleSchema, 
   searchUsersSchema, updateUserProfileSchema, changePasswordSchema } from './users.schema.js'
-import { authenticate, requireRole, requireRules } from '../../middleware/auth.js'
+import { authenticate, requireRole, requireRules, requireTenant } from '../../middleware/auth.js'
 
 // Initialize dependencies
 const usersRepository = new UsersRepository(knex)
@@ -19,8 +19,8 @@ const usersController = new UsersController(usersService)
 
 const router = Router()
 
-// All routes require authentication
-router.use(authenticate)
+// All routes require authentication and tenant context
+router.use(authenticate, requireTenant)
 
 // Get current authenticated user with permissions (must come before /:id route)
 router.get('/me', usersController.getCurrentUser)
@@ -37,7 +37,7 @@ router.post(
 router.patch(
   '/profile',
   validate(updateUserProfileSchema),
-  usersController.updateProfile
+  usersController.updateUserProfile
 )
 
 // User profile avatar management (after /:id routes to avoid conflicts)

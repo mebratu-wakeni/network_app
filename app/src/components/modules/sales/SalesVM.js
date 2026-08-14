@@ -1,5 +1,6 @@
 const { ViewModel, SharedStateManager } = Liteframe;
 import { permissionChecker } from '../../utils/PermissionChecker';
+import { DROPDOWN_SEARCH_DEBOUNCE_MS, DROPDOWN_SEARCH_LIMIT } from '../../utils/dropdownSearchConfig';
 
 /** Normalize date to YYYY-MM-DD for API (handles ISO strings and Date objects from DB). */
 function normalizeSaleDate(value) {
@@ -11,22 +12,55 @@ function normalizeSaleDate(value) {
 }
 
 const DEFAULT_CURRENT_SALE = {
+  // Customer
   customer_id: null,
   customer: null,
-  sale_date: new Date().toISOString().split('T')[0],
-  invoice_no: '',
-  payment_mode: 'cash',
+  
+  // Order details (matching sales_orders table)
+  order_date: new Date().toISOString().split('T')[0], // Maps to order_date in DB
+  sale_date: new Date().toISOString().split('T')[0], // Alias for UI consistency
+  invoice_no: '', // Government/tax authority reference
+  remark: '', // Notes/remarks
+  
+  // Payment (matching sales_orders table)
+  payment_type: 'cash', // Maps to payment_type in DB (required, default 'cash')
+  payment_mode: 'cash', // Alias for UI consistency
+  payment_status: 'unpaid', // 'paid' | 'partial' | 'unpaid' (computed, not user-set)
+  
+  // Withholding (matching sales_orders table)
   is_withholding: false,
-  withhold_reference: '',
-  first_payment: null,
-  cheque_details: null,
+  withhold_percentage: null, // From settings when applicable
+  withhold_amount: null, // Computed
+  withhold_reference: '', // Stored in remark field
+  withhold_ref: null, // Customer withholding receipt ref. when confirming at sale
+  withhold_confirmation: false, // Set when confirming withhold
+  withhold_settled: false, // Set when withhold is settled
+  
+  // Financial (matching sales_orders table - computed, not user-set)
+  total_amount: 0, // Computed from items
+  amount_paid: 0, // Computed based on payment_mode
+  received_amount: 0, // Computed: total_amount - withhold_amount
+  
+  // Payment details (for credit/cheque)
+  first_payment: null, // For credit payment mode
+  cheque_details: null, // For cheque payment mode
+  
+  // Items
   items: [],
+  
+  // UI state
   error: null,
 };
 
 export class SalesVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
     super(sharedStateManager);
+    this._customerSearchSeq = 0
+    this.customerSearchTimeout = null
+    this._productSearchSeq = 0
+    this.productSearchTimeout = null
+    this._bulkPaymentCustomerSearchSeq = 0
+    this.bulkPaymentCustomerSearchTimeout = null
     this.initializeState();
     this.loadUserPermissions();
     this.loadWithholdPercentage();
@@ -49,7 +83,11 @@ export class SalesVM extends ViewModel {
 
     this.setState('product-list', []); // inventory/stock items for sale (name, code, sellingPrice, batch, expiry)
     this.setState('product-search-query', '');
+    this.setState('product-dropdown-loading', false);
     this.setState('customer-list', []);
+    this.setState('customer-dropdown-loading', false);
+    this.setState('bulk-payment-customer-list', []);
+    this.setState('bulk-payment-customer-dropdown-loading', false);
     this.setState('withhold-percentage', null);
     this.setState('customer-search-query', '');
 
@@ -119,6 +157,20 @@ export class SalesVM extends ViewModel {
       cheque_details: { bank_name: '', cheque_number: '', cheque_date: '' },
       notes: ''
     });
+  }
+
+  isWalkInCustomer(customer) {
+    const name = (customer?.name || customer?.full_name || '').trim().toLowerCase()
+    return name === 'walk-in'
+  }
+
+  isWalkInSale(currentSale = {}) {
+    if (currentSale.customer_id == null || currentSale.customer_id === '') return true
+    if (this.isWalkInCustomer(currentSale.customer)) return true
+    const customers = this.getState('customer-list') || []
+    const matched = customers.find((c) => c.id === currentSale.customer_id)
+    if (matched) return this.isWalkInCustomer(matched)
+    return this.isWalkInCustomer(currentSale.customer)
   }
 
   /** Set sales payment form defaults (e.g. when opening Record Payment). Updates form and sets loading false at end. */
@@ -214,6 +266,7 @@ export class SalesVM extends ViewModel {
       unit_price: selectedProductDetails.unit_price,
       batch_number: p.batchNumber || p.batch_number || null,
       expiry_date: p.expiryDate || p.expiry_date || null,
+      selected: false
     };
     const currentSale = this.getState('current-sale') || {};
     const items = [...(currentSale.items || []), item];
@@ -257,17 +310,36 @@ export class SalesVM extends ViewModel {
 
   updateCurrentSaleField(field, value) {
     const currentSale = this.getState('current-sale') || {};
-    this.updateState('current-sale', { ...currentSale, [field]: value });
+    const updates = { [field]: value };
+    
+    // Keep aliases in sync with DB field names
+    if (field === 'sale_date') {
+      updates.order_date = value; // Keep order_date in sync (DB field)
+    } else if (field === 'order_date') {
+      updates.sale_date = value; // Keep sale_date in sync (UI alias)
+    } else if (field === 'payment_mode') {
+      updates.payment_type = value; // Keep payment_type in sync (DB field)
+    } else if (field === 'payment_type') {
+      updates.payment_mode = value; // Keep payment_mode in sync (UI alias)
+    }
+    
+    this.updateState('current-sale', { ...currentSale, ...updates });
     this.updateState('loading', false);
   }
 
   toggleWithholding() {
     const currentSale = this.getState('current-sale') || {};
+    // Walk-in customers cannot have withholding
+    const isWalkIn = this.isWalkInSale(currentSale);
+    if (isWalkIn) {
+      // Cannot enable withholding for walk-in - keep it disabled
+      return;
+    }
     const isWithholding = !currentSale.is_withholding;
     this.updateState('current-sale', {
       ...currentSale,
       is_withholding: isWithholding,
-      ...(isWithholding ? {} : { withhold_reference: '' }),
+      ...(isWithholding ? {} : { withhold_reference: '', withhold_ref: null }),
     });
     this.updateState('loading', true);
     setTimeout(() => this.updateState('loading', false), 0);
@@ -293,7 +365,9 @@ export class SalesVM extends ViewModel {
     const currentSale = this.getState('current-sale') || {};
     const items = currentSale.items || [];
     const subtotal = items.reduce((sum, item) => sum + (item.quantity * (item.unit_price || 0)), 0);
-    const withholdPercentage = currentSale.is_withholding ? this.getState('withhold-percentage') : 0;
+    const withholdPercentage = currentSale.is_withholding
+      ? Number(this.getState('withhold-percentage') ?? 0)
+      : 0;
     const withholdAmount = (subtotal * withholdPercentage) / 100;
     const netAmount = subtotal - withholdAmount;
 
@@ -302,9 +376,9 @@ export class SalesVM extends ViewModel {
     if (paymentMode === 'cash') {
       amountPaid = netAmount;
     } else if (paymentMode === 'credit') {
-      amountPaid = Number(currentSale.first_payment ?? 0);
+      amountPaid = Number(currentSale.first_payment != null ? currentSale.first_payment : 0);
     } else if (paymentMode === 'cheque') {
-      amountPaid = Number(currentSale.cheque_details?.amount ?? 0);
+      amountPaid = Number((currentSale.cheque_details && currentSale.cheque_details.amount != null) ? currentSale.cheque_details.amount : 0);
     }
     const outstanding = Math.max(0, netAmount - amountPaid);
 
@@ -364,53 +438,164 @@ export class SalesVM extends ViewModel {
     }
   }
 
-  async loadCustomers(query) {
-    if (this.getState('loading')) return [];
-    this.updateState('loading', true);
-    this.updateState('error', null);
+  async loadCustomers(query = '') {
+    const gen = ++this._customerSearchSeq
+    this.updateState('customer-dropdown-loading', true)
+    this.updateState('error', null)
     try {
-      // Use same API as Purchase: inventory partners with types 'retailer' and 'both'
-      const [retailersResult, bothResult] = await Promise.all([
-        window.ipcRenderer.invoke('inventory:get-partners', 'retailer'),
-        window.ipcRenderer.invoke('inventory:get-partners', 'both'),
-      ]);
-      const retailers = Array.isArray(retailersResult) ? retailersResult : [];
-      const both = Array.isArray(bothResult) ? bothResult : [];
-      const merged = [...retailers];
-      const seenIds = new Set(merged.map((c) => c.id));
-      both.forEach((c) => {
-        if (!seenIds.has(c.id)) {
-          merged.push(c);
-          seenIds.add(c.id);
-        }
-      });
-      this.updateState('customer-list', merged);
-      return merged;
+      const result = await window.ipcRenderer.invoke('customers:get-customers', {
+        search: (query || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        customer_types: 'retailer,both,other',
+        prefer_walk_in: true,
+        sortBy: 'id',
+        orderBy: 'desc'
+      })
+
+      if (gen !== this._customerSearchSeq) return []
+
+      if (result?.success && Array.isArray(result.customers)) {
+        const partners = result.customers.map((customer) => ({
+          id: customer.id,
+          name: customer.name,
+          code: `CUST${String(customer.id).padStart(4, '0')}`,
+          type: 'partner',
+          contact_person: customer.contact_person || null,
+          customer_type: customer.customer_type || 'supplier',
+          phone: customer.phone || null,
+          email: customer.email || null
+        }))
+        this.updateState('customer-list', partners)
+        return partners
+      }
+
+      throw new Error(result?.error || 'Failed to load customers')
     } catch (error) {
-      console.error('[SalesVM] loadCustomers error:', error);
-      this.updateState('error', { message: error.message || 'Failed to load customers' });
-      return [];
+      if (gen === this._customerSearchSeq) {
+        console.error('[SalesVM] loadCustomers error:', error)
+        this.updateState('error', { message: error.message || 'Failed to load customers' })
+      }
+      return []
     } finally {
-      this.updateState('loading', false);
+      if (gen === this._customerSearchSeq) {
+        this.updateState('customer-dropdown-loading', false)
+      }
     }
   }
 
   updateCustomerSearch(query) {
-    this.updateState('customer-search-query', query);
-    clearTimeout(this.customerSearchTimeout);
-    this.customerSearchTimeout = setTimeout(() => this.loadCustomers(query), 500);
+    this.updateState('customer-search-query', query)
+    clearTimeout(this.customerSearchTimeout)
+    this.customerSearchTimeout = setTimeout(() => this.loadCustomers(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
+  async loadProductsForSaleDropdown(query = '') {
+    const gen = ++this._productSearchSeq
+    this.updateState('product-dropdown-loading', true)
+    try {
+      const result = await window.ipcRenderer.invoke('inventory:get-stock', {
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        search: (query || '').trim(),
+        filter: 'all',
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._productSearchSeq) return []
+      if (result && result.success && Array.isArray(result.stock)) {
+        this.updateState('product-list', result.stock)
+        return result.stock
+      }
+      throw new Error(result?.error || 'Failed to fetch inventory for sale')
+    } catch (error) {
+      if (gen === this._productSearchSeq) {
+        console.error('Error fetching inventory for sale:', error)
+      }
+      if (gen === this._productSearchSeq) {
+        this.updateState('product-list', [])
+      }
+      return []
+    } finally {
+      if (gen === this._productSearchSeq) {
+        this.updateState('product-dropdown-loading', false)
+      }
+    }
+  }
+
+  updateProductDropdownSearch(query) {
+    this.updateState('product-search-query', query)
+    clearTimeout(this.productSearchTimeout)
+    this.productSearchTimeout = setTimeout(() => this.loadProductsForSaleDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
+  async loadBulkPaymentCustomers(query = '') {
+    const gen = ++this._bulkPaymentCustomerSearchSeq
+    this.updateState('bulk-payment-customer-dropdown-loading', true)
+    try {
+      const result = await window.ipcRenderer.invoke('customers:get-customers', {
+        search: (query || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        customer_types: 'retailer,both,other',
+        prefer_walk_in: true,
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._bulkPaymentCustomerSearchSeq) return []
+      if (result?.success && Array.isArray(result.customers)) {
+        const list = result.customers.filter((c) => !this.isWalkInCustomer(c))
+        this.updateState('bulk-payment-customer-list', list)
+        return list
+      }
+      throw new Error(result?.error || 'Failed to load customers')
+    } catch (e) {
+      if (gen === this._bulkPaymentCustomerSearchSeq) {
+        console.error('[SalesVM] loadBulkPaymentCustomers error:', e)
+        this.updateState('bulk-payment-customer-list', [])
+      }
+      return []
+    } finally {
+      if (gen === this._bulkPaymentCustomerSearchSeq) {
+        this.updateState('bulk-payment-customer-dropdown-loading', false)
+      }
+    }
+  }
+
+  updateBulkPaymentCustomerSearch(query) {
+    clearTimeout(this.bulkPaymentCustomerSearchTimeout)
+    this.bulkPaymentCustomerSearchTimeout = setTimeout(() => this.loadBulkPaymentCustomers(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
   }
 
   selectCustomer(customer) {
     const currentSale = this.getState('current-sale') || {};
-    this.updateState('current-sale', { ...currentSale, customer_id: customer.id, customer });
+    const isWalkIn = this.isWalkInCustomer(customer);
+    this.updateState('current-sale', { 
+      ...currentSale, 
+      customer_id: customer.id, 
+      customer,
+      is_withholding: isWalkIn ? false : currentSale.is_withholding,
+      withhold_reference: isWalkIn ? '' : currentSale.withhold_reference,
+      // Reset withhold confirmation fields when customer changes
+      withhold_ref: null,
+      withhold_confirmation: false
+    });
     this.updateState('selected-customer', customer);
   }
 
   selectWalkIn() {
     const currentSale = this.getState('current-sale') || {};
-    this.updateState('current-sale', { ...currentSale, customer_id: null, customer: null });
-    this.updateState('selected-customer', null);
+    const customers = this.getState('customer-list') || []
+    const walkIn = customers.find((c) => this.isWalkInCustomer(c)) || null
+    this.updateState('current-sale', { 
+      ...currentSale, 
+      customer_id: walkIn?.id ?? null, 
+      customer: walkIn,
+      is_withholding: false,
+      withhold_reference: '',
+      withhold_ref: null,
+    });
+    this.updateState('selected-customer', walkIn);
   }
 
   async loadWithholdPercentage() {
@@ -432,33 +617,66 @@ export class SalesVM extends ViewModel {
     return null;
   }
 
-  async getProducts(query) {
-    if (this.getState('loading')) return [];
-    this.updateState('loading', true);
+  getCustomerList() {
+    return this.getState('customer-list') || [];
+  }
+
+  /**
+   * Partners suitable as sales customers for bulk AR payment (excludes walk-in). Does not toggle global loading.
+   */
+  async fetchPartnersForBulkCustomerPayment() {
     try {
-      const result = await window.ipcRenderer.invoke('inventory:get-stock', {
-        limit: 30,
-        offset: 0,
-        search: query || '',
-        filter: 'all',
-        sortBy: 'id',
-        orderBy: 'desc',
+      const [retailersResult, bothResult, otherResult] = await Promise.all([
+        window.ipcRenderer.invoke('inventory:get-partners', 'retailer'),
+        window.ipcRenderer.invoke('inventory:get-partners', 'both'),
+        window.ipcRenderer.invoke('inventory:get-partners', 'other'),
+      ]);
+      const retailers = Array.isArray(retailersResult) ? retailersResult : [];
+      const both = Array.isArray(bothResult) ? bothResult : [];
+      const others = Array.isArray(otherResult) ? otherResult : [];
+      const merged = [...retailers];
+      const seenIds = new Set(merged.map((c) => c.id));
+      both.forEach((c) => {
+        if (!seenIds.has(c.id)) {
+          merged.push(c);
+          seenIds.add(c.id);
+        }
       });
-      if (result && result.success && Array.isArray(result.stock)) {
-        this.updateState('product-list', result.stock);
-        return result.stock;
-      }
-      throw new Error(result?.error || 'Failed to fetch inventory for sale');
+      const walkIn = others.find((c) => this.isWalkInCustomer(c));
+      const walkInId = walkIn?.id;
+      return merged.filter((c) => c.id !== walkInId && !this.isWalkInCustomer(c));
     } catch (error) {
-      console.error('Error fetching inventory for sale:', error);
+      console.error('[SalesVM] fetchPartnersForBulkCustomerPayment error:', error);
       return [];
-    } finally {
-      this.updateState('loading', false);
     }
   }
 
-  getCustomerList() {
-    return this.getState('customer-list') || [];
+  /** Outstanding completed sales for bulk payment preview. Does not toggle global loading. */
+  async getCustomerOutstandingForPayment(customerId) {
+    const id = Number(customerId);
+    if (!Number.isFinite(id) || id <= 0) {
+      return { orders: [], total_outstanding: 0 };
+    }
+    const result = await window.ipcRenderer.invoke('sales:get-customer-outstanding', id);
+    if (result && result.success) {
+      return {
+        orders: result.orders || [],
+        total_outstanding: Number(result.total_outstanding) || 0,
+      };
+    }
+    throw new Error(result?.error || 'Failed to load customer outstanding balance');
+  }
+
+  /**
+   * Bulk customer payment across outstanding orders. Refreshes sales order list on success; does not use global loading.
+   */
+  async bulkPayCustomerSales(payload) {
+    const result = await window.ipcRenderer.invoke('sales:bulk-pay-customer', payload);
+    if (result && result.success) {
+      await this.loadSalesOrders();
+      return result;
+    }
+    throw new Error(result?.error || 'Failed to record bulk payment');
   }
 
   getSalesOrderList() {
@@ -482,17 +700,13 @@ export class SalesVM extends ViewModel {
   async updateHoldOrderTableConfig(updates) {
     const config = this.getState('hold-order-table-config') || {};
     this.updateState('hold-order-table-config', { ...config, ...updates });
-    if (this.getState('loading')) return;
-    this.updateState('loading', true);
-    try {
-      await this.loadHoldOrders();
-    } finally {
-      this.updateState('loading', false);
-    }
+    // Always trigger loadHoldOrders - it will handle loading state internally
+    await this.loadHoldOrders();
   }
 
   async loadSalesOrders() {
-    if (this.getState('loading')) return;
+    // Remove loading guard - allow filters/search/pagination to always trigger reload
+    // Multiple concurrent requests are fine - the last one will set the final state
     this.updateState('loading', true);
     try {
       const config = this.getState('sales-order-table-config') || {};
@@ -502,8 +716,8 @@ export class SalesVM extends ViewModel {
         search: config.search,
         status: config.status,
         customer_id: config.customer_id,
-        payment_type: config.payment_type ?? config.payment_mode,
-        payment_mode: config.payment_type ?? config.payment_mode,
+        payment_type: config.payment_type || config.payment_mode,
+        payment_mode: config.payment_type || config.payment_mode,
         date_from: config.date_from,
         date_to: config.date_to,
         stat_filter: config.stat_filter,
@@ -524,7 +738,8 @@ export class SalesVM extends ViewModel {
   }
 
   async loadHoldOrders() {
-    if (this.getState('loading')) return;
+    // Remove loading guard - allow pagination/filter/search to always trigger reload
+    // Multiple concurrent requests are fine - the last one will set the final state
     this.updateState('loading', true);
     try {
       const config = this.getState('hold-order-table-config') || {};
@@ -574,21 +789,99 @@ export class SalesVM extends ViewModel {
         const snapshot = holdOrder.snapshot || holdOrder;
         const items = Array.isArray(snapshot.items) ? snapshot.items : (typeof holdOrder.items === 'string' ? (() => { try { return JSON.parse(holdOrder.items); } catch (e) { return []; } })() : (holdOrder.items || []));
         const chequeDetails = snapshot.cheque_details == null ? null : (typeof snapshot.cheque_details === 'string' ? (() => { try { return JSON.parse(snapshot.cheque_details); } catch (e) { return null; } })() : snapshot.cheque_details);
+        
+        // Use customer from snapshot if available, otherwise use customer_name from join
+        const customerFromSnapshot = snapshot.customer || (snapshot.current_sale && snapshot.current_sale.customer);
+        const customerName = (customerFromSnapshot && (customerFromSnapshot.name || customerFromSnapshot.full_name)) || holdOrder.customer_name || '';
+        const customerId = (customerFromSnapshot && customerFromSnapshot.id) || snapshot.customer_id || holdOrder.customer_id || null;
+        
+        const customerForSelect = customerId
+          ? {
+              id: customerId,
+              name: customerName,
+              full_name: customerName,
+              ...(customerFromSnapshot || {}) // Include any other customer props from snapshot
+            }
+          : null;
+
+        // Ensure customer is in customer-list (confirmation modal reads from there)
+        if (customerForSelect) {
+          const currentCustomerList = this.getState('customer-list') || [];
+          const customerExists = currentCustomerList.some(c => c.id === customerId);
+          if (!customerExists) {
+            // Add customer to the list so confirmation modal can find it
+            this.updateState('customer-list', [...currentCustomerList, customerForSelect]);
+          } else {
+            // Update existing customer in list with any additional props from snapshot
+            const updatedList = currentCustomerList.map(c =>
+              c.id === customerId ? { ...c, ...customerForSelect } : c
+            );
+            this.updateState('customer-list', updatedList);
+          }
+        }
+
+        this.updateState('customer-search-query', customerName || (customerId == null ? 'Walk-in' : ''));
+        this.updateState('selected-customer', customerForSelect);
+
+        // Walk-in customers cannot have withholding
+        const isWalkIn = this.isWalkInCustomer(customerForSelect) || (!customerForSelect && String(customerName || '').trim().toLowerCase() === 'walk-in');
+        const holdWithholdPctRaw = snapshot.withhold_percentage != null
+          ? snapshot.withhold_percentage
+          : holdOrder.withhold_percentage;
+        const holdWithholdPct =
+          holdWithholdPctRaw == null ? null : Number(holdWithholdPctRaw);
+        const snapshotWithholding =
+          holdWithholdPct != null && Number.isFinite(holdWithholdPct) && holdWithholdPct > 0;
+        
+        const orderDate = normalizeSaleDate(snapshot.sale_date || snapshot.order_date || holdOrder.order_date);
+        const paymentMode = snapshot.payment_mode || snapshot.payment_type || holdOrder.payment_mode || 'cash';
+        
         const currentSale = {
-          customer_id: snapshot.customer_id ?? holdOrder.customer_id ?? null,
-          customer: null,
-          sale_date: normalizeSaleDate(snapshot.sale_date ?? snapshot.order_date ?? holdOrder.order_date),
-          invoice_no: snapshot.invoice_no ?? holdOrder.invoice_no ?? '',
-          payment_mode: snapshot.payment_mode ?? snapshot.payment_type ?? holdOrder.payment_mode ?? 'cash',
-          is_withholding: (snapshot.withhold_percentage ?? holdOrder.withhold_percentage) != null && Number(snapshot.withhold_percentage ?? holdOrder.withhold_percentage) > 0,
-          withhold_reference: snapshot.withhold_reference ?? '',
-          first_payment: snapshot.first_payment ?? holdOrder.first_payment ?? null,
+          // Customer
+          customer_id: customerId,
+          customer: customerForSelect,
+          
+          // Order details (matching sales_orders table)
+          order_date: orderDate,
+          sale_date: orderDate, // Alias for UI consistency
+          invoice_no: snapshot.invoice_no || holdOrder.invoice_no || '',
+          remark: snapshot.remark || '',
+          
+          // Payment (matching sales_orders table)
+          payment_type: paymentMode,
+          payment_mode: paymentMode, // Alias for UI consistency
+          payment_status: 'unpaid', // Will be computed on checkout
+          
+          // Withholding (matching sales_orders table)
+          is_withholding: isWalkIn ? false : snapshotWithholding,
+          withhold_percentage: snapshotWithholding ? holdWithholdPct : null,
+          withhold_amount: null, // Will be computed
+          withhold_reference: isWalkIn ? '' : (snapshot.withhold_reference || ''),
+          withhold_ref: isWalkIn ? null : (snapshot.withhold_ref ?? snapshot.sales_invoice_no ?? null),
+          withhold_confirmation: false,
+          withhold_settled: false,
+          
+          // Financial (will be computed)
+          total_amount: 0,
+          amount_paid: 0,
+          received_amount: 0,
+          
+          // Payment details
+          first_payment: snapshot.first_payment != null ? snapshot.first_payment : (holdOrder.first_payment != null ? holdOrder.first_payment : null),
           cheque_details: chequeDetails,
+          
+          // Items
           items,
+          
+          // UI state
           error: null,
         };
         this.updateState('current-sale', currentSale);
         this.updateState('filtered-items', items);
+        // Keep VM withhold % in sync with the loaded hold (totals read this state key).
+        if (!isWalkIn && snapshotWithholding) {
+          this.updateState('withhold-percentage', holdWithholdPct);
+        }
         this.updateTab('current-sale');
         return holdOrder;
       }
@@ -646,9 +939,13 @@ export class SalesVM extends ViewModel {
         payment_type: currentSale.payment_mode,
         total_amount: netAmount,
         amount_paid: amountPaid,
-        withhold_percentage: currentSale.is_withholding ? Number(this.getState('withhold-percentage')) : null,
-        withhold_amount: totals.withhold_amount || null,
+        // Send 0 when unchecked — keep hold snapshot aligned with finalize path.
+        withhold_percentage: currentSale.is_withholding
+          ? Number(this.getState('withhold-percentage') ?? 0)
+          : 0,
+        withhold_amount: currentSale.is_withholding ? (totals.withhold_amount || 0) : 0,
         withhold_reference: currentSale.withhold_reference || null,
+        withhold_ref: currentSale.withhold_ref || null,
         first_payment: currentSale.payment_mode === 'credit' ? Number(currentSale.first_payment || 0) : null,
         cheque_details: currentSale.payment_mode === 'cheque' && currentSale.cheque_details ? { ...currentSale.cheque_details, amount: Number(currentSale.cheque_details.amount) } : null,
         remark: currentSale.remark || null,
@@ -753,11 +1050,11 @@ export class SalesVM extends ViewModel {
     }
   }
 
-  async confirmWithhold(orderId, sales_invoice_no) {
+  async confirmWithhold(orderId, withholdRef) {
     if (this.getState('loading')) return;
     this.updateState('loading', true);
     try {
-      const result = await window.ipcRenderer.invoke('sales:confirm-withhold', { orderId, sales_invoice_no });
+      const result = await window.ipcRenderer.invoke('sales:confirm-withhold', { orderId, withhold_ref: withholdRef });
       if (result && result.success) {
         await this.loadOrderDetails(orderId);
         await this.loadSalesOrders();

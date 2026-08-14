@@ -15,21 +15,56 @@ import { showAlert } from '../../utils/ModalHelpers';
 
 const { Row, StatefulRow } = Liteframe;
 
-export function PurchaseUI() {
+export function PurchaseUI(props = {}) {
+  const { router, navigationVM } = props;
   const viewModel = new PurchaseVM();
 
-  const render = (props) => {
-    const leftPanelCollapsed = props.viewModel.getState('left-panel-collapsed');
+  const render = (renderProps) => {
+    const mergedProps = { ...renderProps, router, navigationVM };
+    const leftPanelCollapsed = mergedProps.viewModel.getState('left-panel-collapsed');
 
-    props.ensureLocalStateKey('isExpanded', false);
+    mergedProps.ensureLocalStateKey('isExpanded', false);
+
+    // Handle cross-module navigation: open Order History with specific order (from PayablesTab)
+    const pendingOpen = navigationVM?.getState?.('pending-purchase-open');
+    if (pendingOpen && mergedProps.viewModel.getActiveTab() !== 'order-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateTab('order-history');
+        mergedProps.setLocalState('isExpanded', true);
+      }, 0);
+    }
+
+    // Handle cross-module navigation: open Order History with date filter (from Dashboard)
+    const pendingFilter = navigationVM?.getState?.('pending-purchase-filter');
+    if (pendingFilter && mergedProps.viewModel.getActiveTab() !== 'order-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateTab('order-history');
+        mergedProps.viewModel.updateOrderTableConfig({
+          date_from: pendingFilter.date_from,
+          date_to: pendingFilter.date_to,
+          offset: 0
+        });
+        mergedProps.setLocalState('isExpanded', true);
+        if (navigationVM) navigationVM.updateState('pending-purchase-filter', null);
+      }, 0);
+    } else if (pendingFilter && mergedProps.viewModel.getActiveTab() === 'order-history') {
+      setTimeout(() => {
+        mergedProps.viewModel.updateOrderTableConfig({
+          date_from: pendingFilter.date_from,
+          date_to: pendingFilter.date_to,
+          offset: 0
+        });
+        if (navigationVM) navigationVM.updateState('pending-purchase-filter', null);
+      }, 0);
+    }
     
     return Row({ class: 'w-full h-full flex flex-col overflow-hidden'}, [
       CardHeader({ 
-        class: 'px-6 text-gray-900 text-md font-semibold flex items-center h-12 flex-shrink-0' 
+        class: 'px-4 md:px-6 text-gray-900 text-md font-semibold flex items-center h-11 flex-shrink-0' 
       }, 'Purchase Management'),
-      CardBody({ class: 'p-6 flex flex-row h-full overflow-hidden gap-4'}, [
-        LeftPanel(props),
-        RightPanel(props)
+      CardBody({ class: 'px-3 md:px-4 py-2 flex flex-row h-full overflow-hidden gap-3'}, [
+        LeftPanel(mergedProps),
+        RightPanel(mergedProps)
       ]),
     ])
   } 
@@ -37,7 +72,7 @@ export function PurchaseUI() {
   return StatefulRow({ 
     class: 'w-full h-full overflow-hidden', 
     viewModel, 
-    stateKeys: ['loading'] 
+    stateKeys: ['loading', 'purchase-tab', 'supplier-list', 'supplier-search-query', 'supplier-dropdown-loading', 'product-list', 'product-dropdown-loading'] 
   }, render)
 }
 
@@ -72,12 +107,12 @@ function RightPanel(props) {
     }
   };
 
-  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-4 min-h-0 overflow-hidden border border-gray-200 rounded-lg min-w-0` }, [
+  return Row({ class: `${isExpanded ? 'flex-1' : 'flex-2/3'} flex flex-col gap-2 min-h-0 overflow-x-visible overflow-y-hidden border border-gray-200 rounded-lg min-w-0` }, [
     PurchaseTabs(props),
     Row(
-      { class: 'flex justify-between pt-4 px-6 items-center' },
+      { class: 'flex flex-wrap justify-between px-3 md:px-6 py-1 items-center gap-2' },
       [
-        Row({ class: 'flex items-center gap-4' }, [
+        Row({ class: 'flex flex-wrap items-center gap-2 md:gap-3' }, [
           Button({ variant: 'outline', class: 'text-nowrap', onClick: handleImportPurchaseOrder }, 'Import Purchase Order'),
           purchaseTab === 'order-history' ? Button({ variant: 'secondary', class: 'text-nowrap', onClick: handleExportPurchaseOrder }, 'Export Purchase Order') : null
         ]),
@@ -121,15 +156,15 @@ function PurchaseTabs(props) {
 }
 
 function PurchaseTabContents(props) {
-  // const activeTab = props.getLocalState('purchase-tab');
   const activeTab = props.viewModel.getActiveTab();
+  const pendingOpen = props.navigationVM?.getState?.('pending-purchase-open');
 
   const tabContent = () => {
     switch(activeTab) {
       case 'current-order':
         return CurrentOrder(props);
       case 'order-history':
-        return OrderHistory(props);
+        return OrderHistory({ ...props, pendingPurchaseOpen: pendingOpen });
       case 'hold-orders':
         return HoldOrders(props);
       default:
@@ -137,7 +172,7 @@ function PurchaseTabContents(props) {
     }
   }
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden'}, [
+  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-auto'}, [
     tabContent()
   ])
 }

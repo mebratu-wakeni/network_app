@@ -98,13 +98,16 @@ export function SalesIpcHandlers() {
   ipcMain.handle('sales:process-sale', async (_event, payload) => {
     try {
       const { currentSale, totals } = payload || {}
-      if (!currentSale || !currentSale.items || currentSale.items.length === 0) {
+      if (!currentSale.customer_id || !currentSale.items || currentSale.items.length === 0) {
         return { success: false, error: 'Customer and at least one item are required' }
       }
 
-      const order_date = normalizeDate(currentSale.sale_date || currentSale.order_date)
+      const order_date = normalizeDate(currentSale.order_date || currentSale.sale_date)
       const payment_type = currentSale.payment_mode || currentSale.payment_type || 'cash'
-      const withhold_percentage = currentSale.is_withholding && totals?.withhold_percentage != null ? Number(totals.withhold_percentage) : null
+      // Send 0 when unchecked so API never treats missing intent as an applied withhold.
+      const withhold_percentage = currentSale.is_withholding
+        ? Number(totals?.withhold_percentage ?? 0)
+        : 0
       let amount_paid = currentSale.first_payment != null ? Number(currentSale.first_payment) : null
       if (payment_type === 'cash') amount_paid = totals?.net_amount ?? 0
       if (payment_type === 'cheque' && currentSale.cheque_details?.amount != null) amount_paid = Number(currentSale.cheque_details.amount)
@@ -113,7 +116,9 @@ export function SalesIpcHandlers() {
         customer_id: currentSale.customer_id != null && currentSale.customer_id !== '' ? Number(currentSale.customer_id) : null,
         order_date,
         invoice_no: currentSale.invoice_no || null,
-        remark: currentSale.remark || (currentSale.withhold_reference ? `Withhold ref: ${currentSale.withhold_reference}` : null),
+        withhold_ref: currentSale.withhold_ref || null,
+        remark: currentSale.remark || null,
+        withhold_reference: (currentSale.withhold_reference || '').trim() || null,
         payment_type,
         withhold_percentage,
         amount_paid: amount_paid ?? 0,
@@ -150,9 +155,27 @@ export function SalesIpcHandlers() {
     }
   })
 
-  ipcMain.handle('sales:confirm-withhold', async (_event, { orderId, sales_invoice_no }) => {
+  ipcMain.handle('sales:get-customer-outstanding', async (_event, customerId) => {
     try {
-      return await salesManager.confirmWithhold(orderId, { sales_invoice_no }, getToken())
+      return await salesManager.getCustomerOutstandingForPayment(customerId, getToken())
+    } catch (error) {
+      console.error('[Sales IPC] get-customer-outstanding:', error)
+      return { success: false, orders: [], total_outstanding: 0, error: error.message }
+    }
+  })
+
+  ipcMain.handle('sales:bulk-pay-customer', async (_event, body) => {
+    try {
+      return await salesManager.bulkPayCustomerSales(body || {}, getToken())
+    } catch (error) {
+      console.error('[Sales IPC] bulk-pay-customer:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('sales:confirm-withhold', async (_event, { orderId, withhold_ref }) => {
+    try {
+      return await salesManager.confirmWithhold(orderId, { withhold_ref }, getToken())
     } catch (error) {
       console.error('[Sales IPC] confirm-withhold:', error)
       return { success: false, error: error.message }

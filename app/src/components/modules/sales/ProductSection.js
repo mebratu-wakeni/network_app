@@ -13,18 +13,19 @@ const formatExpiry = (d) => (d ? String(d).slice(0, 10) : '—');
 export function ProductSection(props) {
   const inventoryItems = props.viewModel.getState('product-list') || [];
   const loading = props.viewModel.getState('loading');
+  const productDropdownLoading = props.viewModel.getState('product-dropdown-loading') === true;
   const canEditSalesPrice = permissionChecker.hasRule('CanEditSalesPrice');
   props.ensureLocalStateKey('showProductDropdown', false);
   props.ensureLocalStateKey('productSearchQuery', '');
   const showProductDropdown = props.getLocalState('showProductDropdown');
   const productSearchQuery = props.getLocalState('productSearchQuery') || '';
-  const searchQuery = props.viewModel.getState('product-search-query') || '';
+  const vmProductSearch = props.viewModel.getState('product-search-query') || '';
 
   const handleQuantityChange = (e) => props.viewModel.updateProductForm('quantity', e.target.value);
   const handleUnitPriceChange = (e) => props.viewModel.updateProductForm('unit_price', e.target.value);
 
-  const handleProductSearch = async (value) => {
-    await props.viewModel.getProducts(value);
+  const handleProductSearch = (value) => {
+    props.viewModel.updateProductDropdownSearch(value);
     props.setLocalState('productSearchQuery', value);
   };
 
@@ -41,46 +42,62 @@ export function ProductSection(props) {
     props.setLocalState('productSearchQuery', '');
   };
 
-  const SearchProduct = () =>
-    DropdownSearch({
+  const SearchProduct = () => {
+    const menuRows = [];
+    if (productDropdownLoading) {
+      menuRows.push(Row({ key: 'prod-dd-loading', class: 'px-3 py-2 text-xs text-gray-500 italic' }, 'Searching…'));
+    } else if (inventoryItems.length === 0) {
+      menuRows.push(
+        Row(
+          { key: 'prod-dd-empty', class: 'px-3 py-2 text-xs text-gray-500' },
+          vmProductSearch.trim() ? 'No inventory matches your search.' : 'Type to search inventory (name, code, batch).'
+        )
+      );
+    } else {
+      menuRows.push(
+        ...inventoryItems.map((inv) => {
+          const name = inv.name || 'Unknown';
+          const code = inv.productCode || inv.product_code || 'N/A';
+          const price = inv.sellingPrice != null ? `Br ${financeFormat(inv.sellingPrice)}` : '—';
+          const batch = inv.batchNumber || inv.batch_number || '—';
+          const expiry = formatExpiry(inv.expiryDate || inv.expiry_date);
+          const availableQty = inv.quantity != null ? Number(inv.quantity) : 0;
+          const outOfStock = availableQty <= 0;
+          return DropdownSearchItem({
+            onSelect: () => !outOfStock && handleProductSelect(inv),
+            key: inv.id,
+            class: `py-2 ${outOfStock ? 'opacity-60 cursor-not-allowed' : ''}`,
+          }, [
+            Row({ class: 'flex flex-col gap-0.5' }, [
+              Row({ class: 'flex items-center justify-between gap-2 text-sm' }, [
+                Row({ class: 'font-semibold text-gray-900 truncate min-w-0' }, name),
+                Row({ class: 'font-medium text-gray-700 shrink-0' }, price),
+                Row({ class: 'shrink-0 inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600' }, code),
+              ]),
+              Row({ class: 'flex items-center justify-between gap-2 text-xs text-gray-500' }, [
+                Row({}, `Batch: ${batch}`),
+                Row({}, `Exp: ${expiry}`),
+                Row({ class: outOfStock ? 'text-red-600 font-medium' : 'text-gray-600' }, outOfStock ? 'Out of stock' : `Available: ${availableQty}`),
+              ]),
+            ]),
+          ]);
+        })
+      );
+    }
+    return DropdownSearch({
       open: showProductDropdown,
       value: productSearchQuery,
       placeholder: 'Search inventory (name, code, batch)...',
       onInput: handleProductSearch,
-      onFocus: async () => {
-        await props.viewModel.getProducts(searchQuery);
+      onFocus: () => {
+        props.viewModel.loadProductsForSaleDropdown(vmProductSearch);
         props.setLocalState('showProductDropdown', true);
       },
       getOpenState: () => props.getLocalState('showProductDropdown'),
       setOpenState: () => props.setLocalState('showProductDropdown', false),
       class: 'w-full relative',
-    }, inventoryItems.map((inv) => {
-      const name = inv.name || 'Unknown';
-      const code = inv.productCode || inv.product_code || 'N/A';
-      const price = inv.sellingPrice != null ? `Br ${financeFormat(inv.sellingPrice)}` : '—';
-      const batch = inv.batchNumber || inv.batch_number || '—';
-      const expiry = formatExpiry(inv.expiryDate || inv.expiry_date);
-      const availableQty = inv.quantity != null ? Number(inv.quantity) : 0;
-      const outOfStock = availableQty <= 0;
-      return DropdownSearchItem({
-        onSelect: () => !outOfStock && handleProductSelect(inv),
-        key: inv.id,
-        class: `py-2 ${outOfStock ? 'opacity-60 cursor-not-allowed' : ''}`,
-      }, [
-        Row({ class: 'flex flex-col gap-0.5' }, [
-          Row({ class: 'flex items-center justify-between gap-2 text-sm' }, [
-            Row({ class: 'font-semibold text-gray-900 truncate min-w-0' }, name),
-            Row({ class: 'font-medium text-gray-700 shrink-0' }, price),
-            Row({ class: 'shrink-0 inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600' }, code),
-          ]),
-          Row({ class: 'flex items-center justify-between gap-2 text-xs text-gray-500' }, [
-            Row({}, `Batch: ${batch}`),
-            Row({}, `Exp: ${expiry}`),
-            Row({ class: outOfStock ? 'text-red-600 font-medium' : 'text-gray-600' }, outOfStock ? 'Out of stock' : `Available: ${availableQty}`),
-          ]),
-        ]),
-      ]);
-    }));
+    }, menuRows);
+  };
 
   return Row({ class: 'flex-4/9 flex flex-col min-h-0 overflow-hidden border border-gray-200 rounded-lg' }, [
     CardHeader({

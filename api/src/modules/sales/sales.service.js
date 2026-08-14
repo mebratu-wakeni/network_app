@@ -2,6 +2,8 @@
  * Service: Business logic for sales orders.
  * createOrder builds sales_orders + sales_order_items payload and delegates to repository.
  */
+import { assertFiscalYearOpen } from '../../services/fiscal-year.guard.js'
+
 export class SalesService {
   constructor(repository) {
     this.repository = repository
@@ -10,12 +12,14 @@ export class SalesService {
   /**
    * Create sales order with items. Each item is persisted in sales_order_items; inventory is decremented.
    */
-  async createOrder(payload, user) {
+  async createOrder(payload, user, tenantId) {
     const {
       customer_id,
       order_date,
       invoice_no,
+      withhold_ref,
       remark,
+      withhold_reference,
       payment_type,
       withhold_percentage,
       amount_paid,
@@ -52,13 +56,37 @@ export class SalesService {
     if (paid >= received_amount - 0.009 && paid > 0) payment_status = 'paid'
     else if (paid > 0) payment_status = 'partial'
 
-    const receipt_no = await this.repository.generateNextSalesReceiptNumber()
+    const receipt_no = await this.repository.generateNextSalesReceiptNumber(tenantId)
+
+    // Optional note only (e.g. customer will provide withholding receipt later). Not the same as withhold_ref.
+    const hasWithholdRef = withhold_reference && String(withhold_reference).trim()
+    const withholdRefTrimmed = hasWithholdRef ? String(withhold_reference).trim() : null
+    let finalRemark = remark ?? null
+    if (withholdRefTrimmed) {
+      finalRemark = finalRemark
+        ? `${finalRemark}\nWithhold Ref: ${withholdRefTrimmed}`
+        : `Withhold Ref: ${withholdRefTrimmed}`
+    }
+
+    const trimmedWithholdRef =
+      withhold_ref != null && String(withhold_ref).trim() !== ''
+        ? String(withhold_ref).trim()
+        : null
+    const hasWithhold = Number(withhold_amount || 0) > 0.009
+    const resolvedWithholdRef = hasWithhold ? trimmedWithholdRef : null
+    // Enforced: non-null withhold_ref ⇒ withhold_confirmation true; promise-only ⇒ both null/false.
+    const withholdConfirmed = Boolean(resolvedWithholdRef)
+
+    // Enforce fiscal year: block if no open year covers the order date
+    const fy = await assertFiscalYearOpen(this.repository.knex, tenantId, order_date)
 
     const orderPayload = {
       customer_id: customer_id ?? null,
       order_date,
+      fiscal_year: fy.fiscal_year,
       invoice_no: invoice_no ?? null,
-      remark: remark ?? null,
+      withhold_ref: resolvedWithholdRef,
+      remark: finalRemark,
       payment_type,
       payment_status,
       total_amount,
@@ -67,8 +95,7 @@ export class SalesService {
       withhold_amount: withhold_amount || null,
       received_amount,
       withhold_settled: false,
-      withhold_confirmation: false,
-      sales_invoice_no: null,
+      withhold_confirmation: withholdConfirmed,
       receipt_no,
       status: 'completed',
       is_reversed: false,
@@ -104,6 +131,7 @@ export class SalesService {
     }
 
     const result = await this.repository.createOrderWithItems(
+      tenantId,
       { order: orderPayload, items: enrichedItems, initialPayment },
       user?.id ?? null
     )
@@ -128,15 +156,15 @@ export class SalesService {
   /**
    * Get order details including items (from sales_orders + sales_order_items).
    */
-  async getOrderDetails(orderId) {
-    return this.repository.getOrderById(Number(orderId))
+  async getOrderDetails(tenantId, orderId) {
+    return this.repository.getOrderById(tenantId, Number(orderId))
   }
 
   /**
    * Get receipt for a sales order (built from order + items + customer).
    */
-  async getOrderReceipt(id) {
-    const receipt = await this.repository.getReceiptByOrderId(id)
+  async getOrderReceipt(tenantId, id) {
+    const receipt = await this.repository.getReceiptByOrderId(tenantId, id)
     if (!receipt) {
       const err = new Error('Receipt not found')
       err.status = 404
@@ -146,18 +174,18 @@ export class SalesService {
   }
 
   /** Get withhold percentage from system_settings (same global key as purchase). */
-  async getWithholdPercentage() {
-    const value = await this.repository.getWithholdPercentageSetting()
+  async getWithholdPercentage(tenantId) {
+    const value = await this.repository.getWithholdPercentageSetting(tenantId)
     return { setting_name: 'withhold_percentage', withhold_percentage: value }
   }
 
   /** List orders with filters and stats. */
-  async listOrders(params) {
-    return this.repository.listOrders(params)
+  async listOrders(tenantId, params) {
+    return this.repository.listOrders(tenantId, params)
   }
 
   /** Create hold order: full snapshot + index columns for list. */
-  async createHoldOrder(snapshot, user) {
+  async createHoldOrder(tenantId, snapshot, user) {
     const indexColumns = {
       customer_id: snapshot.customer_id ?? null,
       order_date: snapshot.order_date ?? snapshot.sale_date,
@@ -165,30 +193,69 @@ export class SalesService {
       payment_type: snapshot.payment_type ?? snapshot.payment_mode ?? 'cash',
       encoder_fullname: user?.display_name ?? user?.full_name ?? null
     }
-    const row = await this.repository.createHoldOrder(snapshot, indexColumns, user?.id ?? null)
+    const row = await this.repository.createHoldOrder(tenantId, snapshot, indexColumns, user?.id ?? null)
     return { id: row.id, ...indexColumns, created_at: row.created_at }
   }
 
   /** List hold orders. */
-  async listHoldOrders(params) {
-    return this.repository.listHoldOrders(params)
+  async listHoldOrders(tenantId, params) {
+    return this.repository.listHoldOrders(tenantId, params)
   }
 
   /** Get one hold order (snapshot for restore). */
-  async getHoldOrderById(holdOrderId) {
-    return this.repository.getHoldOrderById(Number(holdOrderId))
+  async getHoldOrderById(tenantId, holdOrderId) {
+    return this.repository.getHoldOrderById(tenantId, Number(holdOrderId))
   }
 
   /** Archive hold order. */
-  async archiveHoldOrder(holdOrderId) {
-    return this.repository.archiveHoldOrder(Number(holdOrderId))
+  async archiveHoldOrder(tenantId, holdOrderId) {
+    return this.repository.archiveHoldOrder(tenantId, Number(holdOrderId))
+  }
+
+  /** Outstanding completed sales for one customer (for bulk payment preview). */
+  async getCustomerOutstandingForPayment(tenantId, customerId) {
+    return this.repository.getCustomerOutstandingForPayment(tenantId, Number(customerId))
+  }
+
+  /**
+   * Apply one customer payment across outstanding orders (FIFO, LIFO, or manual allocations).
+   */
+  async recordBulkCustomerSales(tenantId, payload, userId = null) {
+    const {
+      customer_id: customerId,
+      payment_amount: paymentAmount,
+      allocation,
+      manual_allocations: manualAllocations,
+      payment_mode,
+      payment_date,
+      cheque_details,
+      notes
+    } = payload
+
+    const paymentDate = payment_date || new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, tenantId, paymentDate)
+
+    return this.repository.recordBulkCustomerPayment(tenantId, {
+      customerId: Number(customerId),
+      paymentAmount: Number(paymentAmount),
+      allocation: allocation || 'fifo',
+      manualAllocations: manualAllocations || null,
+      paymentPayload: {
+        payment_mode: payment_mode || 'cash',
+        payment_date,
+        cheque_details: cheque_details || null,
+        notes: notes ?? null
+      },
+      userId
+    })
   }
 
   /** Record payment on a sales order (supports cash and cheque with details). */
-  async recordPayment(orderId, payload, userId = null) {
+  async recordPayment(tenantId, orderId, payload, userId = null) {
     const amount = Number(payload.payment_amount)
     const paymentMode = (payload.payment_mode || payload.payment_type || 'cash').toLowerCase()
     const paymentDate = payload.payment_date || new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, tenantId, paymentDate)
     const chequeDetails = paymentMode === 'cheque' ? payload.cheque_details : null
     const paymentData = {
       amount,
@@ -199,27 +266,35 @@ export class SalesService {
       cheque_no: chequeDetails?.cheque_number || chequeDetails?.cheque_no || null,
       cheque_date: chequeDetails?.cheque_date || null,
     }
-    return this.repository.recordPayment(Number(orderId), paymentData, userId)
+    return this.repository.recordPayment(tenantId, Number(orderId), paymentData, userId)
   }
 
-  /** Confirm withhold: set sales_invoice_no and withhold_confirmation. */
-  async confirmWithhold(orderId, sales_invoice_no) {
-    return this.repository.confirmWithhold(Number(orderId), sales_invoice_no)
+  /** Confirm withhold: requires non-empty withhold_ref; sets withhold_confirmation true. */
+  async confirmWithhold(tenantId, orderId, withholdRef) {
+    const t = withholdRef != null ? String(withholdRef).trim() : ''
+    if (!t) {
+      const err = new Error('Withhold ref is required')
+      err.status = 400
+      throw err
+    }
+    return this.repository.confirmWithhold(tenantId, Number(orderId), t)
   }
 
-  /** Rollback withhold: clear sales_invoice_no and withhold_confirmation. */
-  async rollbackWithhold(orderId) {
-    return this.repository.rollbackWithhold(Number(orderId))
+  /** Rollback withhold: clear withhold_ref and withhold_confirmation. */
+  async rollbackWithhold(tenantId, orderId) {
+    return this.repository.rollbackWithhold(tenantId, Number(orderId))
   }
 
   /** Reverse sales order: restore inventory, set is_reversed. */
-  async reverseOrder(orderId, user) {
-    return this.repository.reverseOrder(Number(orderId), user?.id ?? null)
+  async reverseOrder(tenantId, orderId, user) {
+    const reversalDate = new Date().toISOString().split('T')[0]
+    await assertFiscalYearOpen(this.repository.knex, tenantId, reversalDate)
+    return this.repository.reverseOrder(tenantId, Number(orderId), user?.id ?? null)
   }
 
   /** Export sales order to CSV. Grouped by order: order meta only on first row of each order (like import purchase preview). */
-  async exportSalesOrder() {
-    const result = await this.repository.exportSalesOrder()
+  async exportSalesOrder(tenantId) {
+    const result = await this.repository.exportSalesOrder(tenantId)
     const rows = result.export || []
     
     // CSV Headers - serial # first, then order meta, then line item columns

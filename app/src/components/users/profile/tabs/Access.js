@@ -5,9 +5,6 @@ export function UserAccess(props) {
   const rules = props.viewModel.getState('user-rules').filter(rt => rt.isDirect || rt.roles.length > 0);
   const assignedRoles = props.viewModel.getState('user-roles').filter(rt => rt.isAssigned).map(rt => rt.role);
 
-  console.log('user rules: ', rules);
-  console.log('user rules: ', assignedRoles)
-
   return Row({ class: 'flex flex-col gap-6' }, [
     /* Assigned Roles - Full Width on Top */
     Row({ class: 'w-full flex flex-col bg-white border border-gray-300 rounded-xl shadow-sm p-8' }, [

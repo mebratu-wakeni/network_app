@@ -7,8 +7,9 @@ export const errorHandler = (err, _req, res, _next) => {
   const message = err?.message || 'Internal Server Error'
   const status = err?.status || 500
   
-  // Include validation details if present
+  // Include validation details and error code if present
   const response = { ok: false, error: message }
+  if (err?.code) response.code = err.code
   if (err?.details && Array.isArray(err.details)) {
     response.details = err.details
   }

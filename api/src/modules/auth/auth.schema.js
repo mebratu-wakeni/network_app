@@ -14,9 +14,12 @@ export const registerSchema = z.object({
 })
 
 /**
- * Schema for login
+ * Schema for login.
+ * client_code identifies which tenant this login belongs to (set once by the
+ * desktop app's Setup Wizard and sent silently with every login request).
  */
 export const loginSchema = z.object({
+  client_code: z.string().min(1, 'Client code is required').trim().toUpperCase(),
   username: z.string().min(1, 'Username is required').trim().toLowerCase(),
   password: z.string().min(1, 'Password is required')
 })

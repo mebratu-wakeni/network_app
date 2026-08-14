@@ -1,4 +1,7 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import { apiFetch } from '../config/apiFetch.js';
+import axios from 'axios';
+import FormData from 'form-data';
 
 /**
  * InventoryManager - Handles all API communication for inventory management
@@ -84,23 +87,24 @@ class InventoryManager {
    * @param {string} token - Auth token
    * @param {string} customerType - Optional: 'supplier' (default for borrow-from), 'all' (for borrow-to), or any specific customer type
    */
-  async getPartners(token, customerType = 'supplier') {
+  async getPartners(token, customerType = 'supplier', options = {}) {
     try {
+      const limit = options.limit != null ? Number(options.limit) : 1000
+      const search = options.search != null ? String(options.search) : ''
+      const preferWalkIn = options.prefer_walk_in === true ? '&prefer_walk_in=1' : ''
+      const searchParam = search.trim() !== '' ? `&search=${encodeURIComponent(search.trim())}` : ''
+      const limitParam = `limit=${encodeURIComponent(String(limit))}`
       // For borrow-to operations, we need all customers, not just suppliers
-      const url = customerType === 'all' 
-        ? `${getApiUrl('/customers')}?limit=1000&offset=0`
-        : `${getApiUrl('/customers')}?customer_type=${customerType}&limit=1000&offset=0`;
-      console.log('[InventoryManager] getPartners - API URL:', url);
-      
-      const response = await fetch(url, {
+      const url = customerType === 'all'
+        ? `${getApiUrl('/customers')}?${limitParam}&offset=0${searchParam}${preferWalkIn}`
+        : `${getApiUrl('/customers')}?customer_type=${encodeURIComponent(customerType)}&${limitParam}&offset=0${searchParam}${preferWalkIn}`;
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
-
-      console.log('[InventoryManager] getPartners - Response status:', response.status, response.statusText);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -109,8 +113,6 @@ class InventoryManager {
       }
 
       const data = await response.json();
-      console.log('[InventoryManager] getPartners - Success, customers count:', data.customers?.length || 0);
-      
       // Transform customers to partners format - include all relevant fields
       const partners = (data.customers || []).map(customer => ({
         id: customer.id,
@@ -202,12 +204,7 @@ class InventoryManager {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    console.log(`[API Request] ${options.method || 'GET'} ${url}`, {
-      hasToken: !!token,
-      bodyLength: body?.length
-    });
-
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method: options.method || 'GET',
       headers,
       body: body
@@ -230,7 +227,6 @@ class InventoryManager {
       throw error;
     }
 
-    console.log('[API Request] Success:', { ok: data.ok, success: data.success });
     return data;
   }
 
@@ -247,11 +243,11 @@ class InventoryManager {
       return {
         success: response.ok === true || response.success === true,
         products: response.products || response.data || [],
-        total: response.total || 0
+        total: response.total || 0,
+        stats: response.stats || { outOfStock: 0, lowStock: 0 }
       };
     } catch (error) {
       // Fallback to mock data when API is not available
-      console.log('API not available, using mock products data');
       const mockProducts = this.getMockProducts();
       const { limit = 10, offset = 0, search = '' } = searchParams || {};
       
@@ -273,7 +269,8 @@ class InventoryManager {
       return {
         success: true,
         products: paginated,
-        total: total
+        total: total,
+        stats: { outOfStock: 0, lowStock: 0 }
       };
     }
   }
@@ -401,8 +398,6 @@ class InventoryManager {
    */
   async createProduct(productData, token) {
     try {
-      console.log('[Create Product] Sending request with data:', JSON.stringify(productData, null, 2));
-      
       const response = await this.apiRequest('/products/create', {
         method: 'POST',
         body: JSON.stringify(productData),
@@ -441,8 +436,6 @@ class InventoryManager {
    */
   async updateProduct(productId, productData, token) {
     try {
-      console.log('[Update Product] Sending request with data:', JSON.stringify(productData, null, 2));
-      
       const response = await this.apiRequest(`/products/${productId}`, {
         method: 'PUT',
         body: JSON.stringify(productData),
@@ -479,8 +472,6 @@ class InventoryManager {
    */
   async deleteProduct(productId, token) {
     try {
-      console.log('[Delete Product] Deleting product:', productId);
-      
       const response = await this.apiRequest(`/products/${productId}`, {
         method: 'DELETE',
       }, token);
@@ -514,7 +505,7 @@ class InventoryManager {
       
       const url = `${getApiUrl('/products/export')}?${params.toString()}`;
       
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -554,7 +545,7 @@ class InventoryManager {
       
       const url = `${getApiUrl('/inventories/export')}?${params.toString()}`;
       
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -588,8 +579,6 @@ class InventoryManager {
         body: JSON.stringify({ products }),
       }, token);
 
-      console.log('[Bulk Import] API Response:', JSON.stringify(response, null, 2));
-
       // Log failed results for debugging
       if (response.results && response.results.length > 0) {
         const failed = response.results.filter(r => !r.success);
@@ -622,6 +611,96 @@ class InventoryManager {
         stack: error.stack
       });
       // Re-throw the error instead of returning mock data
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk import products from multipart CSV (parse/validate on API)
+   * @param {Uint8Array|ArrayBuffer|number[]} fileBuffer
+   */
+  async bulkImportProductsUpload(fileBuffer, fileName, token) {
+    try {
+      const form = new FormData();
+      form.append('file', Buffer.from(fileBuffer), fileName || 'products.csv');
+      const url = getApiUrl('/products/bulk-import-upload');
+      const res = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token}`
+        },
+        maxBodyLength: 55 * 1024 * 1024,
+        maxContentLength: 55 * 1024 * 1024
+      });
+      const data = res.data;
+      return {
+        success: data.ok !== false && data.success !== false,
+        summary: data.summary || {},
+        results: data.results || [],
+        rowErrors: data.rowErrors,
+        validationFailed: data.validationFailed
+      };
+    } catch (error) {
+      if (error.response?.data) {
+        const d = error.response.data;
+        return {
+          success: false,
+          error: d.error || d.message || error.message,
+          summary: d.summary,
+          results: d.results,
+          rowErrors: d.rowErrors,
+          validationFailed: d.validationFailed
+        };
+      }
+      console.error('Error bulk importing products (upload):', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk import stock from multipart CSV (validate + all-or-nothing on API)
+   */
+  async bulkImportStockUpload(fileBuffer, fileName, fields, token) {
+    const { reason, purchase_date, acquisition_type } = fields || {};
+    try {
+      const form = new FormData();
+      form.append('file', Buffer.from(fileBuffer), fileName || 'stock.csv');
+      if (reason) form.append('reason', reason);
+      if (purchase_date) form.append('purchase_date', purchase_date);
+      if (acquisition_type) form.append('acquisition_type', acquisition_type);
+
+      const url = getApiUrl('/inventories/bulk-import-upload');
+      const res = await axios.post(url, form, {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token}`
+        },
+        maxBodyLength: 55 * 1024 * 1024,
+        maxContentLength: 55 * 1024 * 1024
+      });
+      const data = res.data;
+      return {
+        success: data.ok !== false && data.success !== false,
+        summary: data.summary || {},
+        results: data.results || [],
+        rowErrors: data.rowErrors,
+        validationFailed: data.validationFailed,
+        atomicFailed: data.atomicFailed
+      };
+    } catch (error) {
+      if (error.response?.data) {
+        const d = error.response.data;
+        return {
+          success: false,
+          error: d.error || d.message || error.message,
+          summary: d.summary,
+          results: d.results,
+          rowErrors: d.rowErrors,
+          validationFailed: d.validationFailed,
+          atomicFailed: d.atomicFailed
+        };
+      }
+      console.error('Error bulk importing stock (upload):', error);
       throw error;
     }
   }
@@ -692,14 +771,10 @@ class InventoryManager {
    */
   async createBorrowedFromStock(borrowData, token) {
     try {
-      console.log('[InventoryManager] createBorrowedFromStock - Payload:', JSON.stringify(borrowData, null, 2));
-      
       const response = await this.apiRequest('/inventories/borrow-from', {
         method: 'POST',
         body: JSON.stringify(borrowData),
       }, token);
-
-      console.log('[InventoryManager] createBorrowedFromStock - Response:', JSON.stringify(response, null, 2));
 
       return {
         success: response.ok === true || response.success === true,
@@ -888,7 +963,6 @@ class InventoryManager {
    */
   async processBorrowFromReturn(returnData, token) {
     try {
-      console.log('[InventoryManager] processBorrowFromReturn input:', typeof returnData, Array.isArray(returnData), JSON.stringify(returnData));
       const response = await this.apiRequest('/inventories/borrow-from/return', {
         method: 'POST',
         body: JSON.stringify(returnData),
@@ -899,7 +973,6 @@ class InventoryManager {
         result: response.result || response.data || null,
         error: response.error || null
       };
-      console.log('[InventoryManager] processBorrowFromReturn response success:', out.success, 'result type:', typeof out.result, Array.isArray(out.result));
       return out;
     } catch (error) {
       console.error('[InventoryManager] Error processing borrow from return:', error);
@@ -937,7 +1010,6 @@ class InventoryManager {
       };
     } catch (error) {
       // Fallback to mock response when API is not available
-      console.log('API not available, using mock bulk import stock response');
       const successful = stockItems.length;
       return {
         success: true,
@@ -971,7 +1043,6 @@ class InventoryManager {
       };
     } catch (error) {
       // Fallback to mock response when API is not available
-      console.log('API not available, using mock update stock response');
       return {
         success: true,
         stock: { id: stockId, ...stockData }
@@ -1054,7 +1125,7 @@ class InventoryManager {
       const queryString = queryParams.toString();
       const url = `/bin-cards/product/${productId}/export${queryString ? `?${queryString}` : ''}`;
 
-      const response = await fetch(getApiUrl(url), {
+      const response = await apiFetch(getApiUrl(url), {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

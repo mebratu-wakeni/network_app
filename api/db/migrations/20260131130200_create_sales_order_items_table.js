@@ -10,6 +10,7 @@
 export const up = async (knex) => {
   await knex.schema.createTable('sales_order_items', (t) => {
     t.bigIncrements('id').primary()
+    t.bigInteger('tenant_id').unsigned().notNullable()
 
     t.bigInteger('sales_order_id').notNullable()
     t.bigInteger('product_id').notNullable()
@@ -23,10 +24,12 @@ export const up = async (knex) => {
     t.timestamp('last_updated', { useTz: false }).defaultTo(knex.fn.now())
     t.string('sync_status', 255).defaultTo('pending')
 
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('sales_order_id').references('id').inTable('sales_orders').onDelete('CASCADE')
     t.foreign('product_id').references('id').inTable('products').onDelete('CASCADE')
     t.foreign('inventory_id').references('id').inTable('inventories').onDelete('CASCADE')
 
+    t.index('tenant_id', 'sales_order_items_tenant_id_index')
     t.index('sales_order_id', 'sales_order_items_sales_order_id_index')
     t.index('product_id', 'sales_order_items_product_id_index')
     t.index('inventory_id', 'sales_order_items_inventory_id_index')
