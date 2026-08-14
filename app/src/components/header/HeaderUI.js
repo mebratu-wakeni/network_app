@@ -15,6 +15,7 @@ import {
   getHealthStatus,
   getOverallHealthStatus
 } from './headerFormatters.js';
+import { Button } from '../utils/Button.js';
 
 /**
  * Render health indicators
@@ -59,25 +60,39 @@ function renderHealthIndicators(props) {
 
 function renderClientConnectionIndicator(props) {
   const connected = props.viewModel.getState('clientConnected') === true;
-  const serverUrl = props.viewModel.getState('clientServerUrl');
+  const serverUrl = props.viewModel.getState('clientServerUrl') || '';
   const connectionError = props.viewModel.getState('clientConnectionError');
-  const indicatorColor = connected ? 'text-green-600' : 'text-red-500';
+  const retrying = props.viewModel.getState('connectionRetrying') === true;
   const tooltip = connected
     ? `Connected to ${serverUrl || 'server'}`
-    : (connectionError || `Disconnected${serverUrl ? ` from ${serverUrl}` : ''}`);
+    : (connectionError || `Connection lost${serverUrl ? ` — ${serverUrl}` : ''}. Saves may fail until restored.`);
 
   return Row({
-    class: `${HEADER_CLASSES.healthContainer} ${indicatorColor}`,
-    attributes: {
-      title: tooltip
-    }
+    class: `${HEADER_CLASSES.healthContainer} items-center gap-2`,
+    attributes: { title: tooltip }
   }, [
+    // Status dot left of URL (green = ok, gray = lost) — non-blocking Meet-style signal
     Row({
-      tagType: 'ion-icon',
-      attributes: { name: connected ? 'checkmark-circle' : 'alert-circle' }
+      tagType: 'span',
+      class: `inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+        connected ? 'bg-green-500' : 'bg-gray-400'
+      }`,
+      attributes: { 'aria-label': connected ? 'Online' : 'Offline' }
     }),
-    Row({ tagType: 'span', class: 'text-sm font-medium' }, connected ? 'Connected' : 'Disconnected'),
-    serverUrl ? Row({ tagType: 'span', class: 'text-xs text-gray-500 ml-1 max-w-[240px] truncate' }, serverUrl) : null
+    serverUrl
+      ? Row({ tagType: 'span', class: 'text-xs text-gray-600 font-mono max-w-[280px] truncate' }, serverUrl)
+      : Row({ tagType: 'span', class: 'text-xs text-gray-500' }, connected ? 'Online' : 'Offline'),
+    !connected
+      ? Row({ tagType: 'span', class: 'text-xs text-gray-500 hidden sm:inline' }, 'Offline — changes may not save')
+      : null,
+    !connected
+      ? Button({
+          variant: 'outline',
+          class: 'text-xs py-0.5 px-2 min-h-0',
+          disabled: retrying,
+          onClick: () => props.viewModel.retryConnection()
+        }, retrying ? 'Checking…' : 'Retry')
+      : null
   ]);
 }
 
@@ -162,6 +177,7 @@ function renderHeader(props) {
   props.ensureStateKey('clientConnected');
   props.ensureStateKey('clientServerUrl');
   props.ensureStateKey('clientConnectionError');
+  props.ensureStateKey('connectionRetrying');
   props.ensureStateKey('user');
   props.ensureStateKey('userMenuActionId');
   
@@ -190,5 +206,5 @@ function renderHeader(props) {
 export default function HeaderUI({ router = null, navigationVM = null } = {}) {
   const viewModel = new HeaderVM(undefined, { router, navigationVM });
   
-  return StatefulRow({ viewModel, stateKeys: ['serverHealth', 'dbHealth', 'apiHealth', 'appMode', 'clientConnected', 'clientServerUrl', 'clientConnectionError', 'user', 'userMenuActionId'] }, renderHeader);
+  return StatefulRow({ viewModel, stateKeys: ['serverHealth', 'dbHealth', 'apiHealth', 'appMode', 'clientConnected', 'clientServerUrl', 'clientConnectionError', 'connectionRetrying', 'user', 'userMenuActionId'] }, renderHeader);
 }

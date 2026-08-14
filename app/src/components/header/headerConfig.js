@@ -15,7 +15,7 @@ export const HEALTH_LABELS = {
   api: 'API'
 };
 
-export const HEALTH_CHECK_INTERVAL = 10000; // 10 seconds
+export const HEALTH_CHECK_INTERVAL = 45000; // 45 seconds — quiet poll for Managed Cloud + WAF
 
 export const HEADER_CLASSES = {
   container: 'h-14 w-full bg-white border-b border-gray-200 shadow-sm px-3 md:px-6 py-2 flex items-center justify-between',

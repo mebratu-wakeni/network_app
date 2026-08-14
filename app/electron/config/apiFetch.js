@@ -12,6 +12,10 @@
  * 401 interception: when any API call returns 401 (token expired / invalid),
  * the registered `_onSessionExpired` callback fires so main.js can notify
  * the renderer to show the login screen.
+ *
+ * Options (stripped before fetch):
+ * - suppressServerDown {boolean} — do not fire connection-status callbacks
+ *   (use for health probes so aborts do not look like attacks to WAF/Imunify360).
  */
 
 const DEFAULT_HEADERS = {
@@ -39,23 +43,32 @@ export function setOnServerDown(fn) {
   _onServerDown = typeof fn === 'function' ? fn : null
 }
 
+function isAbortError(err) {
+  if (!err) return false
+  if (err.name === 'AbortError') return true
+  const msg = String(err.message || '')
+  return /aborted|AbortError/i.test(msg)
+}
+
 /**
  * Drop-in replacement for `fetch` in Electron main-process manager files.
  * Usage: replace `fetch(url, opts)` with `apiFetch(url, opts)` — identical API.
  */
 export async function apiFetch(url, options = {}) {
+  const { suppressServerDown = false, ...fetchOptions } = options
   let response
   try {
     response = await fetch(url, {
-      ...options,
+      ...fetchOptions,
       headers: {
         ...DEFAULT_HEADERS,
-        ...(options.headers || {})
+        ...(fetchOptions.headers || {})
       }
     })
   } catch (networkErr) {
-    // fetch() threw → server is unreachable (refused, timeout, DNS, etc.)
-    if (_onServerDown) {
+    // Abort (health timeout) and explicit probes must not flip connection status —
+    // rapid aborted HTTPS handshakes on flaky networks get flagged by Imunify360/WAF.
+    if (_onServerDown && !suppressServerDown && !isAbortError(networkErr)) {
       try { _onServerDown() } catch (_) {}
     }
     throw networkErr
