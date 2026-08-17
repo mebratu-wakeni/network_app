@@ -7,7 +7,7 @@ import HeaderVM from './HeaderVM.js';
 import { getApiAsset } from '../../../electron/config/apiConfig.js';
 import Avatar from '../utils/Avatar.js';
 import { ActionDropdown, ActionItem } from '../utils/Action.js';
-import Button from '../utils/Button.js';
+import { Button } from '../utils/Button.js';
 import {
   HEALTH_ICONS,
   HEADER_CLASSES
