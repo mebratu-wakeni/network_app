@@ -880,35 +880,36 @@ function registerRendererProtocol() {
   })
 }
 
-// ── Server-down recovery polling ─────────────────────────────────────────────
-// When apiFetch detects a network-level failure it calls setOnServerDown().
-// We then poll the health endpoint every SERVER_DOWN_POLL_MS until the server
-// responds, then send 'server:up' to the renderer.
-const SERVER_DOWN_POLL_MS = 15_000
-let _serverDownPollTimer = null
+// ── Connection status (non-blocking) ─────────────────────────────────────────
+// apiFetch network failures notify the renderer via server:down so the header
+// can show a gray status dot. Header health polling (and manual Retry) restore
+// green via server:up. No full-screen overlay; avoid hammering /health.
+const SERVER_DOWN_STRIKES_NEEDED = 2
+const SERVER_DOWN_STRIKE_WINDOW_MS = 20_000
+const SERVER_RETRY_MIN_GAP_MS = 8_000
 
-function startServerRecoveryPolling() {
-  if (_serverDownPollTimer) return // already polling — don't stack
-  _serverDownPollTimer = setInterval(async () => {
-    try {
-      const apiRoot = getApiRootForHealth()
-      if (!apiRoot) return
-      const health = await serverManager.checkApiHealth(apiRoot, 10_000)
-      if (health?.success && health?.healthy) {
-        clearInterval(_serverDownPollTimer)
-        _serverDownPollTimer = null
-        if (win && !win.isDestroyed()) {
-          try { win.webContents.send('server:up') } catch (_) {}
-        }
-      }
-    } catch (_) {}
-  }, SERVER_DOWN_POLL_MS)
+let _serverDownStrike = 0
+let _serverDownStrikeResetTimer = null
+let _lastManualRetryAt = 0
+
+function resetServerDownStrikes() {
+  _serverDownStrike = 0
+  if (_serverDownStrikeResetTimer) {
+    clearTimeout(_serverDownStrikeResetTimer)
+    _serverDownStrikeResetTimer = null
+  }
 }
 
-function stopServerRecoveryPolling() {
-  if (_serverDownPollTimer) {
-    clearInterval(_serverDownPollTimer)
-    _serverDownPollTimer = null
+function notifyConnectionDown() {
+  if (win && !win.isDestroyed()) {
+    try { win.webContents.send('server:down') } catch (_) {}
+  }
+}
+
+function notifyServerUp() {
+  resetServerDownStrikes()
+  if (win && !win.isDestroyed()) {
+    try { win.webContents.send('server:up') } catch (_) {}
   }
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -984,14 +985,20 @@ function createMainWindow() {
     }
   })
 
-  // Wire up the network-failure notifier: any fetch() throw (connection refused,
-  // timeout, DNS error) triggers the server-down overlay in the renderer and
-  // starts background polling until the server is reachable again.
+  // Network failures flip the header status (gray). Debounce brief blips so a
+  // single slow request does not flicker the indicator or look like probe noise.
   setOnServerDown(() => {
-    if (win && !win.isDestroyed()) {
-      try { win.webContents.send('server:down') } catch (_) {}
-    }
-    startServerRecoveryPolling()
+    _serverDownStrike += 1
+    if (_serverDownStrikeResetTimer) clearTimeout(_serverDownStrikeResetTimer)
+    _serverDownStrikeResetTimer = setTimeout(() => {
+      _serverDownStrike = 0
+      _serverDownStrikeResetTimer = null
+    }, SERVER_DOWN_STRIKE_WINDOW_MS)
+
+    if (_serverDownStrike < SERVER_DOWN_STRIKES_NEEDED) return
+
+    resetServerDownStrikes()
+    notifyConnectionDown()
   })
 
   loadRenderer(win)
@@ -1054,15 +1061,21 @@ ipcMain.handle('server:health', async () => {
   return await serverManager.checkApiHealth(getApiRootForHealth())
 })
 
-// Immediate health re-check requested by the renderer's "Retry Now" button.
-// If healthy, also clears the background polling timer and notifies the renderer.
+// Immediate health re-check requested by the header Retry button.
+// Debounced so users on flaky links cannot flood /health.
 ipcMain.handle('server:retry-health', async () => {
-  const health = await serverManager.checkApiHealth(getApiRootForHealth(), 10_000)
-  if (health?.success && health?.healthy) {
-    stopServerRecoveryPolling()
-    if (win && !win.isDestroyed()) {
-      try { win.webContents.send('server:up') } catch (_) {}
+  const now = Date.now()
+  if (now - _lastManualRetryAt < SERVER_RETRY_MIN_GAP_MS) {
+    return {
+      success: false,
+      healthy: false,
+      error: 'Please wait a few seconds before retrying.'
     }
+  }
+  _lastManualRetryAt = now
+  const health = await serverManager.checkApiHealth(getApiRootForHealth(), 25_000)
+  if (health?.success && health?.healthy) {
+    notifyServerUp()
   }
   return health
 })

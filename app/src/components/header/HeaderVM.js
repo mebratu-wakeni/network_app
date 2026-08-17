@@ -29,21 +29,80 @@ export default class HeaderVM extends ViewModel {
     this.setState('clientConnected', false);
     this.setState('clientServerUrl', null);
     this.setState('clientConnectionError', null);
+    this.setState('connectionRetrying', false);
     this.setState('user', {});
     this.setState('userMenuActionId', null);
+    this._bindConnectionEvents();
+  }
+
+  /**
+   * Live reachability events from main (apiFetch network failures / retry success).
+   * These only drive the header indicator — never a full-screen overlay.
+   */
+  _bindConnectionEvents() {
+    if (this._connectionEventsBound || !window?.ipcRenderer?.on) return
+    this._connectionEventsBound = true
+    window.ipcRenderer.on('server:down', () => {
+      this.updateState('clientConnected', false)
+      this.updateState('apiHealth', {
+        healthy: false,
+        error: 'Connection lost — saves may fail until restored'
+      })
+      this.updateState(
+        'clientConnectionError',
+        'Connection lost — saves may fail until restored'
+      )
+    })
+    window.ipcRenderer.on('server:up', () => {
+      this.updateState('clientConnected', true)
+      this.updateState('apiHealth', { healthy: true })
+      this.updateState('clientConnectionError', null)
+    })
   }
 
   syncRuntimeStatus() {
     const setupConfig = this.navigationVM.getState('setup-config') || {};
     const appMode = setupConfig?.mode === 'client' ? 'client' : 'server';
     const clientServerUrl = setupConfig?.client?.serverUrl || null;
-    const clientConnectionError = setupConfig?.clientConnectionError || null;
-    const clientConnected = setupConfig?.clientConnected === true;
 
     if (this.getState('appMode') !== appMode) this.updateState('appMode', appMode);
     if (this.getState('clientServerUrl') !== clientServerUrl) this.updateState('clientServerUrl', clientServerUrl);
-    if (this.getState('clientConnectionError') !== clientConnectionError) this.updateState('clientConnectionError', clientConnectionError);
-    if (this.getState('clientConnected') !== clientConnected) this.updateState('clientConnected', clientConnected);
+    // Seed green once after connect screen until the first health probe finishes.
+    // Live updates then come only from health / server:down / server:up.
+    if (
+      appMode === 'client' &&
+      setupConfig?.clientConnected === true &&
+      this.getState('apiHealth') == null
+    ) {
+      this.updateState('clientConnected', true);
+    }
+  }
+
+  /**
+   * Manual reconnect from the header (debounced in main process).
+   */
+  async retryConnection() {
+    if (this.getState('connectionRetrying')) return
+    this.updateState('connectionRetrying', true)
+    try {
+      const result = await window.ipcRenderer.invoke('server:retry-health')
+      if (result?.healthy) {
+        this.updateState('clientConnected', true)
+        this.updateState('apiHealth', { healthy: true })
+        this.updateState('clientConnectionError', null)
+      } else if (result?.error) {
+        this.updateState('clientConnectionError', result.error)
+        this.updateState('clientConnected', false)
+      }
+    } catch (err) {
+      this.updateState('clientConnected', false)
+      this.updateState(
+        'clientConnectionError',
+        err?.message || 'Could not reach server'
+      )
+    } finally {
+      this.updateState('connectionRetrying', false)
+    }
   }
 
   /**

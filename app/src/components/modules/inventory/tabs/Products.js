@@ -393,17 +393,48 @@ function ProductTable(props, productList = []) {
 
 function ProductDetails({ product, showSlide, onClose, ...props }) {
   // Get form state from viewModel
-  const productDetailsForm = props.viewModel.getState('product-details-form');
+  const productDetailsForm = props.viewModel.getState('product-details-form') || {};
   const editMode = props.viewModel.getState('product-details-edit-mode');
   const productCode = product?.product_code || '';
-  
-  const productName = productDetailsForm.name || '';
-  const productDescription = productDetailsForm.description || '';
+
+  // Edit text fields live in local draft so typing survives morph (same pattern as product search).
+  // Binding only to VM + Input `change` resets the value on Windows remorphs.
+  props.ensureLocalStateKey('product-details-draft', null);
+  props.ensureLocalStateKey('product-details-draft-active', false);
+  if (editMode) {
+    if (!props.getLocalState('product-details-draft-active')) {
+      props.setLocalState('product-details-draft', {
+        name: productDetailsForm.name || '',
+        description: productDetailsForm.description || '',
+        expiry_threshold:
+          productDetailsForm.expiry_threshold != null ? productDetailsForm.expiry_threshold : 30
+      });
+      props.setLocalState('product-details-draft-active', true);
+    }
+  } else if (props.getLocalState('product-details-draft-active')) {
+    props.setLocalState('product-details-draft', null);
+    props.setLocalState('product-details-draft-active', false);
+  }
+
+  const draft = props.getLocalState('product-details-draft') || {};
+  const productName = editMode ? (draft.name ?? '') : (productDetailsForm.name || '');
+  const productDescription = editMode
+    ? (draft.description ?? '')
+    : (productDetailsForm.description || '');
   const productCategory = productDetailsForm.category || '';
   const productCategoryId = productDetailsForm.category_id || null;
   const productUnit = productDetailsForm.unit || '';
   const productUnitId = productDetailsForm.unit_id || null;
-  const productExpiryThreshold = productDetailsForm.expiry_threshold || 30;
+  const productExpiryThreshold = editMode
+    ? (draft.expiry_threshold ?? 30)
+    : (productDetailsForm.expiry_threshold || 30);
+
+  const updateDetailsDraft = (fields) => {
+    const current = props.getLocalState('product-details-draft') || {};
+    const next = { ...current, ...fields };
+    props.setLocalState('product-details-draft', next);
+    props.viewModel.updateProductDetailsFormFields(fields);
+  };
   
   // Get categories and units from ViewModel
   const categories = props.viewModel.getCategoryList();
@@ -444,6 +475,8 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
   };
 
   const handleCancel = () => {
+    props.setLocalState('product-details-draft', null);
+    props.setLocalState('product-details-draft-active', false);
     props.viewModel.setProductDetailsEditMode(false);
     // Close inline forms
     props.setLocalState('show-new-category-form', false);
@@ -531,9 +564,12 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
     }
 
     try {
-      // Read latest form from VM so Save isn't stale: `Input` uses the `change` event,
-      // which for type="number" often fires on blur—clicks can submit before that.
-      const form = props.viewModel.getState('product-details-form') || {};
+      // Prefer local draft (onInput) so Save is not stuck on stale VM / blur-only change.
+      const draftNow = props.getLocalState('product-details-draft') || {};
+      const form = {
+        ...(props.viewModel.getState('product-details-form') || {}),
+        ...draftNow
+      };
       const categoryName = form.category || '';
       const categoryId = form.category_id || null;
       const unitName = form.unit || '';
@@ -596,6 +632,8 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
       }
 
       await props.viewModel.updateProduct(product.id, productPayload);
+      props.setLocalState('product-details-draft', null);
+      props.setLocalState('product-details-draft-active', false);
       props.viewModel.setProductDetailsEditMode(false);
       // List reload + selected-product sync happen inside updateProduct()
     } catch (error) {
@@ -640,7 +678,7 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                 editMode: editMode,
                 inputProps: {
                   value: productName,
-                  onChange: (e) => props.viewModel.updateProductDetailsForm('name', e.target.value),
+                  onInput: (e) => updateDetailsDraft({ name: e.target.value }),
                   name: 'product-name',
                   placeholder: 'Enter product name'
                 }
@@ -651,7 +689,7 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                 editMode: editMode,
                 inputProps: {
                   value: productDescription,
-                  onChange: (e) => props.viewModel.updateProductDetailsForm('description', e.target.value),
+                  onInput: (e) => updateDetailsDraft({ description: e.target.value }),
                   name: 'product-description',
                   placeholder: 'Enter description'
                 }
@@ -785,16 +823,15 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                     type: 'number',
                     min: 1,
                     value: productExpiryThreshold || 30,
-                    // `Input` wires `change` (often blur for number); sync on `input` so Save sees latest value.
                     onInput: (e) => {
                       const raw = e.target.value;
                       if (raw === '') {
-                        props.viewModel.updateProductDetailsForm('expiry_threshold', '');
+                        updateDetailsDraft({ expiry_threshold: '' });
                         return;
                       }
                       const n = parseInt(raw, 10);
                       if (!Number.isNaN(n)) {
-                        props.viewModel.updateProductDetailsForm('expiry_threshold', n);
+                        updateDetailsDraft({ expiry_threshold: n });
                       }
                     },
                     name: 'expiry-threshold',
