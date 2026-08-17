@@ -319,14 +319,19 @@ export class PurchaseRepository {
       }
 
       const inventoryIds = []
-      for (const item of insertedItems) {
+      // Zip by line index: Postgres may return product_id as string, so === match
+      // against request numbers fails; product_id match also breaks when one PO has
+      // multiple lines for the same product with different batch/expiry.
+      for (let lineIndex = 0; lineIndex < insertedItems.length; lineIndex++) {
+        const item = insertedItems[lineIndex]
+        const sourceItem = items[lineIndex] || {}
         const product = await trx('products').where({ id: item.product_id, tenant_id: tenantId }).first()
         if (!product) {
           throw new Error(`Product ${item.product_id} not found`)
         }
 
-        const batchNo = items.find(i => i.product_id === item.product_id)?.batch_number || null
-        const expiryDate = items.find(i => i.product_id === item.product_id)?.expiry_date || null
+        const batchNo = sourceItem.batch_number || null
+        const expiryDate = sourceItem.expiry_date || null
 
         let inventory = await this.findExistingInventory(
           tenantId,
