@@ -315,17 +315,20 @@ export class PurchaseRepository {
 
       // 5) Create inventory records, bin cards, and ledger entries for each item
       const inventoryIds = []
-      for (const item of insertedItems) {
-        // Get product details
+      // Zip by line index: product_id === match breaks when one PO has multiple
+      // lines for the same product with different batch/expiry (and on drivers
+      // that return product_id as a string).
+      for (let lineIndex = 0; lineIndex < insertedItems.length; lineIndex++) {
+        const item = insertedItems[lineIndex]
+        const sourceItem = items[lineIndex] || {}
         const product = await trx('products').where({ id: item.product_id }).first()
         if (!product) {
           throw new Error(`Product ${item.product_id} not found`)
         }
 
-        // Find or create inventory record
-        const batchNo = items.find(i => i.product_id === item.product_id)?.batch_number || null
-        const expiryDate = items.find(i => i.product_id === item.product_id)?.expiry_date || null
-        
+        const batchNo = sourceItem.batch_number || null
+        const expiryDate = sourceItem.expiry_date || null
+
         let inventory = await this.findExistingInventory(
           item.product_id,
           batchNo,

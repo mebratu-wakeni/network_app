@@ -234,8 +234,10 @@ class ServerManager {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     try {
+      // Never trip connection status from health probes (timeouts/aborts).
       const res = await apiFetch(url, {
-        signal: controller.signal
+        signal: controller.signal,
+        suppressServerDown: true
       })
       clearTimeout(timeoutId)
       const data = await res.json()
