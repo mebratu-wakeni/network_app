@@ -1,0 +1,195 @@
+# Patch cloud-multi latest.json (and restore index.html) without re-uploading installers.
+#
+# Use when installers already exist under downloads/cloud-multi/<version>/ but
+# latest.json still points at an older version (landing page reads latest.json).
+#
+# Secrets: DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD, DOWNLOADS_SERVER_DIR
+
+name: Patch cloud-multi latest.json
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version folder that already has installers on the host'
+        required: true
+        default: '1.0.6'
+      notes:
+        description: 'Release notes for latest.json'
+        required: false
+        default: ''
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve artifact filenames via HTTP
+        id: arts
+        env:
+          VERSION: ${{ inputs.version }}
+          BASE: https://server.masatechplc.com/downloads/cloud-multi
+        run: |
+          set -euo pipefail
+          head_ok() {
+            local url="$1"
+            local code
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -I "$url" || echo 000)
+            [ "$code" = "200" ]
+          }
+
+          pick_first() {
+            local name
+            for name in "$@"; do
+              if head_ok "${BASE}/${VERSION}/${name}"; then
+                echo "$name"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          MAC=$(pick_first \
+            "PharmaSuit-Cloud-Mac-${VERSION}-Installer.dmg" \
+            "PharmaSuit-Cloud-Mac-${VERSION}-Installer.zip")
+          WIN=$(pick_first \
+            "PharmaSuit-Cloud-Windows-${VERSION}-x64-Setup.exe" \
+            "PharmaSuit-Cloud-Windows-${VERSION}-Setup.exe")
+          WIN32=$(pick_first \
+            "PharmaSuit-Cloud-Windows-${VERSION}-ia32-Setup.exe")
+          LINUX=$(pick_first \
+            "PharmaSuit-Cloud-Linux-${VERSION}.AppImage")
+
+          echo "mac=$MAC"
+          echo "win=$WIN"
+          echo "win32=$WIN32"
+          echo "linux=$LINUX"
+          test -n "${MAC:-}" && test -n "${WIN:-}" && test -n "${LINUX:-}"
+          {
+            echo "mac=$MAC"
+            echo "win=$WIN"
+            echo "win32=${WIN32:-}"
+            echo "linux=$LINUX"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write latest.json
+        env:
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.notes }}
+          MAC: ${{ steps.arts.outputs.mac }}
+          WIN: ${{ steps.arts.outputs.win }}
+          WIN32: ${{ steps.arts.outputs.win32 }}
+          LINUX: ${{ steps.arts.outputs.linux }}
+          BASE_URL: https://server.masatechplc.com/downloads/cloud-multi
+        run: |
+          set -euo pipefail
+          mkdir -p staging/out
+          python3 <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          version = os.environ["VERSION"]
+          base = os.environ["BASE_URL"].rstrip("/")
+          notes = (os.environ.get("NOTES") or "").strip() or f"PharmaSuit Cloud {version}"
+          def art(name):
+              return {"file": name, "url": f"{base}/{version}/{name}"}
+          artifacts = {
+              "mac": art(os.environ["MAC"]),
+              "win": art(os.environ["WIN"]),
+              "linux": art(os.environ["LINUX"]),
+          }
+          win32 = (os.environ.get("WIN32") or "").strip()
+          if win32:
+              artifacts["win32"] = art(win32)
+          latest = {
+              "product": "PharmaSuit Cloud (multi-tenant)",
+              "channel": "cloud-multi",
+              "version": version,
+              "releaseNotes": notes,
+              "publishedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+              "mandatory": False,
+              "minSupportedVersion": None,
+              "artifacts": artifacts,
+          }
+          path = "staging/out/latest.json"
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump(latest, f, indent=2)
+              f.write("\n")
+          print(open(path, encoding="utf-8").read())
+          PY
+
+      - name: Resolve downloads server dir
+        id: dir
+        env:
+          SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          set -euo pipefail
+          DEST="${SERVER_DIR:-server.masatechplc.com/downloads/cloud-multi}"
+          DEST="${DEST#/}"
+          DEST="${DEST%/}"
+          case "$DEST" in
+            *cloud-multi*) ;;
+            *) echo "DOWNLOADS_SERVER_DIR must point at cloud-multi (got: $DEST)"; exit 1 ;;
+          esac
+          echo "base=$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: FTPS put latest.json and index.html
+        env:
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
+          BASE: ${{ steps.dir.outputs.base }}
+        run: |
+          set -euo pipefail
+          missing=0
+          [ -z "${HOST:-}" ] && echo "Missing DOWNLOADS_HOST" && missing=1
+          [ -z "${USER:-}" ] && echo "Missing DOWNLOADS_USERNAME" && missing=1
+          [ -z "${PASS:-}" ] && echo "Missing DOWNLOADS_PASSWORD" && missing=1
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          curl -sS --ftp-ssl --insecure --user "${USER}:${PASS}" \
+            -T staging/out/latest.json \
+            "ftp://${HOST}/${BASE}/latest.json"
+          echo "Uploaded latest.json"
+
+          if [ -f downloads/cloud-multi/index.html ]; then
+            curl -sS --ftp-ssl --insecure --user "${USER}:${PASS}" \
+              -T downloads/cloud-multi/index.html \
+              "ftp://${HOST}/${BASE}/index.html"
+            echo "Uploaded index.html"
+          else
+            echo "WARN: downloads/cloud-multi/index.html missing"
+          fi
+
+      - name: Verify public latest.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          sleep 10
+          BASE="https://server.masatechplc.com/downloads/cloud-multi"
+          body=$(curl -sS -L --max-time 30 "${BASE}/latest.json")
+          echo "$body" | head -c 1200
+          echo
+          echo "$body" | python3 -c "
+          import json,sys
+          j=json.load(sys.stdin)
+          assert j.get('version') == '${VERSION}', j.get('version')
+          for k in ('mac','win','linux'):
+              assert j.get('artifacts',{}).get(k,{}).get('url'), k
+          print('OK: latest.json version', j['version'])
+          "
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Patched cloud-multi latest.json"
+            echo ""
+            echo "- **Version:** \`${{ inputs.version }}\`"
+            echo "- **Page:** https://server.masatechplc.com/downloads/cloud-multi/"
+            echo "- **Feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json"
+          } >> "$GITHUB_STEP_SUMMARY"
