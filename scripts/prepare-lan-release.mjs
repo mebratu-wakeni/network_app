@@ -163,6 +163,41 @@ function main() {
     if (p && !artifacts[p] && !name.endsWith('.blockmap')) artifacts[p] = name
   }
 
+  // Prefer explicit x64 Windows artifact over legacy unmarked -Setup.exe when both exist.
+  for (const name of copiedInstallers) {
+    if (name.endsWith('.blockmap')) continue
+    const n = name.toLowerCase()
+    if ((n.includes('-x64-') || n.includes('_x64')) && n.endsWith('.exe')) {
+      artifacts.win = name
+      break
+    }
+  }
+
+  const versionToken = `-${args.version}-`
+  const versionSuffix = `-${args.version}.`
+  const mismatched = copiedInstallers.filter((name) => {
+    if (name.endsWith('.blockmap')) return false
+    if (!/\.(dmg|exe|appimage|zip)$/i.test(name)) return false
+    return !(name.includes(versionToken) || name.includes(versionSuffix))
+  })
+  if (mismatched.length) {
+    console.error(
+      `ERROR: Installer filename(s) do not contain version ${args.version}.`,
+      '\n  package.json drives electron-builder artifact names;',
+      '\n  --version drives latest.json URLs. They must match.',
+      '\n  Offending:',
+      mismatched.join(', ')
+    )
+    process.exit(1)
+  }
+
+  for (const key of ['mac', 'win', 'linux']) {
+    if (!artifacts[key]) {
+      console.error(`ERROR: missing required ${key} installer — refusing to write latest.json`)
+      process.exit(1)
+    }
+  }
+
   const publishedAt = new Date().toISOString()
   const latest = {
     product: 'PharmaSuit (single-tenant cloud)',

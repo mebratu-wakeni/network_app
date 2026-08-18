@@ -1,10 +1,14 @@
-# Builds PharmaSuit single-tenant ONLINE cloud client and publishes to
+# Builds PharmaSuit Dedicated (single-tenant) cloud client and publishes to
 # server.masatechplc.com/downloads/lan/
 #
 # Uses electron-builder.cloud.json5 (NO bundled API) so Mac universal works.
 # Does NOT touch downloads/cloud-multi/.
 #
-# Trigger: tag desktop-lan-v*  OR  manual "Run workflow"
+# Trigger: tag desktop-lan-v* / desktop-dedicated-v*  OR  manual "Run workflow"
+#
+# HARD RULE: tag version MUST equal app/package.json version. Installer filenames
+# are built from package.json; latest.json URLs use the resolved release version.
+# Mismatch → website/in-app download links 404.
 #
 # Secrets:
 #   DOWNLOADS_HOST / DOWNLOADS_USERNAME / DOWNLOADS_PASSWORD
@@ -16,6 +20,7 @@ on:
   push:
     tags:
       - 'desktop-lan-v*'
+      - 'desktop-dedicated-v*'
   workflow_dispatch:
     inputs:
       version:
@@ -32,7 +37,58 @@ on:
         default: ''
 
 jobs:
+  version-lock:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag is on release/dedicated-cloud
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin release/dedicated-cloud:refs/remotes/origin/release/dedicated-cloud
+          git fetch origin cloud-backend:refs/remotes/origin/cloud-backend || true
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/release/dedicated-cloud; then
+            echo "OK: tag commit is on release/dedicated-cloud"
+          elif git merge-base --is-ancestor "$GITHUB_SHA" origin/cloud-backend 2>/dev/null; then
+            echo "WARN: tag is on legacy cloud-backend — prefer release/dedicated-cloud"
+          else
+            echo "ERROR: tag commit $GITHUB_SHA is not on release/dedicated-cloud"
+            echo "Cut desktop-lan-v* / desktop-dedicated-v* tags from release/dedicated-cloud only."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve and lock version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-dedicated-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-dedicated-v}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-lan-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-lan-v}"
+          else
+            V="$(node -p "require('./app/package.json').version")"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          chmod +x scripts/assert-desktop-lan-version.sh
+          scripts/assert-desktop-lan-version.sh "$V"
+
   build:
+    needs: version-lock
     strategy:
       fail-fast: false
       matrix:
@@ -61,11 +117,11 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Read package version
-        id: pkg
-        working-directory: app
+      - name: Assert package version matches release
         shell: bash
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          chmod +x scripts/assert-desktop-lan-version.sh
+          scripts/assert-desktop-lan-version.sh "${{ needs.version-lock.outputs.version }}"
 
       - name: Build cloud desktop client (${{ matrix.platform }})
         working-directory: app
@@ -85,9 +141,11 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [version-lock, build]
     runs-on: ubuntu-latest
-    if: ${{ always() && needs.build.result != 'cancelled' }}
+    # Do NOT publish a partial feed. Failed OS builds used to still rewrite latest.json
+    # and wipe working download links.
+    if: ${{ always() && needs.build.result == 'success' && needs.version-lock.result == 'success' }}
 
     steps:
       - name: Checkout
@@ -98,36 +156,19 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Resolve version
-        id: ver
-        shell: bash
-        run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            V="${{ github.event.inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/desktop-lan-v* ]]; then
-            V="${GITHUB_REF_NAME#desktop-lan-v}"
-          else
-            V="$(node -p "require('./app/package.json').version")"
-          fi
-          echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "Publishing version $V"
-
       - name: Download Mac artifacts
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: lan-desktop-mac
           path: staging/artifacts/mac
 
       - name: Download Windows artifacts
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: lan-desktop-win
           path: staging/artifacts/win
 
       - name: Download Linux artifacts
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: lan-desktop-linux
@@ -141,11 +182,30 @@ jobs:
             echo "No installer artifacts downloaded — cannot publish."
             exit 1
           fi
+          # Hard require all three platforms so latest.json never drops Mac/Win/Linux.
+          missing=0
+          if [ -z "$(find staging/artifacts/mac -type f \( -iname '*.dmg' -o -iname '*.zip' \) 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Mac installer (.dmg/.zip)"
+            missing=1
+          fi
+          if [ -z "$(find staging/artifacts/win -type f -iname '*.exe' 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Windows installer (.exe)"
+            missing=1
+          fi
+          if [ -z "$(find staging/artifacts/linux -type f -iname '*.AppImage' 2>/dev/null | head -1)" ]; then
+            echo "ERROR: missing Linux installer (.AppImage)"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "Refusing to publish a partial lan feed."
+            find staging/artifacts -type f | sort || true
+            exit 1
+          fi
           PREPARE_ARGS=(
-            --version "${{ steps.ver.outputs.version }}"
+            --version "${{ needs.version-lock.outputs.version }}"
             --artifacts-dir staging/artifacts
             --out-dir staging/publish
-            --notes "PharmaSuit single-tenant cloud ${{ steps.ver.outputs.version }}"
+            --notes "PharmaSuit single-tenant cloud ${{ needs.version-lock.outputs.version }}"
             --base-url "https://server.masatechplc.com/downloads/lan"
           )
           if [ "${{ github.event.inputs.mandatory }}" = "true" ]; then
@@ -157,6 +217,17 @@ jobs:
           node scripts/prepare-lan-release.mjs "${PREPARE_ARGS[@]}"
           echo "--- publish tree ---"
           find staging/publish -type f | sort
+          test -f staging/publish/latest.json
+          node -e "
+            const j = require('./staging/publish/latest.json');
+            for (const k of ['mac','win','linux']) {
+              if (!j.artifacts?.[k]?.url) {
+                console.error('latest.json missing artifacts.' + k);
+                process.exit(1);
+              }
+            }
+            console.log('latest.json platforms OK:', Object.keys(j.artifacts).join(', '));
+          "
 
       - name: Check downloads secrets
         shell: bash
@@ -201,7 +272,11 @@ jobs:
       - name: Summary
         shell: bash
         run: |
-          echo "### Single-tenant cloud desktop published → downloads/lan" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Version:** ${{ steps.ver.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Downloads:** https://server.masatechplc.com/downloads/lan/" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Cloud-multi (untouched):** https://server.masatechplc.com/downloads/cloud-multi/" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Dedicated Cloud desktop published → downloads/lan"
+            echo ""
+            echo "- **Version:** ${{ needs.version-lock.outputs.version }}"
+            echo "- **Downloads:** https://server.masatechplc.com/downloads/lan/"
+            echo "- **Update feed:** https://server.masatechplc.com/downloads/lan/latest.json"
+            echo "- **Website:** bump Dedicated links in masatech-website \`content/downloads.json\` to \`lan/${{ needs.version-lock.outputs.version }}/\`"
+          } >> "$GITHUB_STEP_SUMMARY"
