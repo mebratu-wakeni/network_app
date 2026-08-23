@@ -177,28 +177,14 @@ jobs:
           else
             echo "WARN: downloads/cloud-multi/index.html missing from repo checkout"
           fi
-      - name: Verify public HTTP URLs
+      - name: Verify public download feed
         env:
           VERSION: ${{ inputs.version }}
+          SLEEP_BEFORE: '15'
         run: |
           set -euo pipefail
-          BASE="https://server.masatechplc.com/downloads/cloud-multi"
-          # Allow host a moment to flush / antivirus scan.
-          sleep 15
-          fail=0
-          for name in "$WIN64" "$WIN32" "$MAC" "$LINUX"; do
-            url="${BASE}/${VERSION}/${name}"
-            code=$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 60 -I "$url" || echo 000)
-            clen=$(curl -sS -L --max-time 60 -I "$url" | awk -F': ' 'tolower($1)=="content-length"{gsub(/\r/,"",$2); print $2; exit}')
-            echo "$name -> HTTP $code Content-Length=${clen:-?}"
-            if [ "$code" != "200" ] || [ -z "${clen:-}" ] || [ "${clen:-0}" -lt 1000000 ]; then
-              echo "FAIL: $url"
-              fail=1
-            fi
-          done
-          curl -sS -L --max-time 30 "${BASE}/latest.json" | head -c 800
-          echo
-          exit "$fail"
+          chmod +x scripts/verify-download-feed.sh
+          scripts/verify-download-feed.sh cloud-multi "$VERSION"
 
       - name: Summary
         if: always()

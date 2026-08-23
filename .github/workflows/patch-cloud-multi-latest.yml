@@ -164,24 +164,14 @@ jobs:
             echo "WARN: downloads/cloud-multi/index.html missing"
           fi
 
-      - name: Verify public latest.json
+      - name: Verify public download feed
         env:
           VERSION: ${{ inputs.version }}
+          SLEEP_BEFORE: '10'
         run: |
           set -euo pipefail
-          sleep 10
-          BASE="https://server.masatechplc.com/downloads/cloud-multi"
-          body=$(curl -sS -L --max-time 30 "${BASE}/latest.json")
-          echo "$body" | head -c 1200
-          echo
-          echo "$body" | python3 -c "
-          import json,sys
-          j=json.load(sys.stdin)
-          assert j.get('version') == '${VERSION}', j.get('version')
-          for k in ('mac','win','linux'):
-              assert j.get('artifacts',{}).get(k,{}).get('url'), k
-          print('OK: latest.json version', j['version'])
-          "
+          chmod +x scripts/verify-download-feed.sh
+          scripts/verify-download-feed.sh cloud-multi "$VERSION"
 
       - name: Summary
         if: always()
