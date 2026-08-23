@@ -269,6 +269,15 @@ jobs:
             **/.git*/**
             **/node_modules/**
 
+      - name: Verify public download feed
+        env:
+          VERSION: ${{ needs.version-lock.outputs.version }}
+          SLEEP_BEFORE: '20'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/verify-download-feed.sh
+          scripts/verify-download-feed.sh lan "$VERSION"
+
       - name: Summary
         shell: bash
         run: |
@@ -279,4 +288,5 @@ jobs:
             echo "- **Downloads:** https://server.masatechplc.com/downloads/lan/"
             echo "- **Update feed:** https://server.masatechplc.com/downloads/lan/latest.json"
             echo "- **Website:** bump Dedicated links in masatech-website \`content/downloads.json\` to \`lan/${{ needs.version-lock.outputs.version }}/\`"
+            echo "- **Verified:** public installer URLs from latest.json returned HTTP 200"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,37 @@
+---
+description: After any desktop release/publish, verify public download feeds are live before telling the user it worked
+alwaysApply: true
+---
+
+# Verify download feeds after every publish
+
+Never tell the user to “try the download” after a release, FTPS publish, restore, `latest.json` patch, or website `downloads.json` bump. **You** must verify the public URLs and only then report success.
+
+## When this applies
+
+- Tag push / GitHub Actions desktop release (`desktop-cloud-v*`, `desktop-lan-v*`, `desktop-dedicated-v*`)
+- Restore / patch workflows that FTPS to `downloads/cloud-multi/` or `downloads/lan/`
+- Website first-install URL changes in `masatech-website/content/downloads.json`
+
+## Required checks (do all)
+
+1. Read live feed:
+   - Managed: `https://server.masatechplc.com/downloads/cloud-multi/latest.json`
+   - Dedicated: `https://server.masatechplc.com/downloads/lan/latest.json`
+2. Confirm `version` matches the intended release / `app/package.json` / tag.
+3. For **every** `artifacts.*.url` in that JSON: HTTP HEAD must be **200** and installer `Content-Length` ≥ ~1MB (not an HTML/JSON error page).
+4. Spot-check the matching website buttons on https://www.masatechplc.com/downloads (Managed + Dedicated) — URLs must match the live feed filenames (including `-x64-` / `-ia32-`).
+5. Prefer `scripts/verify-download-feed.sh cloud-multi|lan` when the script exists in the checkout.
+
+## If anything fails
+
+- **Do not** hand off with “please try”. Fix it in-session:
+  - Version / filename mismatch → bump `app/package.json` before retag, or patch `latest.json` / website URLs.
+  - Windows `.exe` 404 while Mac/Linux 200 → run **Restore cloud-multi Windows** / **Restore lan Windows** with the release artifact IDs, then re-verify.
+- Report the table of URL → HTTP code in chat when done.
+
+## Release hygiene (prevents the usual breakage)
+
+- Bump `app/package.json` **before** cutting the tag; tag suffix must equal that version (CI assert scripts enforce this).
+- Never publish a partial feed (all of Mac/Win/Linux required).
+- After green CI, still run the public HTTP verify above — FTPS success ≠ files surviving host AV.
