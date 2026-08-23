@@ -341,6 +341,15 @@ jobs:
             **/.git*/**
             **/node_modules/**
 
+      - name: Verify public download feed
+        env:
+          VERSION: ${{ needs.version-lock.outputs.version }}
+          SLEEP_BEFORE: '20'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/verify-download-feed.sh
+          scripts/verify-download-feed.sh cloud-multi "$VERSION"
+
       - name: Summary
         shell: bash
         run: |
@@ -351,4 +360,5 @@ jobs:
             echo "- **Downloads:** https://server.masatechplc.com/downloads/cloud-multi/"
             echo "- **Update feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json"
             echo "- **Website:** bump Managed links in masatech-website \`content/downloads.json\` to \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` if first-install URLs lag"
+            echo "- **Verified:** public installer URLs from latest.json returned HTTP 200"
           } >> "$GITHUB_STEP_SUMMARY"
