@@ -1,21 +1,23 @@
-# Builds PharmaSuit single-tenant ONLINE cloud client and publishes to
-# server.masatechplc.com/downloads/lan/
+# Release Dedicated Cloud desktop → server.masatechplc.com/downloads/lan/
 #
-# Uses electron-builder.cloud.json5 (NO bundled API) so Mac universal works.
-# Does NOT touch downloads/cloud-multi/.
+# Product branch: release/dedicated-cloud (docs/PRODUCT_LINES.md)
+# Cut tags from that tip:
+#   git tag desktop-dedicated-vX.Y.Z && git push origin desktop-dedicated-vX.Y.Z
+# Legacy tag desktop-lan-v* still accepted during transition.
 #
-# Trigger: tag desktop-lan-v*  OR  manual "Run workflow"
+# Uses electron-builder.cloud.json5 (NO bundled API).
+# Does NOT touch downloads/cloud-multi/ or downloads/offline/.
 #
-# Secrets:
-#   DOWNLOADS_HOST / DOWNLOADS_USERNAME / DOWNLOADS_PASSWORD
-#   DOWNLOADS_LAN_SERVER_DIR — e.g. server.masatechplc.com/downloads/lan/
+# Secrets: DOWNLOADS_HOST, DOWNLOADS_USERNAME, DOWNLOADS_PASSWORD,
+#          DOWNLOADS_LAN_SERVER_DIR (e.g. server.masatechplc.com/downloads/lan/)
 
-name: Release LAN Desktop
+name: Release Dedicated Cloud
 
 on:
   push:
     tags:
-      - 'desktop-lan-v*'
+      - 'desktop-dedicated-v*'
+      - 'desktop-lan-v*'  # legacy
   workflow_dispatch:
     inputs:
       version:
@@ -31,8 +33,35 @@ on:
         required: false
         default: ''
 
+
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ensure tag is on release/dedicated-cloud
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin release/dedicated-cloud:refs/remotes/origin/release/dedicated-cloud
+          git fetch origin cloud-backend:refs/remotes/origin/cloud-backend || true
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/release/dedicated-cloud; then
+            echo "OK: on release/dedicated-cloud"
+          elif git merge-base --is-ancestor "$GITHUB_SHA" origin/cloud-backend 2>/dev/null; then
+            echo "WARN: on legacy cloud-backend"
+          else
+            echo "ERROR: tag not on release/dedicated-cloud"; exit 1
+          fi
+      - name: Skip note (manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: echo "Manual dispatch — tag ancestry check skipped"
+
   build:
+    needs: [guard]
+
     strategy:
       fail-fast: false
       matrix:
@@ -104,6 +133,8 @@ jobs:
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             V="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/desktop-dedicated-v* ]]; then
+            V="${GITHUB_REF_NAME#desktop-dedicated-v}"
           elif [[ "${{ github.ref }}" == refs/tags/desktop-lan-v* ]]; then
             V="${GITHUB_REF_NAME#desktop-lan-v}"
           else
