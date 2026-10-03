@@ -268,13 +268,14 @@ function renderHeader(props) {
 }
 
 /**
- * Header UI Component
- * @returns {HTMLElement} Header component
+ * Header UI — independent StatefulRow.
+ *
+ * Mount once into a stable host from App() (same pattern as Router `main`).
+ * Do not call this from inside App/MainLayout paint: nested StatefulRows are
+ * torn down/recreated when App remorphs on `active-menu` (Profile/Settings),
+ * which breaks the account dropdown.
  */
 export default function HeaderUI({ router = null, navigationVM = null } = {}) {
-  // Stable VM across App remorphs (health interval + menu state).
-  // Do NOT cache the StatefulRow DOM node — App morph + reused node left
-  // EventDelegator handlers that could not reopen the menu after Profile/Settings.
   const viewModel = getHeaderVM({ router, navigationVM });
   headerMenuVmRef = viewModel;
 

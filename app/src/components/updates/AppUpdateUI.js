@@ -1,4 +1,4 @@
-const { Row, StatefulRow } = Liteframe
+const { Row } = Liteframe
 import { Button } from '../utils/Button.js'
 
 const UPDATE_STATE_KEY = 'app-update-state'
@@ -30,6 +30,9 @@ function HiddenUpdateHost() {
 
 /**
  * In-app update notification + wizard for cloud builds (Dedicated / Managed).
+ *
+ * Not a StatefulRow — must stay a plain Row under App's StatefulRow.
+ * App already remorphs on `app-update-state` / `app-update-dev-panel`.
  *
  * Shared-state lifecycle (Liteframe):
  * - NavigationVM.setState('app-update-state', defaults) once at boot
@@ -65,15 +68,7 @@ export default function AppUpdateUI(props) {
     })
   }
 
-  return StatefulRow(
-    {
-      id: 'AppUpdateUI',
-      class: '',
-      stateKeys: [UPDATE_STATE_KEY, UPDATE_DEV_PANEL_KEY],
-      viewModel: vm
-    },
-    (p) => renderUpdateChrome(p)
-  )
+  return renderUpdateChrome({ viewModel: vm })
 }
 
 function renderUpdateChrome(props) {

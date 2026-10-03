@@ -18,9 +18,38 @@ function BootSpinner(props = {}) {
 }
 
 export function App() {
+  // Stable hosts — Router / Header StatefulRows mount here once and must NOT be
+  // recreated inside App's StatefulRow paint (nested StatefulRows break under morph).
   const main = Row({ tagType: 'div', class: 'relative h-full min-h-0 flex flex-col' });
+  const headerHost = Row({
+    tagType: 'div',
+    class: 'w-full shrink-0',
+    attributes: { id: 'app-header-host', 'data-app-header-host': '' }
+  });
 
   const router = new Router(main);
+
+  // Header StatefulRow lives under headerHost and must stay independent of App morph.
+  let headerEl = null;
+  let headerEverAttached = false;
+
+  const ensureHeaderMounted = () => {
+    if (headerHost.isConnected) {
+      headerEverAttached = true;
+      if (headerEl && headerHost.contains(headerEl)) return headerHost;
+    }
+
+    // Same paint cycle before morph attaches the host — keep the prepared instance.
+    if (!headerEverAttached && headerEl && headerHost.contains(headerEl)) {
+      return headerHost;
+    }
+
+    // Fresh mount, or remount after logout/setup detached the host (onUnmount already ran).
+    headerHost.replaceChildren();
+    headerEl = HeaderUI({ router, navigationVM });
+    headerHost.appendChild(headerEl);
+    return headerHost;
+  };
 
   // Cloud client: Server URL + tenant code (client_code) → login → app.
   // Tenants are your SaaS customers; their suppliers/retailers are "customers" in the app.
@@ -43,11 +72,12 @@ export function App() {
       if (!auth.isAuthenticated) {
         content = LoginLayout(props);
       } else {
-        content = MainLayout(props, main, router);
+        content = MainLayout(props, main, router, ensureHeaderMounted());
       }
     }
 
     // Managed Cloud is always a cloud client build — mount updater chrome on every screen.
+    // AppUpdateUI is a plain Row (not StatefulRow): App already remorphs on app-update-* keys.
     return Row({ class: 'relative h-[100dvh] min-h-0 overflow-hidden' }, [
       AppUpdateUI({ viewModel: props.viewModel }),
       Row({ class: 'h-full min-h-0' }, [content])
@@ -149,7 +179,7 @@ function ClientConnectionLayout(props) {
   ])
 }
 
-function MainLayout(props, main, router) {
+function MainLayout(props, main, router, headerHost) {
   props.ensureLocalStateKey('navCollapsed', false);
 
   const navCollapsed = props.getLocalState('navCollapsed');
@@ -161,7 +191,8 @@ function MainLayout(props, main, router) {
       NavigationUI({ router, ...props }),
     ]),
     Row({ class: 'h-full min-h-0 flex-1 flex flex-col overflow-hidden' }, [
-      HeaderUI({ router, navigationVM: props.viewModel }),
+      // Stable host with an independent Header StatefulRow (not created in this paint).
+      headerHost,
       Row({ tagType: 'div', class: 'flex-1  min-h-0 overflow-hidden' }, [main]),
       FooterUI()
     ])
