@@ -22,98 +22,101 @@ export function CurrentSale(props) {
       SaleSummary(props),
     ]),
     SaleActionButtons(props),
-    props.getLocalState('editItemId') && saleItemEditDrawer(props),
+    props.getLocalState('editItemIndex') != null && saleItemEditDrawer(props),
   ]);
 }
 
 function SaleItemsSection(props) {
-  props.ensureLocalStateKey('editItemId', null);
-  const editItemId = props.getLocalState('editItemId');
+  // Edit/select/delete must key by index in current-sale.items — not product_id —
+  // so two lines of the same product (different inventory/batch) stay independent.
+  props.ensureLocalStateKey('editItemIndex', null);
 
   props.ensureLocalStateKey('itemQuery', '');
   const itemQuery = props.getLocalState('itemQuery');
 
-  props.ensureLocalStateKey('selectedItemIds', {
+  props.ensureLocalStateKey('selectedItemIndexes', {
     isAllSelected: false,
-    itemIds: []
+    itemIndexes: []
   });
 
-  const selectAll = props.getLocalState('selectedItemIds').isAllSelected;
-  const selectedItemIds = props.getLocalState('selectedItemIds').itemIds || [];
+  const selectAll = props.getLocalState('selectedItemIndexes').isAllSelected;
+  const selectedItemIndexes = props.getLocalState('selectedItemIndexes').itemIndexes || [];
+
+  const allItems = props.viewModel.getState('current-sale')?.items || [];
 
   const handleSelectAll = () => {
-    const existingState = props.getLocalState('selectedItemIds');
+    const existingState = props.getLocalState('selectedItemIndexes');
     const isSelecting = !existingState.isAllSelected;
-    const itemIds = (props.viewModel.getState('current-sale').items || []).map(
-      item => ({ id: item.product_id, selected: isSelecting })
-    );
+    const itemIndexes = allItems.map((_, index) => ({ index, selected: isSelecting }));
 
-    props.setLocalState('selectedItemIds', {
+    props.setLocalState('selectedItemIndexes', {
       isAllSelected: isSelecting,
-      itemIds,
+      itemIndexes,
     });
   }
 
-  const handleItemSelect = (id) => {
-    const existingState = props.getLocalState('selectedItemIds');
-    const allItems = props.viewModel.getState('current-sale').items || [];
+  const handleItemSelect = (index) => {
+    const existingState = props.getLocalState('selectedItemIndexes');
 
     if (existingState.isAllSelected) {
-      const allItemIds = allItems.map(item => ({
-        id: item.product_id,
-        selected: item.product_id !== id,
+      const allItemIndexes = allItems.map((_, idx) => ({
+        index: idx,
+        selected: idx !== index,
       }));
-      props.setLocalState('selectedItemIds', {
+      props.setLocalState('selectedItemIndexes', {
         isAllSelected: false,
-        itemIds: allItemIds,
+        itemIndexes: allItemIndexes,
       });
       return;
     }
 
-    // Normal toggle logic when selectAll is false
-    if(!existingState.itemIds.map(state => state.id).includes(id)) {
-      props.setLocalState('selectedItemIds', {
+    if (!existingState.itemIndexes.map((state) => state.index).includes(index)) {
+      props.setLocalState('selectedItemIndexes', {
         ...existingState,
-        itemIds: [...existingState.itemIds, {id, selected: true}]
+        itemIndexes: [...existingState.itemIndexes, { index, selected: true }]
       });
       return;
     }
 
-    props.setLocalState('selectedItemIds', {
+    props.setLocalState('selectedItemIndexes', {
       ...existingState,
-      itemIds: existingState.itemIds.map(state => {
-        if (state.id === id) {
+      itemIndexes: existingState.itemIndexes.map((state) => {
+        if (state.index === index) {
           return { ...state, selected: !state.selected };
-        } else {
-          return state;
         }
+        return state;
       })
     });
   }
 
   const handleDelete = () => {
-    const itemIds = selectedItemIds.filter(state => state.selected).map(state => state.id);
+    const indexes = selectedItemIndexes.filter((state) => state.selected).map((state) => state.index);
 
-    props.viewModel.removeItemsFromSale(itemIds);
+    props.viewModel.removeItemsFromSale(indexes);
 
-    props.setLocalState('selectedItemIds', {
+    props.setLocalState('selectedItemIndexes', {
       isAllSelected: false,
-      itemIds: []
+      itemIndexes: []
     });
 
     props.viewModel.filterSaleItems();
   }
 
-  const handleEdit = (id) => {
-    props.setLocalState('editItemId', id);
+  const handleEdit = (index) => {
+    if (!Number.isInteger(index) || index < 0) return;
+    props.setLocalState('editItemIndex', index);
 
     setTimeout(() => {
       props.setLocalState('showEditDrawer', true);
     }, 0);
   }
 
+  const isRowSelected = (index) =>
+    selectAll || selectedItemIndexes.some((state) => state.index === index && state.selected);
+
   const filteredItems = props.viewModel.getState('filtered-items') || [];
   const currentSale = props.viewModel.getState('current-sale') || {};
+  const saleItems = currentSale.items || [];
 
   const financeFormat = (v) => (v == null ? 0 : Number(v)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -155,11 +158,12 @@ function SaleItemsSection(props) {
             ? TableRow({}, [
                 TableDCell({ colSpan: 7, class: 'text-center p-8 text-gray-500' }, 'No items. Add products from the left panel.')
               ])
-            : filteredItems.map((item) =>
-            TableRow({}, [
+            : filteredItems.map((item) => {
+              const saleItemIndex = saleItems.indexOf(item);
+              return TableRow({}, [
               TableDCell({ class: 'w-10' }, [
-                Row({ tagType: 'span', events: {click: () => handleItemSelect(item.product_id)}}, 
-                  IonIcon({ name: (selectAll || selectedItemIds.filter(state => state.id === item.product_id)[0]?.selected) ? 'checkbox' : 'square-outline', class: 'text-indigo-600 text-2xl' }),
+                Row({ tagType: 'span', events: {click: () => handleItemSelect(saleItemIndex)}}, 
+                  IonIcon({ name: isRowSelected(saleItemIndex) ? 'checkbox' : 'square-outline', class: 'text-indigo-600 text-2xl' }),
                 ),
               ]),
               TableDCell({ class: 'pl-2' }, item.product_code),
@@ -168,10 +172,10 @@ function SaleItemsSection(props) {
               TableDCell({}, financeFormat(item.unit_price)),
               TableDCell({}, financeFormat(Number(item.quantity) * Number(item.unit_price))),
               TableDCell({ class: 'text-center px-2 py-2' }, [
-                IconButton({ onClick: () => handleEdit(item.product_id), class: 'text-indigo-600' }, IonIcon({ name: 'pencil-outline', class: 'text-2xl' })),
+                IconButton({ onClick: () => handleEdit(saleItemIndex), class: 'text-indigo-600' }, IonIcon({ name: 'pencil-outline', class: 'text-2xl' })),
               ]),
-            ])
-          )
+            ]);
+            })
         ),
       ]),
       ]),
@@ -343,9 +347,9 @@ function SaleActionButtons(props) {
 function saleItemEditDrawer(props) {
   props.ensureLocalStateKey('showEditDrawer', false);
 
-  const editItemId = props.getLocalState('editItemId');
-
-  const editItem = props.viewModel.getState('current-sale').items.find(item => item.product_id === editItemId);
+  const editItemIndex = props.getLocalState('editItemIndex');
+  const saleItems = props.viewModel.getState('current-sale')?.items || [];
+  const editItem = Number.isInteger(editItemIndex) ? saleItems[editItemIndex] : null;
 
   if (!editItem) return null;
 
@@ -353,12 +357,12 @@ function saleItemEditDrawer(props) {
     props.setLocalState('showEditDrawer', false);
 
     setTimeout(() => {
-      props.setLocalState('editItemId', null);
+      props.setLocalState('editItemIndex', null);
     }, 300);
   }
 
   const handleSave = (editedItem) => {
-    props.viewModel.saveOrderItem(editedItem);
+    props.viewModel.saveOrderItem(editedItem, editItemIndex);
     onClose();
   }
 

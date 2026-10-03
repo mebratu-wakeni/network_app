@@ -138,4 +138,38 @@ describe('SalesVM', () => {
       allocation: 'fifo',
     })
   })
+
+  it('saveOrderItem updates only the line at the given index (same product_id ok)', () => {
+    const vm = new SalesVM()
+    vm.updateState('current-sale', {
+      items: [
+        { product_id: 10, inventory_id: 1, product_code: 'P10', quantity: 1, unit_price: 5 },
+        { product_id: 10, inventory_id: 2, product_code: 'P10', quantity: 2, unit_price: 7 },
+      ],
+    })
+
+    vm.saveOrderItem({ product_id: 10, inventory_id: 2, product_code: 'P10', quantity: 9, unit_price: 7 }, 1)
+
+    const items = vm.getState('current-sale').items
+    expect(items[0]).toMatchObject({ inventory_id: 1, quantity: 1, unit_price: 5 })
+    expect(items[1]).toMatchObject({ inventory_id: 2, quantity: 9, unit_price: 7 })
+  })
+
+  it('removeItemsFromSale removes only selected indexes', () => {
+    const vm = new SalesVM()
+    vm.updateState('current-sale', {
+      items: [
+        { product_id: 10, inventory_id: 1, quantity: 1, unit_price: 5 },
+        { product_id: 10, inventory_id: 2, quantity: 2, unit_price: 7 },
+        { product_id: 11, inventory_id: 3, quantity: 3, unit_price: 9 },
+      ],
+    })
+
+    vm.removeItemsFromSale([1])
+
+    const items = vm.getState('current-sale').items
+    expect(items).toHaveLength(2)
+    expect(items[0].inventory_id).toBe(1)
+    expect(items[1].inventory_id).toBe(3)
+  })
 })
