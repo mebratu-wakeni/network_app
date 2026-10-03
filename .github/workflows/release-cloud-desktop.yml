@@ -327,9 +327,26 @@ jobs:
           esac
           exit $missing
 
-      # Per-file FTPS via curl (more reliable than lftp on this cPanel host).
-      # Windows first for website Managed Win links; manifests last.
+      - name: Attach installers + manifests to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-cloud-v${{ needs.version-lock.outputs.version }}
+          name: Managed Cloud ${{ needs.version-lock.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            staging/publish/${{ needs.version-lock.outputs.version }}/*
+            staging/publish/latest.json
+            staging/publish/latest.yml
+            staging/publish/latest-mac.yml
+            staging/publish/latest-linux.yml
+            staging/publish/index.html
+
+      # cPanel FTPS from GitHub-hosted runners often times out (lftp cd max-retries).
+      # Always attach to GitHub Release above; FTPS is best-effort for the live feed host.
       - name: Publish to downloads host (FTPS via curl)
+        id: ftps
+        continue-on-error: true
         shell: bash
         env:
           DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
@@ -346,23 +363,23 @@ jobs:
 
           echo "Publishing ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/ (curl per-file, Windows first)"
 
-          # URL-encode user/pass for curl FTP URL (handles special chars).
           USER_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_USERNAME"], safe=""))')"
           PASS_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_PASSWORD"], safe=""))')"
-          FTP_BASE="ftps://${USER_ENC}:${PASS_ENC}@${DOWNLOADS_HOST}/${SERVER_DIR}"
+          # Explicit :21 — some hosts only accept FTP/FTPS on the standard port.
+          FTP_BASE="ftps://${USER_ENC}:${PASS_ENC}@${DOWNLOADS_HOST}:21/${SERVER_DIR}"
 
           curl_ftp() {
-            # retries + long timeouts; insecure SSL for typical cPanel FTPS certs
             curl --silent --show-error --fail \
-              --ftp-ssl --ssl-reqd --insecure \
-              --connect-timeout 30 \
-              --speed-time 120 --speed-limit 1000 \
-              --retry 5 --retry-delay 10 --retry-all-errors \
+              --ftp-ssl --ssl-reqd --insecure --ftp-pasv \
+              --connect-timeout 20 --max-time 1800 \
+              --retry 3 --retry-delay 5 --retry-all-errors \
               "$@"
           }
 
+          echo "== probe FTPS =="
+          curl_ftp --list-only "${FTP_BASE}/" | head -20
+
           echo "== ensure remote version directory =="
-          # MKD may fail if exists; ignore.
           curl_ftp --ftp-create-dirs -Q "MKD ${RELEASE_VERSION}" "${FTP_BASE}/" -o /dev/null || true
 
           mapfile -t UPLOADS < <(
@@ -415,10 +432,25 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### Managed Cloud desktop published"
+            echo "### Managed Cloud desktop publish"
             echo ""
             echo "- **Version:** ${{ needs.version-lock.outputs.version }}"
-            echo "- **Downloads:** https://server.masatechplc.com/downloads/cloud-multi/"
-            echo "- **Update feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json"
-            echo "- **Website:** bump Managed links in masatech-website \`content/downloads.json\` to \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` if first-install URLs lag"
+            echo "- **GitHub Release assets:** https://github.com/${{ github.repository }}/releases/tag/desktop-cloud-v${{ needs.version-lock.outputs.version }}"
+            echo "- **FTPS to downloads host:** ${{ steps.ftps.outcome }}"
+            echo "- **Live feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json"
+            echo ""
+            if [ "${{ steps.ftps.outcome }}" != "success" ]; then
+              echo "⚠️ FTPS from GitHub Actions failed/timed out. Installers are on the GitHub Release;"
+              echo "upload the Windows/Mac/Linux files + latest.* into \`downloads/cloud-multi/\` via cPanel File Manager,"
+              echo "or fix FTP allowlisting for GitHub Actions IPs."
+              echo ""
+              echo "Temporary website Managed Win links can point at Release assets, e.g."
+              echo "\`https://github.com/${{ github.repository }}/releases/download/desktop-cloud-v${{ needs.version-lock.outputs.version }}/PharmaSuit-Cloud-Windows-${{ needs.version-lock.outputs.version }}-x64-Setup.exe\`"
+            else
+              echo "Website: bump Managed links to \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` if first-install URLs lag."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.ftps.outcome }}" != "success" ]; then
+            echo "FTPS publish did not succeed (outcome=${{ steps.ftps.outcome }}). Release assets were still attached."
+            exit 1
+          fi
