@@ -14,7 +14,31 @@ export default class HeaderVM extends ViewModel {
     this.navigationVM = options.navigationVM || navigationVM;
     this.router = options.router || null;
     this.intervalId = null;
+    this._activeMenuUnsub = null;
     this.checkHealthStatus();
+    this.watchNavigationMenu();
+  }
+
+  /**
+   * Close the avatar menu whenever the main nav route/menu changes
+   * (Profile / Settings / sidebar), so reopen starts from a clean closed state.
+   */
+  watchNavigationMenu() {
+    if (this._onActiveMenuChange || !this.navigationVM?.subscribe) return;
+    this._onActiveMenuChange = () => {
+      this.closeUserMenu();
+    };
+    this.navigationVM.subscribe('active-menu', this._onActiveMenuChange);
+  }
+
+  closeUserMenu() {
+    if (this.getState('userMenuOpen') === true) {
+      this.updateState('userMenuOpen', false);
+    }
+  }
+
+  toggleUserMenu() {
+    this.updateState('userMenuOpen', this.getState('userMenuOpen') !== true);
   }
 
   /**
@@ -31,7 +55,7 @@ export default class HeaderVM extends ViewModel {
     this.setState('clientConnectionError', null);
     this.setState('connectionRetrying', false);
     this.setState('user', {});
-    this.setState('userMenuActionId', null);
+    this.setState('userMenuOpen', false);
     this._bindConnectionEvents();
   }
 
@@ -332,5 +356,25 @@ export default class HeaderVM extends ViewModel {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    if (this._onActiveMenuChange && this.navigationVM?.unsubscribe) {
+      this.navigationVM.unsubscribe('active-menu', this._onActiveMenuChange);
+      this._onActiveMenuChange = null;
+    }
   }
+}
+
+/** Stable instance — App remorphs must not recreate HeaderVM (stale menu handlers). */
+let sharedHeaderVM = null;
+
+export function getHeaderVM(options = {}) {
+  if (!sharedHeaderVM) {
+    sharedHeaderVM = new HeaderVM(undefined, options);
+  } else {
+    if (options.router) sharedHeaderVM.router = options.router;
+    if (options.navigationVM) {
+      sharedHeaderVM.navigationVM = options.navigationVM;
+      sharedHeaderVM.watchNavigationMenu();
+    }
+  }
+  return sharedHeaderVM;
 }

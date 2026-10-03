@@ -3,10 +3,10 @@
  * Displays application header with health indicators and user info
  */
 const { Row, StatefulRow } = Liteframe;
-import HeaderVM from './HeaderVM.js';
+import { getHeaderVM } from './HeaderVM.js';
 import { getApiAsset } from '../../../electron/config/apiConfig.js';
 import Avatar from '../utils/Avatar.js';
-import { ActionDropdown, ActionItem } from '../utils/Action.js';
+import { IonIcon } from '../utils/Icon.js';
 import {
   HEALTH_ICONS,
   HEADER_CLASSES
@@ -16,6 +16,27 @@ import {
   getOverallHealthStatus
 } from './headerFormatters.js';
 import { Button } from '../utils/Button.js';
+
+/** Resolve HeaderVM for the document-level outside-click closer. */
+let headerMenuVmRef = null;
+let headerMenuOutsideBound = false;
+
+function ensureHeaderMenuOutsideClick() {
+  if (headerMenuOutsideBound) return;
+  headerMenuOutsideBound = true;
+  document.addEventListener(
+    'click',
+    (e) => {
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      const inside = path.some(
+        (node) => node && typeof node.hasAttribute === 'function' && node.hasAttribute('data-header-user-menu')
+      ) || !!(e.target?.closest && e.target.closest('[data-header-user-menu]'));
+      if (inside) return;
+      headerMenuVmRef?.closeUserMenu?.();
+    },
+    true
+  );
+}
 
 /**
  * Render health indicators
@@ -115,38 +136,85 @@ function renderAvatar(user) {
   });
 }
 
+/**
+ * Header avatar menu — intentionally NOT ActionDropdown.
+ * ActionDropdown closed over render-time `open` / onToggle and broke after
+ * Profile/Settings navigation (App remorph + stale EventDelegator handlers).
+ */
 function renderUserMenu(props, user) {
-  const userMenuActionId = props.viewModel.getState('userMenuActionId');
-  const menuActionId = 'header-user-menu';
-  const userMenuOpen = userMenuActionId === menuActionId;
+  ensureHeaderMenuOutsideClick();
+  headerMenuVmRef = props.viewModel;
+
+  const userMenuOpen = props.viewModel.getState('userMenuOpen') === true;
   const menuOptions = props.viewModel.getUserMenuOptions();
-  return ActionDropdown({
-    actionId: menuActionId,
-    open: userMenuOpen,
-    onToggle: () => props.viewModel.updateState(
-      'userMenuActionId',
-      userMenuActionId === menuActionId ? null : menuActionId
-    ),
-    buttonClass: 'rounded-md px-1.5 py-1 bg-transparent hover:bg-gray-100 text-gray-600 transition-colors duration-150',
-    menuClass: 'top-full w-52 py-1',
-    trigger: Row({ class: 'flex items-center gap-1' }, [
-      renderAvatar(user),
-      Row({ class: `w-4 h-4 flex items-center justify-center text-sm text-gray-500 transition-transform duration-200 ease-out ${userMenuOpen ? 'rotate-180' : ''}` }, [
-        Row({
-          tagType: 'ion-icon',
-          class: 'leading-none',
-          attributes: { name: 'chevron-down-outline' }
-        })
-      ])
-    ])
-  }, menuOptions.map((option) => ActionItem({
-    ...option,
-    class: option.danger ? 'mt-1 border-t border-gray-300' : '',
-    onClick: () => {
-      props.viewModel.updateState('userMenuActionId', null);
-      option.onClick();
+
+  const items = menuOptions.map((option) => Row({
+    tagType: 'button',
+    class: [
+      'w-full text-left px-3 py-2 text-sm flex items-center justify-start gap-2 transition-colors font-semibold cursor-pointer',
+      option.danger
+        ? 'text-red-400 hover:bg-red-500/10 mt-1 border-t border-gray-300'
+        : 'text-indigo-600 hover:bg-indigo-500/10'
+    ].join(' '),
+    attributes: { type: 'button', 'data-header-menu-item': option.key || '' },
+    events: {
+      click: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        props.viewModel.closeUserMenu();
+        // Defer navigation so the closed morph isn't raced by App active-menu remorph.
+        setTimeout(() => {
+          try { option.onClick?.(); } catch (_) {}
+        }, 0);
+      }
     }
-  })));
+  }, [
+    IonIcon({ name: option.icon, class: 'text-xl font-semibold' }),
+    option.label
+  ]));
+
+  return Row({
+    class: 'relative inline-flex',
+    attributes: { 'data-header-user-menu': '' }
+  }, [
+    Row({
+      tagType: 'button',
+      class: 'inline-flex items-center gap-1 rounded-md px-1.5 py-1 bg-transparent hover:bg-gray-100 text-gray-600 transition-colors duration-150 focus:outline-none',
+      attributes: {
+        type: 'button',
+        'aria-haspopup': 'menu',
+        'aria-expanded': userMenuOpen ? 'true' : 'false',
+        title: 'Account menu'
+      },
+      events: {
+        click: (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // Always read live VM state — never close over render-time open/closed.
+          props.viewModel.toggleUserMenu();
+        }
+      }
+    }, [
+      Row({ class: 'flex items-center gap-1' }, [
+        renderAvatar(user),
+        Row({
+          class: `w-4 h-4 flex items-center justify-center text-sm text-gray-500 transition-transform duration-200 ease-out ${userMenuOpen ? 'rotate-180' : ''}`
+        }, [
+          Row({
+            tagType: 'ion-icon',
+            class: 'leading-none',
+            attributes: { name: 'chevron-down-outline' }
+          })
+        ])
+      ])
+    ]),
+    userMenuOpen
+      ? Row({
+          class: 'z-[100] absolute right-0 top-full mt-2 min-w-52 rounded-md bg-gray-200 border border-gray-300 shadow-lg py-1',
+          attributes: { role: 'menu' }
+        }, items)
+      : null
+  ]);
 }
 
 /**
@@ -179,7 +247,7 @@ function renderHeader(props) {
   props.ensureStateKey('clientConnectionError');
   props.ensureStateKey('connectionRetrying');
   props.ensureStateKey('user');
-  props.ensureStateKey('userMenuActionId');
+  props.ensureStateKey('userMenuOpen');
   
   props.viewModel.syncRuntimeStatus();
   // Sync user data from navigation VM
@@ -200,11 +268,31 @@ function renderHeader(props) {
 }
 
 /**
- * Header UI Component
- * @returns {HTMLElement} Header component
+ * Header UI — independent StatefulRow.
+ *
+ * Mount once into a stable host from App() (same pattern as Router `main`).
+ * Do not call this from inside App/MainLayout paint: nested StatefulRows are
+ * torn down/recreated when App remorphs on `active-menu` (Profile/Settings),
+ * which breaks the account dropdown.
  */
 export default function HeaderUI({ router = null, navigationVM = null } = {}) {
-  const viewModel = new HeaderVM(undefined, { router, navigationVM });
-  
-  return StatefulRow({ viewModel, stateKeys: ['serverHealth', 'dbHealth', 'apiHealth', 'appMode', 'clientConnected', 'clientServerUrl', 'clientConnectionError', 'connectionRetrying', 'user', 'userMenuActionId'] }, renderHeader);
+  const viewModel = getHeaderVM({ router, navigationVM });
+  headerMenuVmRef = viewModel;
+
+  return StatefulRow({
+    id: 'AppHeader',
+    viewModel,
+    stateKeys: [
+      'serverHealth',
+      'dbHealth',
+      'apiHealth',
+      'appMode',
+      'clientConnected',
+      'clientServerUrl',
+      'clientConnectionError',
+      'connectionRetrying',
+      'user',
+      'userMenuOpen'
+    ]
+  }, renderHeader);
 }

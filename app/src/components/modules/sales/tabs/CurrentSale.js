@@ -22,7 +22,7 @@ export function CurrentSale(props) {
       SaleSummary(props),
     ]),
     SaleActionButtons(props),
-    props.getLocalState('editItemId') && saleItemEditDrawer(props),
+    props.getLocalState('editItemId') != null && saleItemEditDrawer(props),
   ]);
 }
 
@@ -40,13 +40,13 @@ function SaleItemsSection(props) {
 
   const selectAll = props.getLocalState('selectedItemIds').isAllSelected;
   const selectedItemIds = props.getLocalState('selectedItemIds').itemIds || [];
+  // Selection/edit key = index in current-sale.items (not product_id).
+  const saleItems = props.viewModel.getState('current-sale')?.items || [];
 
   const handleSelectAll = () => {
     const existingState = props.getLocalState('selectedItemIds');
     const isSelecting = !existingState.isAllSelected;
-    const itemIds = (props.viewModel.getState('current-sale').items || []).map(
-      item => ({ id: item.product_id, selected: isSelecting })
-    );
+    const itemIds = saleItems.map((_, index) => ({ id: index, selected: isSelecting }));
 
     props.setLocalState('selectedItemIds', {
       isAllSelected: isSelecting,
@@ -56,12 +56,11 @@ function SaleItemsSection(props) {
 
   const handleItemSelect = (id) => {
     const existingState = props.getLocalState('selectedItemIds');
-    const allItems = props.viewModel.getState('current-sale').items || [];
 
     if (existingState.isAllSelected) {
-      const allItemIds = allItems.map(item => ({
-        id: item.product_id,
-        selected: item.product_id !== id,
+      const allItemIds = saleItems.map((_, index) => ({
+        id: index,
+        selected: index !== id,
       }));
       props.setLocalState('selectedItemIds', {
         isAllSelected: false,
@@ -112,8 +111,16 @@ function SaleItemsSection(props) {
     }, 0);
   }
 
-  const filteredItems = props.viewModel.getState('filtered-items') || [];
-  const currentSale = props.viewModel.getState('current-sale') || {};
+  // Build rows from current-sale.items so each row carries its real array index.
+  // (filtered-items is a ViewModel clone — indexOf against it cannot recover the index.)
+  const query = (itemQuery || '').toLowerCase();
+  const visibleRows = saleItems
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+      if (!query) return true;
+      return (item.product_name || '').toLowerCase().includes(query)
+        || (item.product_code || '').toLowerCase().includes(query);
+    });
 
   const financeFormat = (v) => (v == null ? 0 : Number(v)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -151,15 +158,15 @@ function SaleItemsSection(props) {
         ]),
         TableBody(
           {},
-          filteredItems.length === 0
+          visibleRows.length === 0
             ? TableRow({}, [
                 TableDCell({ colSpan: 7, class: 'text-center p-8 text-gray-500' }, 'No items. Add products from the left panel.')
               ])
-            : filteredItems.map((item) =>
+            : visibleRows.map(({ item, index }) =>
             TableRow({}, [
               TableDCell({ class: 'w-10' }, [
-                Row({ tagType: 'span', events: {click: () => handleItemSelect(item.product_id)}}, 
-                  IonIcon({ name: (selectAll || selectedItemIds.filter(state => state.id === item.product_id)[0]?.selected) ? 'checkbox' : 'square-outline', class: 'text-indigo-600 text-2xl' }),
+                Row({ tagType: 'span', events: {click: () => handleItemSelect(index)}}, 
+                  IonIcon({ name: (selectAll || selectedItemIds.filter(state => state.id === index)[0]?.selected) ? 'checkbox' : 'square-outline', class: 'text-indigo-600 text-2xl' }),
                 ),
               ]),
               TableDCell({ class: 'pl-2' }, item.product_code),
@@ -168,7 +175,7 @@ function SaleItemsSection(props) {
               TableDCell({}, financeFormat(item.unit_price)),
               TableDCell({}, financeFormat(Number(item.quantity) * Number(item.unit_price))),
               TableDCell({ class: 'text-center px-2 py-2' }, [
-                IconButton({ onClick: () => handleEdit(item.product_id), class: 'text-indigo-600' }, IonIcon({ name: 'pencil-outline', class: 'text-2xl' })),
+                IconButton({ onClick: () => handleEdit(index), class: 'text-indigo-600' }, IonIcon({ name: 'pencil-outline', class: 'text-2xl' })),
               ]),
             ])
           )
@@ -344,8 +351,8 @@ function saleItemEditDrawer(props) {
   props.ensureLocalStateKey('showEditDrawer', false);
 
   const editItemId = props.getLocalState('editItemId');
-
-  const editItem = props.viewModel.getState('current-sale').items.find(item => item.product_id === editItemId);
+  const saleItems = props.viewModel.getState('current-sale')?.items || [];
+  const editItem = Number.isInteger(editItemId) ? saleItems[editItemId] : null;
 
   if (!editItem) return null;
 
@@ -358,7 +365,7 @@ function saleItemEditDrawer(props) {
   }
 
   const handleSave = (editedItem) => {
-    props.viewModel.saveOrderItem(editedItem);
+    props.viewModel.saveOrderItem(editedItem, editItemId);
     onClose();
   }
 

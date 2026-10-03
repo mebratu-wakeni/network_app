@@ -30,11 +30,22 @@ function ActionDropdown(props, children) {
     actionId,
     open = false,
     onToggle = () => { },
+    // Prefer an explicit closer for outside-click / closeAll — must not toggle open.
+    onClose = null,
     class: className = '',
     buttonClass = '',
     menuClass = '',
     trigger = null
   } = props;
+
+  const forceClose = () => {
+    if (typeof onClose === 'function') {
+      onClose();
+      return;
+    }
+    // Fallback: only toggle when this render thinks we are open (closes; never opens).
+    if (open) onToggle();
+  };
 
   const rootClass = twMerge(
     'relative inline-flex',
@@ -68,10 +79,13 @@ function ActionDropdown(props, children) {
     Row({
       tagType: 'button',
       class: triggerClass,
+      attributes: { type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': open ? 'true' : 'false' },
       events: {
         click: (e) => {
           e.stopPropagation(); // critical
-          if (!open) {
+          // Use live registry membership — never trust render-time `open` closure.
+          const isOpen = openDropdownControllers.has(actionId);
+          if (!isOpen) {
             closeAllOpenDropdowns(actionId);
           }
           onToggle();
@@ -91,7 +105,7 @@ function ActionDropdown(props, children) {
   if (open) {
     openDropdownControllers.set(actionId, {
       getOpenState: () => true,
-      setOpenState: () => onToggle()
+      setOpenState: forceClose
     });
   } else {
     openDropdownControllers.delete(actionId);

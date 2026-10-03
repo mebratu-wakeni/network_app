@@ -275,26 +275,27 @@ export class SalesVM extends ViewModel {
     this.filterSaleItems();
   }
 
-  removeItemsFromSale(itemIds) {
+  removeItemsFromSale(itemIndexes) {
+    const indexes = new Set((itemIndexes || []).map((i) => Number(i)));
     const currentSale = this.getState('current-sale') || {};
-    const items = (currentSale.items || []).filter((item) => !itemIds.includes(item.product_id));
+    const items = (currentSale.items || []).filter((_, idx) => !indexes.has(idx));
     this.updateState('current-sale', { ...currentSale, items });
     this.filterSaleItems();
   }
 
-  updateSaleItem(itemId, field, value) {
+  updateSaleItem(itemIndex, field, value) {
     const currentSale = this.getState('current-sale') || {};
-    const items = (currentSale.items || []).map((item) =>
-      item.product_id === itemId ? { ...item, [field]: value } : item
+    const items = (currentSale.items || []).map((item, idx) =>
+      idx === itemIndex ? { ...item, [field]: value } : item
     );
     this.updateState('current-sale', { ...currentSale, items });
     this.updateState('loading', false);
   }
 
-  saveOrderItem(editedItem) {
+  saveOrderItem(editedItem, itemIndex) {
     const currentSale = this.getState('current-sale') || {};
-    const items = (currentSale.items || []).map((item) =>
-      item.product_id === editedItem.product_id ? { ...item, ...editedItem } : item
+    const items = (currentSale.items || []).map((item, idx) =>
+      idx === itemIndex ? { ...item, ...editedItem } : item
     );
     this.updateState('current-sale', { ...currentSale, items });
     this.filterSaleItems();
