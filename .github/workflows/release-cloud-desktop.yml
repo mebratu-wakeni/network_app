@@ -215,7 +215,7 @@ jobs:
   publish:
     needs: [version-lock, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
     # Do NOT publish a partial feed. A failed Windows (or Mac/Linux) matrix leg used to
     # still upload latest.json without that platform and wipe the previous download link.
     if: ${{ always() && needs.build.result == 'success' && needs.version-lock.result == 'success' }}
