@@ -327,9 +327,9 @@ jobs:
           esac
           exit $missing
 
-      # Per-file lftp puts (Windows first). Avoid recursive rm — it hung on cPanel FTPS.
-      # Manifests are updated only after all installer uploads succeed.
-      - name: Publish to downloads host (FTPS via lftp)
+      # Per-file FTPS via curl (more reliable than lftp on this cPanel host).
+      # Windows first for website Managed Win links; manifests last.
+      - name: Publish to downloads host (FTPS via curl)
         shell: bash
         env:
           DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
@@ -339,59 +339,32 @@ jobs:
           RELEASE_VERSION: ${{ needs.version-lock.outputs.version }}
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq lftp
           SERVER_DIR="${DOWNLOADS_SERVER_DIR%/}"
           VERSION_DIR="staging/publish/${RELEASE_VERSION}"
           test -d "$VERSION_DIR"
           test -f staging/publish/latest.json
 
-          echo "Publishing ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/ (per-file put, Windows first)"
+          echo "Publishing ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/ (curl per-file, Windows first)"
 
-          TMPHOME="$(mktemp -d)"
-          cleanup() { rm -rf "$TMPHOME"; }
-          trap cleanup EXIT
-          umask 077
-          printf 'machine %s\nlogin %s\npassword %s\n' \
-            "$DOWNLOADS_HOST" "$DOWNLOADS_USERNAME" "$DOWNLOADS_PASSWORD" > "$TMPHOME/.netrc"
-          chmod 600 "$TMPHOME/.netrc"
+          # URL-encode user/pass for curl FTP URL (handles special chars).
+          USER_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_USERNAME"], safe=""))')"
+          PASS_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_PASSWORD"], safe=""))')"
+          FTP_BASE="ftps://${USER_ENC}:${PASS_ENC}@${DOWNLOADS_HOST}/${SERVER_DIR}"
 
-          lftp_base() {
-            cat <<EOF
-          set cmd:fail-exit true
-          set cmd:interactive false
-          set ftp:ssl-force true
-          set ftp:ssl-protect-data true
-          set ftp:passive-mode true
-          set ssl:verify-certificate no
-          set net:timeout 300
-          set net:max-retries 10
-          set net:reconnect-interval-base 10
-          set xfer:clobber true
-          open ftps://${DOWNLOADS_HOST}
-          cd ${SERVER_DIR}
-          EOF
-          }
-
-          run_lftp() {
-            local script
-            script="$(mktemp)"
-            { lftp_base; cat; } | sed 's/^[[:space:]]*//' > "$script"
-            echo "---- lftp ----"
-            cat "$script"
-            HOME="$TMPHOME" lftp -f "$script"
-            rm -f "$script"
+          curl_ftp() {
+            # retries + long timeouts; insecure SSL for typical cPanel FTPS certs
+            curl --silent --show-error --fail \
+              --ftp-ssl --ssl-reqd --insecure \
+              --connect-timeout 30 \
+              --speed-time 120 --speed-limit 1000 \
+              --retry 5 --retry-delay 10 --retry-all-errors \
+              "$@"
           }
 
           echo "== ensure remote version directory =="
-          run_lftp <<EOF
-          set cmd:fail-exit false
-          mkdir ${RELEASE_VERSION}
-          set cmd:fail-exit true
-          bye
-          EOF
+          # MKD may fail if exists; ignore.
+          curl_ftp --ftp-create-dirs -Q "MKD ${RELEASE_VERSION}" "${FTP_BASE}/" -o /dev/null || true
 
-          # Ordered upload list: Windows first for masatechplc.com Managed links.
           mapfile -t UPLOADS < <(
             cd "$VERSION_DIR"
             preferred=(
@@ -426,26 +399,15 @@ jobs:
             local_path="${VERSION_DIR}/${f}"
             bytes="$(wc -c < "$local_path" | tr -d ' ')"
             echo "== upload ${f} (${bytes} bytes) =="
-            # Remove only this remote name if a tiny/corrupt stub exists; never rm -r.
-            run_lftp <<EOF
-          set cmd:fail-exit false
-          rm -f ${RELEASE_VERSION}/${f}
-          set cmd:fail-exit true
-          put -c -O ${RELEASE_VERSION} ${local_path}
-          bye
-          EOF
+            curl_ftp --upload-file "${local_path}" "${FTP_BASE}/${RELEASE_VERSION}/${f}"
             echo "== done ${f} =="
           done
 
           echo "== upload update manifests =="
-          run_lftp <<EOF
-          put -O . staging/publish/latest.json
-          put -O . staging/publish/latest.yml
-          put -O . staging/publish/latest-mac.yml
-          put -O . staging/publish/latest-linux.yml
-          put -O . staging/publish/index.html
-          bye
-          EOF
+          for m in latest.json latest.yml latest-mac.yml latest-linux.yml index.html; do
+            echo "put ${m}"
+            curl_ftp --upload-file "staging/publish/${m}" "${FTP_BASE}/${m}"
+          done
 
           echo "FTPS publish complete for ${RELEASE_VERSION}"
 
