@@ -22,96 +22,105 @@ export function CurrentSale(props) {
       SaleSummary(props),
     ]),
     SaleActionButtons(props),
-    props.getLocalState('editItemIndex') != null && saleItemEditDrawer(props),
+    props.getLocalState('editItemId') != null && saleItemEditDrawer(props),
   ]);
 }
 
 function SaleItemsSection(props) {
-  // Select/edit/delete by index in current-sale.items (not product_id/code).
-  props.ensureLocalStateKey('editItemIndex', null);
+  props.ensureLocalStateKey('editItemId', null);
+  const editItemId = props.getLocalState('editItemId');
 
   props.ensureLocalStateKey('itemQuery', '');
   const itemQuery = props.getLocalState('itemQuery');
 
-  props.ensureLocalStateKey('selectedItemIndexes', {
+  props.ensureLocalStateKey('selectedItemIds', {
     isAllSelected: false,
-    itemIndexes: []
+    itemIds: []
   });
 
-  const selectAll = props.getLocalState('selectedItemIndexes').isAllSelected;
-  const selectedItemIndexes = props.getLocalState('selectedItemIndexes').itemIndexes || [];
+  const selectAll = props.getLocalState('selectedItemIds').isAllSelected;
+  const selectedItemIds = props.getLocalState('selectedItemIds').itemIds || [];
+  // Selection/edit key = index in current-sale.items (not product_id).
   const saleItems = props.viewModel.getState('current-sale')?.items || [];
 
   const handleSelectAll = () => {
-    const existingState = props.getLocalState('selectedItemIndexes');
+    const existingState = props.getLocalState('selectedItemIds');
     const isSelecting = !existingState.isAllSelected;
-    const itemIndexes = saleItems.map((_, index) => ({ index, selected: isSelecting }));
+    const itemIds = saleItems.map((_, index) => ({ id: index, selected: isSelecting }));
 
-    props.setLocalState('selectedItemIndexes', {
+    props.setLocalState('selectedItemIds', {
       isAllSelected: isSelecting,
-      itemIndexes,
+      itemIds,
     });
   }
 
-  const handleItemSelect = (index) => {
-    const existingState = props.getLocalState('selectedItemIndexes');
+  const handleItemSelect = (id) => {
+    const existingState = props.getLocalState('selectedItemIds');
 
     if (existingState.isAllSelected) {
-      const allItemIndexes = saleItems.map((_, idx) => ({
-        index: idx,
-        selected: idx !== index,
+      const allItemIds = saleItems.map((_, index) => ({
+        id: index,
+        selected: index !== id,
       }));
-      props.setLocalState('selectedItemIndexes', {
+      props.setLocalState('selectedItemIds', {
         isAllSelected: false,
-        itemIndexes: allItemIndexes,
+        itemIds: allItemIds,
       });
       return;
     }
 
-    if (!existingState.itemIndexes.map((state) => state.index).includes(index)) {
-      props.setLocalState('selectedItemIndexes', {
+    // Normal toggle logic when selectAll is false
+    if(!existingState.itemIds.map(state => state.id).includes(id)) {
+      props.setLocalState('selectedItemIds', {
         ...existingState,
-        itemIndexes: [...existingState.itemIndexes, { index, selected: true }]
+        itemIds: [...existingState.itemIds, {id, selected: true}]
       });
       return;
     }
 
-    props.setLocalState('selectedItemIndexes', {
+    props.setLocalState('selectedItemIds', {
       ...existingState,
-      itemIndexes: existingState.itemIndexes.map((state) => {
-        if (state.index === index) {
+      itemIds: existingState.itemIds.map(state => {
+        if (state.id === id) {
           return { ...state, selected: !state.selected };
+        } else {
+          return state;
         }
-        return state;
       })
     });
   }
 
   const handleDelete = () => {
-    const indexes = selectedItemIndexes.filter((state) => state.selected).map((state) => state.index);
+    const itemIds = selectedItemIds.filter(state => state.selected).map(state => state.id);
 
-    props.viewModel.removeItemsFromSale(indexes);
+    props.viewModel.removeItemsFromSale(itemIds);
 
-    props.setLocalState('selectedItemIndexes', {
+    props.setLocalState('selectedItemIds', {
       isAllSelected: false,
-      itemIndexes: []
+      itemIds: []
     });
 
     props.viewModel.filterSaleItems();
   }
 
-  const handleEdit = (index) => {
-    props.setLocalState('editItemIndex', index);
+  const handleEdit = (id) => {
+    props.setLocalState('editItemId', id);
 
     setTimeout(() => {
       props.setLocalState('showEditDrawer', true);
     }, 0);
   }
 
-  const isRowSelected = (index) =>
-    selectAll || selectedItemIndexes.some((state) => state.index === index && state.selected);
-
-  const filteredItems = props.viewModel.getState('filtered-items') || [];
+  // Build rows from current-sale.items so each row carries its real array index.
+  // (filtered-items is a ViewModel clone — indexOf against it cannot recover the index.)
+  const query = (itemQuery || '').toLowerCase();
+  const visibleRows = saleItems
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+      if (!query) return true;
+      return (item.product_name || '').toLowerCase().includes(query)
+        || (item.product_code || '').toLowerCase().includes(query);
+    });
 
   const financeFormat = (v) => (v == null ? 0 : Number(v)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -149,16 +158,15 @@ function SaleItemsSection(props) {
         ]),
         TableBody(
           {},
-          filteredItems.length === 0
+          visibleRows.length === 0
             ? TableRow({}, [
                 TableDCell({ colSpan: 7, class: 'text-center p-8 text-gray-500' }, 'No items. Add products from the left panel.')
               ])
-            : filteredItems.map((item) => {
-              const itemIndex = saleItems.indexOf(item);
-              return TableRow({}, [
+            : visibleRows.map(({ item, index }) =>
+            TableRow({}, [
               TableDCell({ class: 'w-10' }, [
-                Row({ tagType: 'span', events: {click: () => handleItemSelect(itemIndex)}}, 
-                  IonIcon({ name: isRowSelected(itemIndex) ? 'checkbox' : 'square-outline', class: 'text-indigo-600 text-2xl' }),
+                Row({ tagType: 'span', events: {click: () => handleItemSelect(index)}}, 
+                  IonIcon({ name: (selectAll || selectedItemIds.filter(state => state.id === index)[0]?.selected) ? 'checkbox' : 'square-outline', class: 'text-indigo-600 text-2xl' }),
                 ),
               ]),
               TableDCell({ class: 'pl-2' }, item.product_code),
@@ -167,10 +175,10 @@ function SaleItemsSection(props) {
               TableDCell({}, financeFormat(item.unit_price)),
               TableDCell({}, financeFormat(Number(item.quantity) * Number(item.unit_price))),
               TableDCell({ class: 'text-center px-2 py-2' }, [
-                IconButton({ onClick: () => handleEdit(itemIndex), class: 'text-indigo-600' }, IonIcon({ name: 'pencil-outline', class: 'text-2xl' })),
+                IconButton({ onClick: () => handleEdit(index), class: 'text-indigo-600' }, IonIcon({ name: 'pencil-outline', class: 'text-2xl' })),
               ]),
-            ]);
-            })
+            ])
+          )
         ),
       ]),
       ]),
@@ -342,9 +350,9 @@ function SaleActionButtons(props) {
 function saleItemEditDrawer(props) {
   props.ensureLocalStateKey('showEditDrawer', false);
 
-  const editItemIndex = props.getLocalState('editItemIndex');
+  const editItemId = props.getLocalState('editItemId');
   const saleItems = props.viewModel.getState('current-sale')?.items || [];
-  const editItem = Number.isInteger(editItemIndex) ? saleItems[editItemIndex] : null;
+  const editItem = Number.isInteger(editItemId) ? saleItems[editItemId] : null;
 
   if (!editItem) return null;
 
@@ -352,12 +360,12 @@ function saleItemEditDrawer(props) {
     props.setLocalState('showEditDrawer', false);
 
     setTimeout(() => {
-      props.setLocalState('editItemIndex', null);
+      props.setLocalState('editItemId', null);
     }, 300);
   }
 
   const handleSave = (editedItem) => {
-    props.viewModel.saveOrderItem(editedItem, editItemIndex);
+    props.viewModel.saveOrderItem(editedItem, editItemId);
     onClose();
   }
 
