@@ -275,37 +275,28 @@ export class SalesVM extends ViewModel {
     this.filterSaleItems();
   }
 
-  removeItemsFromSale(itemIndexes) {
-    const indexes = new Set((itemIndexes || []).map((i) => Number(i)));
+  removeItemsFromSale(itemIds) {
     const currentSale = this.getState('current-sale') || {};
-    const items = (currentSale.items || []).filter((_, idx) => !indexes.has(idx));
+    const items = (currentSale.items || []).filter((item) => !itemIds.includes(item.product_id));
     this.updateState('current-sale', { ...currentSale, items });
     this.filterSaleItems();
   }
 
-  updateSaleItem(itemIndex, field, value) {
+  updateSaleItem(itemId, field, value) {
     const currentSale = this.getState('current-sale') || {};
-    const items = currentSale.items || [];
-    if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length) {
-      return;
-    }
-    const nextItems = items.map((item, idx) =>
-      idx === itemIndex ? { ...item, [field]: value } : item
+    const items = (currentSale.items || []).map((item) =>
+      item.product_id === itemId ? { ...item, [field]: value } : item
     );
-    this.updateState('current-sale', { ...currentSale, items: nextItems });
+    this.updateState('current-sale', { ...currentSale, items });
     this.updateState('loading', false);
   }
 
-  saveOrderItem(editedItem, itemIndex) {
+  saveOrderItem(editedItem) {
     const currentSale = this.getState('current-sale') || {};
-    const items = currentSale.items || [];
-    if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length) {
-      return;
-    }
-    const nextItems = items.map((item, idx) =>
-      idx === itemIndex ? { ...item, ...editedItem } : item
+    const items = (currentSale.items || []).map((item) =>
+      item.product_id === editedItem.product_id ? { ...item, ...editedItem } : item
     );
-    this.updateState('current-sale', { ...currentSale, items: nextItems });
+    this.updateState('current-sale', { ...currentSale, items });
     this.filterSaleItems();
   }
 
