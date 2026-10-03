@@ -327,9 +327,8 @@ jobs:
           esac
           exit $missing
 
-      # FTP-Deploy-Action timed out on ~100MB+ installers (data socket) and also synced
-      # away previous version folders. Use lftp: long timeouts, retries, no remote deletes.
-      # Upload the version folder first; only then replace latest.* manifests.
+      # Per-file lftp puts (Windows first). Avoid recursive rm — it hung on cPanel FTPS.
+      # Manifests are updated only after all installer uploads succeed.
       - name: Publish to downloads host (FTPS via lftp)
         shell: bash
         env:
@@ -347,42 +346,53 @@ jobs:
           test -d "$VERSION_DIR"
           test -f staging/publish/latest.json
 
-          echo "Publishing ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/ (no remote deletes)"
+          echo "Publishing ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/ (per-file put, Windows first)"
 
           TMPHOME="$(mktemp -d)"
-          LFTP_SCRIPT="$(mktemp)"
-          cleanup() { rm -rf "$TMPHOME"; rm -f "$LFTP_SCRIPT"; }
+          cleanup() { rm -rf "$TMPHOME"; }
           trap cleanup EXIT
-
-          # Prefer netrc so the password is not embedded in the lftp command stream.
           umask 077
           printf 'machine %s\nlogin %s\npassword %s\n' \
             "$DOWNLOADS_HOST" "$DOWNLOADS_USERNAME" "$DOWNLOADS_PASSWORD" > "$TMPHOME/.netrc"
           chmod 600 "$TMPHOME/.netrc"
 
-          cat > "$LFTP_SCRIPT" <<EOF
+          lftp_base() {
+            cat <<EOF
           set cmd:fail-exit true
+          set cmd:interactive false
           set ftp:ssl-force true
           set ftp:ssl-protect-data true
           set ftp:passive-mode true
           set ssl:verify-certificate no
-          set net:timeout 600
-          set net:max-retries 20
-          set net:reconnect-interval-base 15
-          set net:reconnect-interval-multiplier 1.5
+          set net:timeout 300
+          set net:max-retries 10
+          set net:reconnect-interval-base 10
           set xfer:clobber true
-          set xfer:max-redirections 0
-          set mirror:parallel-transfer-count 1
           open ftps://${DOWNLOADS_HOST}
           cd ${SERVER_DIR}
-          # Drop incomplete leftovers from prior failed publishes, then recreate.
+          EOF
+          }
+
+          run_lftp() {
+            local script
+            script="$(mktemp)"
+            { lftp_base; cat; } | sed 's/^[[:space:]]*//' > "$script"
+            echo "---- lftp ----"
+            cat "$script"
+            HOME="$TMPHOME" lftp -f "$script"
+            rm -f "$script"
+          }
+
+          echo "== ensure remote version directory =="
+          run_lftp <<EOF
           set cmd:fail-exit false
-          rm -r -f ${RELEASE_VERSION}
-          set cmd:fail-exit true
           mkdir ${RELEASE_VERSION}
-          cd ${RELEASE_VERSION}
-          # Windows first (website Managed Win10/11 links), then Linux, then Mac.
-          $(
+          set cmd:fail-exit true
+          bye
+          EOF
+
+          # Ordered upload list: Windows first for masatechplc.com Managed links.
+          mapfile -t UPLOADS < <(
             cd "$VERSION_DIR"
             preferred=(
               PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-x64-Setup.exe
@@ -401,17 +411,34 @@ jobs:
             declare -A seen=()
             for f in "${preferred[@]}"; do
               if [ -f "$f" ]; then
-                echo "put -c -O . ${VERSION_DIR}/$f"
+                printf '%s\n' "$f"
                 seen["$f"]=1
               fi
             done
             for f in *; do
               [ -f "$f" ] || continue
               [ -n "${seen[$f]+x}" ] && continue
-              echo "put -c -O . ${VERSION_DIR}/$f"
+              printf '%s\n' "$f"
             done
           )
-          cd ..
+
+          for f in "${UPLOADS[@]}"; do
+            local_path="${VERSION_DIR}/${f}"
+            bytes="$(wc -c < "$local_path" | tr -d ' ')"
+            echo "== upload ${f} (${bytes} bytes) =="
+            # Remove only this remote name if a tiny/corrupt stub exists; never rm -r.
+            run_lftp <<EOF
+          set cmd:fail-exit false
+          rm -f ${RELEASE_VERSION}/${f}
+          set cmd:fail-exit true
+          put -c -O ${RELEASE_VERSION} ${local_path}
+          bye
+          EOF
+            echo "== done ${f} =="
+          done
+
+          echo "== upload update manifests =="
+          run_lftp <<EOF
           put -O . staging/publish/latest.json
           put -O . staging/publish/latest.yml
           put -O . staging/publish/latest-mac.yml
@@ -419,13 +446,6 @@ jobs:
           put -O . staging/publish/index.html
           bye
           EOF
-
-          # Strip leading spaces from the generated script lines.
-          sed -i 's/^[[:space:]]*//' "$LFTP_SCRIPT"
-          echo "---- lftp script (credentials via netrc) ----"
-          sed 's/password .*/password <redacted>/' "$LFTP_SCRIPT" || cat "$LFTP_SCRIPT"
-
-          HOME="$TMPHOME" lftp -f "$LFTP_SCRIPT"
 
           echo "FTPS publish complete for ${RELEASE_VERSION}"
 
