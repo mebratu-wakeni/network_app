@@ -349,15 +349,16 @@ jobs:
 
           echo "Publishing ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/ (no remote deletes)"
 
-          NETRC="$(mktemp)"
+          TMPHOME="$(mktemp -d)"
           LFTP_SCRIPT="$(mktemp)"
-          cleanup() { rm -f "$NETRC" "$LFTP_SCRIPT"; }
+          cleanup() { rm -rf "$TMPHOME"; rm -f "$LFTP_SCRIPT"; }
           trap cleanup EXIT
 
           # Prefer netrc so the password is not embedded in the lftp command stream.
           umask 077
           printf 'machine %s\nlogin %s\npassword %s\n' \
-            "$DOWNLOADS_HOST" "$DOWNLOADS_USERNAME" "$DOWNLOADS_PASSWORD" > "$NETRC"
+            "$DOWNLOADS_HOST" "$DOWNLOADS_USERNAME" "$DOWNLOADS_PASSWORD" > "$TMPHOME/.netrc"
+          chmod 600 "$TMPHOME/.netrc"
 
           cat > "$LFTP_SCRIPT" <<EOF
           set cmd:fail-exit true
@@ -366,14 +367,49 @@ jobs:
           set ftp:passive-mode true
           set ssl:verify-certificate no
           set net:timeout 600
-          set net:max-retries 15
-          set net:reconnect-interval-base 20
+          set net:max-retries 20
+          set net:reconnect-interval-base 15
           set net:reconnect-interval-multiplier 1.5
           set xfer:clobber true
+          set xfer:max-redirections 0
           set mirror:parallel-transfer-count 1
           open ftps://${DOWNLOADS_HOST}
           cd ${SERVER_DIR}
-          mirror -R --no-delete --verbose --parallel=1 ${VERSION_DIR} ${RELEASE_VERSION}
+          # Drop incomplete leftovers from prior failed publishes, then recreate.
+          glob -a rm -r -f ${RELEASE_VERSION} || true
+          mkdir -p ${RELEASE_VERSION}
+          cd ${RELEASE_VERSION}
+          # Windows first (website Managed Win10/11 links), then Linux, then Mac.
+          $(
+            cd "$VERSION_DIR"
+            preferred=(
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-x64-Setup.exe
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-x64-Setup.exe.blockmap
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-ia32-Setup.exe
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-ia32-Setup.exe.blockmap
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-Setup.exe
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-Setup.exe.blockmap
+              PharmaSuit-Cloud-Linux-${RELEASE_VERSION}.AppImage
+              PharmaSuit-Cloud-Linux-${RELEASE_VERSION}.AppImage.blockmap
+              PharmaSuit-Cloud-Mac-${RELEASE_VERSION}-Installer.zip
+              PharmaSuit-Cloud-Mac-${RELEASE_VERSION}-Installer.zip.blockmap
+              PharmaSuit-Cloud-Mac-${RELEASE_VERSION}-Installer.dmg
+              PharmaSuit-Cloud-Mac-${RELEASE_VERSION}-Installer.dmg.blockmap
+            )
+            declare -A seen=()
+            for f in "${preferred[@]}"; do
+              if [ -f "$f" ]; then
+                echo "put -c -O . ${VERSION_DIR}/$f"
+                seen["$f"]=1
+              fi
+            done
+            for f in *; do
+              [ -f "$f" ] || continue
+              [ -n "${seen[$f]+x}" ] && continue
+              echo "put -c -O . ${VERSION_DIR}/$f"
+            done
+          )
+          cd ..
           put -O . staging/publish/latest.json
           put -O . staging/publish/latest.yml
           put -O . staging/publish/latest-mac.yml
@@ -384,9 +420,10 @@ jobs:
 
           # Strip leading spaces from the generated script lines.
           sed -i 's/^[[:space:]]*//' "$LFTP_SCRIPT"
+          echo "---- lftp script (credentials via netrc) ----"
+          sed 's/password .*/password <redacted>/' "$LFTP_SCRIPT" || cat "$LFTP_SCRIPT"
 
-          LFTP_HOME="$(dirname "$NETRC")" HOME="$(dirname "$NETRC")" \
-            lftp -f "$LFTP_SCRIPT"
+          HOME="$TMPHOME" lftp -f "$LFTP_SCRIPT"
 
           echo "FTPS publish complete for ${RELEASE_VERSION}"
 

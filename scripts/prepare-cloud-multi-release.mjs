@@ -169,6 +169,11 @@ function main() {
 
     const platform = detectPlatformArtifact(base)
     const isBlockmap = base.endsWith('.blockmap')
+    // Skip unpacked NSIS helpers / app binaries — only ship installers + blockmaps.
+    if (/^(PharmaSuit|elevate)\.exe$/i.test(base)) {
+      console.log('Skipping non-installer', base)
+      continue
+    }
     if (platform || isBlockmap || /\.(dmg|exe|appimage|zip)$/i.test(base)) {
       const dest = path.join(versionDir, base)
       copyFile(file, dest)
