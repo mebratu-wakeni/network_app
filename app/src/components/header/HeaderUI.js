@@ -3,7 +3,7 @@
  * Displays application header with health indicators and user info
  */
 const { Row, StatefulRow } = Liteframe;
-import HeaderVM from './HeaderVM.js';
+import { getHeaderVM } from './HeaderVM.js';
 import { getApiAsset } from '../../../electron/config/apiConfig.js';
 import Avatar from '../utils/Avatar.js';
 import { ActionDropdown, ActionItem } from '../utils/Action.js';
@@ -15,6 +15,9 @@ import {
   getHealthStatus,
   getOverallHealthStatus
 } from './headerFormatters.js';
+
+/** Keep one StatefulRow across App remorphs so menu handlers stay attached. */
+let headerStatefulEl = null;
 
 /**
  * Render health indicators
@@ -101,17 +104,16 @@ function renderAvatar(user) {
 }
 
 function renderUserMenu(props, user) {
-  const userMenuActionId = props.viewModel.getState('userMenuActionId');
   const menuActionId = 'header-user-menu';
+  const userMenuActionId = props.viewModel.getState('userMenuActionId');
   const userMenuOpen = userMenuActionId === menuActionId;
   const menuOptions = props.viewModel.getUserMenuOptions();
   return ActionDropdown({
     actionId: menuActionId,
     open: userMenuOpen,
-    onToggle: () => props.viewModel.updateState(
-      'userMenuActionId',
-      userMenuActionId === menuActionId ? null : menuActionId
-    ),
+    // Read live VM state — never close over render-time open/closed.
+    onToggle: () => props.viewModel.toggleUserMenu(menuActionId),
+    onClose: () => props.viewModel.closeUserMenu(),
     buttonClass: 'rounded-md px-1.5 py-1 bg-transparent hover:bg-gray-100 text-gray-600 transition-colors duration-150',
     menuClass: 'top-full w-52 py-1',
     trigger: Row({ class: 'flex items-center gap-1' }, [
@@ -128,7 +130,7 @@ function renderUserMenu(props, user) {
     ...option,
     class: option.danger ? 'mt-1 border-t border-gray-300' : '',
     onClick: () => {
-      props.viewModel.updateState('userMenuActionId', null);
+      props.viewModel.closeUserMenu();
       option.onClick();
     }
   })));
@@ -188,7 +190,29 @@ function renderHeader(props) {
  * @returns {HTMLElement} Header component
  */
 export default function HeaderUI({ router = null, navigationVM = null } = {}) {
-  const viewModel = new HeaderVM(undefined, { router, navigationVM });
-  
-  return StatefulRow({ viewModel, stateKeys: ['serverHealth', 'dbHealth', 'apiHealth', 'appMode', 'clientConnected', 'clientServerUrl', 'clientConnectionError', 'user', 'userMenuActionId'] }, renderHeader);
+  const viewModel = getHeaderVM({ router, navigationVM });
+
+  // App remorphs (active-menu) must reuse the same StatefulRow node; recreating it
+  // left stale EventDelegator toggles that could only close the menu.
+  if (headerStatefulEl && headerStatefulEl.isConnected) {
+    return headerStatefulEl;
+  }
+
+  headerStatefulEl = StatefulRow({
+    id: 'AppHeader',
+    viewModel,
+    stateKeys: [
+      'serverHealth',
+      'dbHealth',
+      'apiHealth',
+      'appMode',
+      'clientConnected',
+      'clientServerUrl',
+      'clientConnectionError',
+      'user',
+      'userMenuActionId'
+    ]
+  }, renderHeader);
+
+  return headerStatefulEl;
 }
