@@ -376,8 +376,10 @@ jobs:
           open ftps://${DOWNLOADS_HOST}
           cd ${SERVER_DIR}
           # Drop incomplete leftovers from prior failed publishes, then recreate.
-          glob -a rm -r -f ${RELEASE_VERSION} || true
-          mkdir -p ${RELEASE_VERSION}
+          set cmd:fail-exit false
+          rm -r -f ${RELEASE_VERSION}
+          set cmd:fail-exit true
+          mkdir ${RELEASE_VERSION}
           cd ${RELEASE_VERSION}
           # Windows first (website Managed Win10/11 links), then Linux, then Mac.
           $(
