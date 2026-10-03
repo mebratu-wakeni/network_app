@@ -31,9 +31,21 @@ export function ManageOutsideClick({containerEl, handleGetState, handleSetState}
  * getCurrentOpen() is invoked on each click and must return { getOpenState, setOpenState }.
  * Call once at module load (e.g. in Action.js).
  */
+function eventPathContainsSelector(e, selector) {
+  // ion-icon / avatar clicks can land in shadow DOM; closest() alone misses the host tree.
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  for (const node of path) {
+    if (node && typeof node.closest === 'function' && node.closest(selector)) return true;
+    if (node && typeof node.hasAttribute === 'function' && selector.startsWith('[') && node.hasAttribute(selector.slice(1, -1))) {
+      return true;
+    }
+  }
+  return !!(e.target && e.target.closest && e.target.closest(selector));
+}
+
 export function registerActionDropdownOutsideClickByTag(getCurrentOpen) {
   function handleClick(e) {
-    if (e.target.closest && e.target.closest('[data-action-dropdown]')) return;
+    if (eventPathContainsSelector(e, '[data-action-dropdown]')) return;
     const current = getCurrentOpen();
     if (current && current.getOpenState && current.getOpenState()) {
       current.setOpenState();
