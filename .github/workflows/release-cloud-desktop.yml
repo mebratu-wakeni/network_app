@@ -215,6 +215,7 @@ jobs:
   publish:
     needs: [version-lock, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     # Do NOT publish a partial feed. A failed Windows (or Mac/Linux) matrix leg used to
     # still upload latest.json without that platform and wipe the previous download link.
     if: ${{ always() && needs.build.result == 'success' && needs.version-lock.result == 'success' }}
@@ -326,20 +327,68 @@ jobs:
           esac
           exit $missing
 
-      - name: Publish to downloads host (FTP/FTPS)
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.DOWNLOADS_HOST }}
-          username: ${{ secrets.DOWNLOADS_USERNAME }}
-          password: ${{ secrets.DOWNLOADS_PASSWORD }}
-          protocol: ftps
-          local-dir: staging/publish/
-          server-dir: ${{ secrets.DOWNLOADS_SERVER_DIR }}
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
+      # FTP-Deploy-Action timed out on ~100MB+ installers (data socket) and also synced
+      # away previous version folders. Use lftp: long timeouts, retries, no remote deletes.
+      # Upload the version folder first; only then replace latest.* manifests.
+      - name: Publish to downloads host (FTPS via lftp)
+        shell: bash
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+          RELEASE_VERSION: ${{ needs.version-lock.outputs.version }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lftp
+          SERVER_DIR="${DOWNLOADS_SERVER_DIR%/}"
+          VERSION_DIR="staging/publish/${RELEASE_VERSION}"
+          test -d "$VERSION_DIR"
+          test -f staging/publish/latest.json
+
+          echo "Publishing ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/ (no remote deletes)"
+
+          NETRC="$(mktemp)"
+          LFTP_SCRIPT="$(mktemp)"
+          cleanup() { rm -f "$NETRC" "$LFTP_SCRIPT"; }
+          trap cleanup EXIT
+
+          # Prefer netrc so the password is not embedded in the lftp command stream.
+          umask 077
+          printf 'machine %s\nlogin %s\npassword %s\n' \
+            "$DOWNLOADS_HOST" "$DOWNLOADS_USERNAME" "$DOWNLOADS_PASSWORD" > "$NETRC"
+
+          cat > "$LFTP_SCRIPT" <<EOF
+          set cmd:fail-exit true
+          set ftp:ssl-force true
+          set ftp:ssl-protect-data true
+          set ftp:passive-mode true
+          set ssl:verify-certificate no
+          set net:timeout 600
+          set net:max-retries 15
+          set net:reconnect-interval-base 20
+          set net:reconnect-interval-multiplier 1.5
+          set xfer:clobber true
+          set mirror:parallel-transfer-count 1
+          open ftps://${DOWNLOADS_HOST}
+          cd ${SERVER_DIR}
+          mirror -R --no-delete --verbose --parallel=1 ${VERSION_DIR} ${RELEASE_VERSION}
+          put -O . staging/publish/latest.json
+          put -O . staging/publish/latest.yml
+          put -O . staging/publish/latest-mac.yml
+          put -O . staging/publish/latest-linux.yml
+          put -O . staging/publish/index.html
+          bye
+          EOF
+
+          # Strip leading spaces from the generated script lines.
+          sed -i 's/^[[:space:]]*//' "$LFTP_SCRIPT"
+
+          LFTP_HOME="$(dirname "$NETRC")" HOME="$(dirname "$NETRC")" \
+            lftp -f "$LFTP_SCRIPT"
+
+          echo "FTPS publish complete for ${RELEASE_VERSION}"
 
       - name: Summary
         shell: bash
