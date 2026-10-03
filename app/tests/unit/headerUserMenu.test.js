@@ -1,19 +1,18 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 
 /**
  * Mirrors HeaderVM menu open/close logic without booting Electron/Liteframe.
  * Guards the live-state toggle regression (stale closed-over open id).
  */
 function createMenuState() {
-  let userMenuActionId = null
+  let userMenuOpen = false
   return {
-    getState: (key) => (key === 'userMenuActionId' ? userMenuActionId : undefined),
+    getState: (key) => (key === 'userMenuOpen' ? userMenuOpen : undefined),
     closeUserMenu() {
-      if (userMenuActionId != null) userMenuActionId = null
+      if (userMenuOpen === true) userMenuOpen = false
     },
-    toggleUserMenu(menuActionId = 'header-user-menu') {
-      const current = userMenuActionId
-      userMenuActionId = current === menuActionId ? null : menuActionId
+    toggleUserMenu() {
+      userMenuOpen = userMenuOpen !== true
     }
   }
 }
@@ -21,28 +20,26 @@ function createMenuState() {
 describe('header user menu toggle', () => {
   it('opens when closed, closes when open (live state)', () => {
     const menu = createMenuState()
-    expect(menu.getState('userMenuActionId')).toBeNull()
-    menu.toggleUserMenu('header-user-menu')
-    expect(menu.getState('userMenuActionId')).toBe('header-user-menu')
-    menu.toggleUserMenu('header-user-menu')
-    expect(menu.getState('userMenuActionId')).toBeNull()
+    expect(menu.getState('userMenuOpen')).toBe(false)
+    menu.toggleUserMenu()
+    expect(menu.getState('userMenuOpen')).toBe(true)
+    menu.toggleUserMenu()
+    expect(menu.getState('userMenuOpen')).toBe(false)
   })
 
   it('reopens after closeUserMenu (Profile/Settings path)', () => {
     const menu = createMenuState()
-    menu.toggleUserMenu('header-user-menu')
+    menu.toggleUserMenu()
     menu.closeUserMenu()
-    expect(menu.getState('userMenuActionId')).toBeNull()
-    // Simulate stale open-era handler that used to close-over open id and always write null.
-    // Live toggle must still open from null.
-    menu.toggleUserMenu('header-user-menu')
-    expect(menu.getState('userMenuActionId')).toBe('header-user-menu')
+    expect(menu.getState('userMenuOpen')).toBe(false)
+    menu.toggleUserMenu()
+    expect(menu.getState('userMenuOpen')).toBe(true)
   })
 
   it('force close is idempotent', () => {
     const menu = createMenuState()
     menu.closeUserMenu()
     menu.closeUserMenu()
-    expect(menu.getState('userMenuActionId')).toBeNull()
+    expect(menu.getState('userMenuOpen')).toBe(false)
   })
 })

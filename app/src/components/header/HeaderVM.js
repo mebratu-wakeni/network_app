@@ -32,14 +32,13 @@ export default class HeaderVM extends ViewModel {
   }
 
   closeUserMenu() {
-    if (this.getState('userMenuActionId') != null) {
-      this.updateState('userMenuActionId', null);
+    if (this.getState('userMenuOpen') === true) {
+      this.updateState('userMenuOpen', false);
     }
   }
 
-  toggleUserMenu(menuActionId = 'header-user-menu') {
-    const current = this.getState('userMenuActionId');
-    this.updateState('userMenuActionId', current === menuActionId ? null : menuActionId);
+  toggleUserMenu() {
+    this.updateState('userMenuOpen', this.getState('userMenuOpen') !== true);
   }
 
   /**
@@ -56,7 +55,7 @@ export default class HeaderVM extends ViewModel {
     this.setState('clientConnectionError', null);
     this.setState('connectionRetrying', false);
     this.setState('user', {});
-    this.setState('userMenuActionId', null);
+    this.setState('userMenuOpen', false);
     this._bindConnectionEvents();
   }
 

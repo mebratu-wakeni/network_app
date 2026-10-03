@@ -83,7 +83,9 @@ function ActionDropdown(props, children) {
       events: {
         click: (e) => {
           e.stopPropagation(); // critical
-          if (!open) {
+          // Use live registry membership — never trust render-time `open` closure.
+          const isOpen = openDropdownControllers.has(actionId);
+          if (!isOpen) {
             closeAllOpenDropdowns(actionId);
           }
           onToggle();
