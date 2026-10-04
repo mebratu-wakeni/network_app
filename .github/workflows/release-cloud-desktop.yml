@@ -165,12 +165,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            platform: mac
+          # Windows-only publish for now (Managed website + Win clients).
+          # Re-enable mac/linux matrix legs when FTPS/feed updates for those platforms are needed.
           - os: windows-latest
             platform: win
-          - os: ubuntu-latest
-            platform: linux
 
     runs-on: ${{ matrix.os }}
 
@@ -230,6 +228,7 @@ jobs:
           node-version: '20'
 
       - name: Download Mac artifacts
+        if: false
         uses: actions/download-artifact@v4
         with:
           name: cloud-desktop-mac
@@ -242,6 +241,7 @@ jobs:
           path: staging/artifacts/win
 
       - name: Download Linux artifacts
+        if: false
         uses: actions/download-artifact@v4
         with:
           name: cloud-desktop-linux
@@ -255,22 +255,9 @@ jobs:
             echo "No installer artifacts downloaded — cannot publish."
             exit 1
           fi
-          # Hard require all three platforms so latest.json never drops Windows/Mac/Linux.
-          missing=0
-          if [ -z "$(find staging/artifacts/mac -type f \( -iname '*.dmg' -o -iname '*.zip' \) 2>/dev/null | head -1)" ]; then
-            echo "ERROR: missing Mac installer (.dmg/.zip)"
-            missing=1
-          fi
+          # Windows-only publish (Mac/Linux temporarily skipped).
           if [ -z "$(find staging/artifacts/win -type f -iname '*.exe' 2>/dev/null | head -1)" ]; then
             echo "ERROR: missing Windows installer (.exe)"
-            missing=1
-          fi
-          if [ -z "$(find staging/artifacts/linux -type f -iname '*.AppImage' 2>/dev/null | head -1)" ]; then
-            echo "ERROR: missing Linux installer (.AppImage)"
-            missing=1
-          fi
-          if [ "$missing" -ne 0 ]; then
-            echo "Refusing to publish a partial cloud-multi feed."
             find staging/artifacts -type f | sort || true
             exit 1
           fi
@@ -278,7 +265,7 @@ jobs:
             --version "${{ needs.version-lock.outputs.version }}"
             --artifacts-dir staging/artifacts
             --out-dir staging/publish
-            --notes "PharmaSuit Cloud ${{ needs.version-lock.outputs.version }}"
+            --notes "PharmaSuit Cloud ${{ needs.version-lock.outputs.version }} (Windows)"
             --base-url "https://server.masatechplc.com/downloads/cloud-multi"
           )
           if [ "${{ github.event.inputs.mandatory }}" = "true" ]; then
@@ -292,17 +279,13 @@ jobs:
           find staging/publish -type f | sort
           test -f staging/publish/latest.json
           test -f staging/publish/latest.yml
-          test -f staging/publish/latest-mac.yml
-          test -f staging/publish/latest-linux.yml
           node -e "
             const j = require('./staging/publish/latest.json');
-            for (const k of ['mac','win','linux']) {
-              if (!j.artifacts?.[k]?.url) {
-                console.error('latest.json missing artifacts.' + k);
-                process.exit(1);
-              }
+            if (!j.artifacts?.win?.url) {
+              console.error('latest.json missing artifacts.win');
+              process.exit(1);
             }
-            console.log('latest.json platforms OK:', Object.keys(j.artifacts).join(', '));
+            console.log('latest.json Windows OK:', j.artifacts.win.url);
           "
 
       - name: Check downloads secrets
@@ -327,24 +310,22 @@ jobs:
           esac
           exit $missing
 
-      - name: Attach installers + manifests to GitHub Release
+      - name: Attach Windows installers + manifests to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: desktop-cloud-v${{ needs.version-lock.outputs.version }}
           name: Managed Cloud ${{ needs.version-lock.outputs.version }}
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           files: |
             staging/publish/${{ needs.version-lock.outputs.version }}/*
             staging/publish/latest.json
             staging/publish/latest.yml
-            staging/publish/latest-mac.yml
-            staging/publish/latest-linux.yml
             staging/publish/index.html
 
-      # cPanel FTPS from GitHub-hosted runners often times out (lftp cd max-retries).
-      # Always attach to GitHub Release above; FTPS is best-effort for the live feed host.
-      - name: Publish to downloads host (FTPS via curl)
+      # cPanel FTPS from GitHub-hosted runners often times out.
+      # GitHub Release attach above is the primary Windows delivery path when FTPS fails.
+      - name: Publish Windows to downloads host (FTPS via curl)
         id: ftps
         continue-on-error: true
         shell: bash
@@ -361,18 +342,17 @@ jobs:
           test -d "$VERSION_DIR"
           test -f staging/publish/latest.json
 
-          echo "Publishing ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/ (curl per-file, Windows first)"
+          echo "Publishing Windows ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/"
 
           USER_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_USERNAME"], safe=""))')"
           PASS_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_PASSWORD"], safe=""))')"
-          # Explicit :21 — some hosts only accept FTP/FTPS on the standard port.
           FTP_BASE="ftps://${USER_ENC}:${PASS_ENC}@${DOWNLOADS_HOST}:21/${SERVER_DIR}"
 
           curl_ftp() {
             curl --silent --show-error --fail \
               --ftp-ssl --ssl-reqd --insecure --ftp-pasv \
               --connect-timeout 20 --max-time 1800 \
-              --retry 3 --retry-delay 5 --retry-all-errors \
+              --retry 2 --retry-delay 5 --retry-all-errors \
               "$@"
           }
 
@@ -382,33 +362,18 @@ jobs:
           echo "== ensure remote version directory =="
           curl_ftp --ftp-create-dirs -Q "MKD ${RELEASE_VERSION}" "${FTP_BASE}/" -o /dev/null || true
 
+          # Windows only (+ blockmaps). Skip Mac/Linux.
           mapfile -t UPLOADS < <(
             cd "$VERSION_DIR"
-            preferred=(
-              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-x64-Setup.exe
-              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-x64-Setup.exe.blockmap
-              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-ia32-Setup.exe
-              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-ia32-Setup.exe.blockmap
-              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-Setup.exe
+            for f in \
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-x64-Setup.exe \
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-x64-Setup.exe.blockmap \
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-ia32-Setup.exe \
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-ia32-Setup.exe.blockmap \
+              PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-Setup.exe \
               PharmaSuit-Cloud-Windows-${RELEASE_VERSION}-Setup.exe.blockmap
-              PharmaSuit-Cloud-Linux-${RELEASE_VERSION}.AppImage
-              PharmaSuit-Cloud-Linux-${RELEASE_VERSION}.AppImage.blockmap
-              PharmaSuit-Cloud-Mac-${RELEASE_VERSION}-Installer.zip
-              PharmaSuit-Cloud-Mac-${RELEASE_VERSION}-Installer.zip.blockmap
-              PharmaSuit-Cloud-Mac-${RELEASE_VERSION}-Installer.dmg
-              PharmaSuit-Cloud-Mac-${RELEASE_VERSION}-Installer.dmg.blockmap
-            )
-            declare -A seen=()
-            for f in "${preferred[@]}"; do
-              if [ -f "$f" ]; then
-                printf '%s\n' "$f"
-                seen["$f"]=1
-              fi
-            done
-            for f in *; do
-              [ -f "$f" ] || continue
-              [ -n "${seen[$f]+x}" ] && continue
-              printf '%s\n' "$f"
+            do
+              [ -f "$f" ] && printf '%s\n' "$f"
             done
           )
 
@@ -420,37 +385,34 @@ jobs:
             echo "== done ${f} =="
           done
 
-          echo "== upload update manifests =="
-          for m in latest.json latest.yml latest-mac.yml latest-linux.yml index.html; do
+          echo "== upload Windows update manifests =="
+          for m in latest.json latest.yml index.html; do
+            [ -f "staging/publish/${m}" ] || continue
             echo "put ${m}"
             curl_ftp --upload-file "staging/publish/${m}" "${FTP_BASE}/${m}"
           done
 
-          echo "FTPS publish complete for ${RELEASE_VERSION}"
+          echo "FTPS Windows publish complete for ${RELEASE_VERSION}"
 
       - name: Summary
         shell: bash
         run: |
           {
-            echo "### Managed Cloud desktop publish"
+            echo "### Managed Cloud Windows publish"
             echo ""
             echo "- **Version:** ${{ needs.version-lock.outputs.version }}"
-            echo "- **GitHub Release assets:** https://github.com/${{ github.repository }}/releases/tag/desktop-cloud-v${{ needs.version-lock.outputs.version }}"
+            echo "- **GitHub Release (primary when FTPS fails):** https://github.com/${{ github.repository }}/releases/tag/desktop-cloud-v${{ needs.version-lock.outputs.version }}"
+            echo "- **Win x64:** https://github.com/${{ github.repository }}/releases/download/desktop-cloud-v${{ needs.version-lock.outputs.version }}/PharmaSuit-Cloud-Windows-${{ needs.version-lock.outputs.version }}-x64-Setup.exe"
+            echo "- **Win ia32:** https://github.com/${{ github.repository }}/releases/download/desktop-cloud-v${{ needs.version-lock.outputs.version }}/PharmaSuit-Cloud-Windows-${{ needs.version-lock.outputs.version }}-ia32-Setup.exe"
             echo "- **FTPS to downloads host:** ${{ steps.ftps.outcome }}"
             echo "- **Live feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json"
             echo ""
             if [ "${{ steps.ftps.outcome }}" != "success" ]; then
-              echo "⚠️ FTPS from GitHub Actions failed/timed out. Installers are on the GitHub Release;"
-              echo "upload the Windows/Mac/Linux files + latest.* into \`downloads/cloud-multi/\` via cPanel File Manager,"
-              echo "or fix FTP allowlisting for GitHub Actions IPs."
-              echo ""
-              echo "Temporary website Managed Win links can point at Release assets, e.g."
-              echo "\`https://github.com/${{ github.repository }}/releases/download/desktop-cloud-v${{ needs.version-lock.outputs.version }}/PharmaSuit-Cloud-Windows-${{ needs.version-lock.outputs.version }}-x64-Setup.exe\`"
+              echo "⚠️ FTPS failed — that is OK for website downloads. Use the GitHub Release Windows links above"
+              echo "on masatechplc.com/downloads, or upload those EXEs via cPanel into \`downloads/cloud-multi/${{ needs.version-lock.outputs.version }}/\`."
             else
-              echo "Website: bump Managed links to \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` if first-install URLs lag."
+              echo "FTPS OK. Website can use \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` Windows installer URLs."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.ftps.outcome }}" != "success" ]; then
-            echo "FTPS publish did not succeed (outcome=${{ steps.ftps.outcome }}). Release assets were still attached."
-            exit 1
-          fi
+          # Do not fail the job when FTPS fails: Windows installers are on the GitHub Release.
+          echo "Publish finished (ftps=${{ steps.ftps.outcome }}). Windows Release assets are the source of truth if FTPS failed."
