@@ -102,23 +102,38 @@ function detectPlatformArtifact(fileName) {
   return null
 }
 
-/** Human first-install link in latest.json — prefer DMG over ZIP on macOS. */
+/** Human first-install link in latest.json — prefer DMG over ZIP on macOS;
+ * prefer explicit -x64- Windows installers over unmarked Setup.exe. */
 function preferDownloadArtifact(current, candidate) {
   if (!current) return candidate
   const cur = current.toLowerCase()
   const next = candidate.toLowerCase()
   if (next.endsWith('.dmg') && !cur.endsWith('.dmg')) return candidate
   if (cur.endsWith('.zip') && next.endsWith('.dmg')) return candidate
+  // Arch-explicit Windows NSIS beats the unmarked/universal Setup.exe (often the
+  // electron-builder "path" default and ~2× larger).
+  if (next.includes('-x64-') && next.endsWith('.exe') && !cur.includes('-x64-') && cur.endsWith('.exe')) {
+    return candidate
+  }
+  if (cur.includes('-x64-') && cur.endsWith('.exe') && !next.includes('-x64-') && next.endsWith('.exe')) {
+    return current
+  }
   return current
 }
 
-/** electron-updater mac stubs must point at ZIP (not DMG). */
+/** electron-updater mac stubs must point at ZIP (not DMG). Prefer x64 on Windows. */
 function preferUpdaterArtifact(current, candidate) {
   if (!current) return candidate
   const cur = current.toLowerCase()
   const next = candidate.toLowerCase()
   if (next.endsWith('.zip') && !cur.endsWith('.zip')) return candidate
   if (cur.endsWith('.dmg') && next.endsWith('.zip')) return candidate
+  if (next.includes('-x64-') && next.endsWith('.exe') && !cur.includes('-x64-') && cur.endsWith('.exe')) {
+    return candidate
+  }
+  if (cur.includes('-x64-') && cur.endsWith('.exe') && !next.includes('-x64-') && next.endsWith('.exe')) {
+    return current
+  }
   return current
 }
 
@@ -216,6 +231,32 @@ function main() {
 
   fs.writeFileSync(path.join(args.outDir, 'latest.json'), JSON.stringify(latest, null, 2) + '\n', 'utf8')
   console.log('Wrote latest.json')
+
+  // If electron-builder's latest.yml still points `path` at the unmarked Setup.exe,
+  // rewrite it to the preferred x64 updater artifact when we have one. That keeps
+  // in-app updates on the smaller arch build and avoids a bad universal upload.
+  const winYmlPath = path.join(args.outDir, 'latest.yml')
+  const preferredWin = updaterArtifacts.win || artifacts.win
+  if (fs.existsSync(winYmlPath) && preferredWin && /x64/i.test(preferredWin)) {
+    let yml = fs.readFileSync(winYmlPath, 'utf8')
+    const preferredUrl = `${args.version}/${preferredWin}`
+    // Find the preferred file entry's sha/size for top-level path/sha512/size.
+    const entryRe = new RegExp(
+      String.raw`- url:\s*${preferredUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\n\s+sha512:\s*(\S+)\n\s+size:\s*(\d+)`,
+      'm'
+    )
+    const m = yml.match(entryRe)
+    if (m) {
+      yml = yml.replace(/^path:\s*.*$/m, `path: ${preferredUrl}`)
+      yml = yml.replace(/^sha512:\s*.*$/m, `sha512: ${m[1]}`)
+      // size may be absent at top level in some builder versions
+      if (/^size:\s*/m.test(yml)) {
+        yml = yml.replace(/^size:\s*.*$/m, `size: ${m[2]}`)
+      }
+      fs.writeFileSync(winYmlPath, yml, 'utf8')
+      console.log('Rewrote latest.yml path →', preferredUrl)
+    }
+  }
 
   const templatePath = path.join(REPO_ROOT, 'downloads/cloud-multi/index.html')
   if (fs.existsSync(templatePath)) {

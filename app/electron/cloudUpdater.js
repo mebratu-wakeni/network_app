@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, dialog } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { createRequire } from 'node:module'
 import { compareVersions } from './versionCompare.js'
@@ -194,21 +194,75 @@ export function initCloudAutoUpdater() {
 
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
+  // Differential/blockmap downloads often fail near 100% on cPanel/LiteSpeed with
+  // net::ERR_CONNECTION_RESET (uncaught in Electron's net stack). Full downloads
+  // are more reliable for Managed Cloud feeds.
+  if (typeof autoUpdater.disableDifferentialDownload === 'boolean' ||
+      'disableDifferentialDownload' in autoUpdater) {
+    autoUpdater.disableDifferentialDownload = true
+  }
 
   const feedUrl = getUpdatesFeedUrl()
   autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl })
   console.log('[cloud-updater] feed:', feedUrl, 'installed:', installedVersion())
 
-  autoUpdater.on('error', async (err) => {
-    console.warn('[cloud-updater]', err?.message || err)
-    const offered = await maybeOfferPolicyUpdate(feedUrl, { preferManual: true })
-    if (offered) return
+  const handleUpdaterFailure = async (err, { preferManual = true } = {}) => {
+    const message = err?.message || String(err)
+    console.warn('[cloud-updater]', message)
+    if (preferManual) {
+      const offered = await maybeOfferPolicyUpdate(feedUrl, { preferManual: true })
+      if (offered) {
+        broadcast({
+          ...currentState,
+          error: 'Automatic download failed — use Download installer, then restart PharmaSuit.'
+        })
+        return true
+      }
+    }
     broadcast({
       status: 'error',
-      error: err?.message || String(err),
+      error: message,
       percent: 0,
       simulated: false
     })
+    return false
+  }
+
+  // Electron shows a blocking "A JavaScript error occurred in the main process"
+  // dialog for uncaught net::ERR_* from the updater download. Swallow those and
+  // fall back to the manual installer link instead.
+  const isUpdaterNetError = (err) => {
+    const msg = String(err?.message || err || '')
+    const stack = String(err?.stack || '')
+    return /net::ERR_/i.test(msg) ||
+      (/SimpleURLLoaderWrapper/i.test(stack) && /ERR_/i.test(msg))
+  }
+  if (!globalThis.__pharmasuitCloudUpdaterNetGuard) {
+    globalThis.__pharmasuitCloudUpdaterNetGuard = true
+    process.on('uncaughtException', (err) => {
+      if (isUpdaterNetError(err)) {
+        handleUpdaterFailure(err).catch(() => {})
+        return
+      }
+      console.error('[main] uncaughtException:', err)
+      try {
+        dialog.showErrorBox(
+          'Unexpected Error',
+          err?.stack || err?.message || String(err)
+        )
+      } catch (_) {}
+    })
+    process.on('unhandledRejection', (reason) => {
+      if (isUpdaterNetError(reason)) {
+        handleUpdaterFailure(reason).catch(() => {})
+        return
+      }
+      console.error('[main] unhandledRejection:', reason)
+    })
+  }
+
+  autoUpdater.on('error', async (err) => {
+    await handleUpdaterFailure(err)
   })
 
   autoUpdater.on('checking-for-update', () => {
