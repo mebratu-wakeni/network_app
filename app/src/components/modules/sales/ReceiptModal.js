@@ -4,6 +4,7 @@ import { Button } from '../../utils/Button';
 import { IconButton, IonIcon } from '../../utils/Icon';
 import { printReceiptArea } from '../../utils/printReceipt';
 import {
+  RECEIPT_FOOTER_WARNING,
   formatPaymentMode,
   paymentStatusLabel,
 } from '../../utils/receiptHelpers.js';
@@ -101,13 +102,10 @@ export function buildReceiptData(receipt, settings) {
     },
     notesAndTerms: {
       title: 'Notes:',
-      list: [
-        'Valid only for the items and amounts stated above.',
-        'Returns subject to company policy.',
-      ],
+      list: [],
     },
     footerInfo: {
-      thankYouMessage: 'Thank you for your business.',
+      thankYouMessage: RECEIPT_FOOTER_WARNING,
       companyLine1: companyName,
       emailLink: (settings.company_email || '').trim(),
       softwareCredit: 'PharmaSuit by MasaTech',
