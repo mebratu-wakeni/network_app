@@ -323,16 +323,17 @@ jobs:
             staging/publish/latest.yml
             staging/publish/index.html
 
-      # cPanel port 21 is almost always explicit FTPES (ftp:// + --ssl-reqd),
-      # not implicit ftps:// on :21 (that yields OpenSSL "wrong version number").
+      # Known-good cPanel pattern (Restore cloud-multi Windows installers):
+      # curl --ftp-ssl --insecure --user … -T file "ftp://host/path"
+      # Do NOT use ftps://host:21 (OpenSSL "wrong version number").
       - name: Publish Windows to downloads host (FTPS via curl)
         id: ftps
         continue-on-error: true
         shell: bash
         env:
-          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
-          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
-          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
           DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
           RELEASE_VERSION: ${{ needs.version-lock.outputs.version }}
         run: |
@@ -342,57 +343,23 @@ jobs:
           test -d "$VERSION_DIR"
           test -f staging/publish/latest.json
 
-          USER_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_USERNAME"], safe=""))')"
-          PASS_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_PASSWORD"], safe=""))')"
-          AUTH="${USER_ENC}:${PASS_ENC}@${DOWNLOADS_HOST}"
-
-          try_list() {
-            local base="$1"
-            shift
-            curl --silent --show-error --fail --ftp-pasv \
-              --connect-timeout 20 --max-time 60 \
-              --retry 1 --retry-delay 2 \
-              "$@" --list-only "${base}/" | head -5
-          }
-
-          MODE=""
-          FTP_BASE=""
-          CURL_EXTRA=()
-          if try_list "ftp://${AUTH}:21/${SERVER_DIR}" --ftp-ssl --ssl-reqd --insecure; then
-            MODE="ftp+ssl-reqd"
-            FTP_BASE="ftp://${AUTH}:21/${SERVER_DIR}"
-            CURL_EXTRA=(--ftp-ssl --ssl-reqd --insecure)
-          elif try_list "ftp://${AUTH}:21/${SERVER_DIR}" --ftp-ssl --insecure; then
-            MODE="ftp+ssl"
-            FTP_BASE="ftp://${AUTH}:21/${SERVER_DIR}"
-            CURL_EXTRA=(--ftp-ssl --insecure)
-          elif try_list "ftps://${AUTH}:990/${SERVER_DIR}" --insecure; then
-            MODE="ftps:990"
-            FTP_BASE="ftps://${AUTH}:990/${SERVER_DIR}"
-            CURL_EXTRA=(--insecure)
-          elif try_list "ftp://${AUTH}:21/${SERVER_DIR}"; then
-            MODE="ftp-plain"
-            FTP_BASE="ftp://${AUTH}:21/${SERVER_DIR}"
-            CURL_EXTRA=()
-          else
-            echo "All FTP probe modes failed for ${SERVER_DIR}"
-            exit 1
-          fi
-
-          echo "Publishing Windows ${RELEASE_VERSION} via ${MODE} → ${SERVER_DIR}/"
+          echo "Publishing Windows ${RELEASE_VERSION} → ftp://${HOST}/${SERVER_DIR}/"
 
           curl_ftp() {
-            curl --silent --show-error --fail --ftp-pasv \
-              --connect-timeout 20 --max-time 1800 \
+            curl -sS --fail --ftp-ssl --insecure --ftp-pasv \
+              --connect-timeout 30 --max-time 1800 \
               --retry 2 --retry-delay 5 --retry-all-errors \
-              "${CURL_EXTRA[@]}" \
+              --user "${USER}:${PASS}" \
               "$@"
           }
 
-          echo "== ensure remote version directory =="
-          curl_ftp --ftp-create-dirs -Q "MKD ${RELEASE_VERSION}" "${FTP_BASE}/" -o /dev/null || true
+          echo "== probe FTPS =="
+          curl_ftp --list-only "ftp://${HOST}/${SERVER_DIR}/" | head -20
 
-          # Windows only (+ blockmaps). Skip Mac/Linux.
+          echo "== ensure remote version directory =="
+          # create-dirs on first upload; MKD may already exist
+          true
+
           mapfile -t UPLOADS < <(
             cd "$VERSION_DIR"
             for f in \
@@ -411,7 +378,9 @@ jobs:
             local_path="${VERSION_DIR}/${f}"
             bytes="$(wc -c < "$local_path" | tr -d ' ')"
             echo "== upload ${f} (${bytes} bytes) =="
-            curl_ftp --ftp-create-dirs --upload-file "${local_path}" "${FTP_BASE}/${RELEASE_VERSION}/${f}"
+            curl_ftp --ftp-create-dirs \
+              -T "${local_path}" \
+              "ftp://${HOST}/${SERVER_DIR}/${RELEASE_VERSION}/${f}"
             echo "== done ${f} =="
           done
 
@@ -419,10 +388,44 @@ jobs:
           for m in latest.json latest.yml index.html; do
             [ -f "staging/publish/${m}" ] || continue
             echo "put ${m}"
-            curl_ftp --upload-file "staging/publish/${m}" "${FTP_BASE}/${m}"
+            curl_ftp -T "staging/publish/${m}" "ftp://${HOST}/${SERVER_DIR}/${m}"
           done
 
-          echo "FTPS Windows publish complete for ${RELEASE_VERSION} (mode=${MODE})"
+          echo "FTPS Windows publish complete for ${RELEASE_VERSION}"
+
+      - name: Hotfix API Windows download redirects on host
+        id: api_hotfix
+        continue-on-error: true
+        shell: bash
+        env:
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          set -euo pipefail
+          test -f api/src/app.js
+          grep -q 'resolveCloudWindowsRelease' api/src/app.js
+          SERVER_DIR="${DOWNLOADS_SERVER_DIR%/}"
+          DOMAIN_ROOT="$(dirname "$(dirname "$SERVER_DIR")")"
+          mkdir -p /tmp/ps-restart
+          date -u +'%Y-%m-%dT%H:%M:%SZ release hotfix windows redirects' > /tmp/ps-restart/restart.txt
+
+          curl_put() {
+            local local_path="$1"
+            local remote_rel="$2"
+            echo "put ${remote_rel}"
+            curl -sS --fail --ftp-ssl --insecure --ftp-pasv \
+              --connect-timeout 30 --max-time 180 \
+              --retry 3 --retry-delay 5 \
+              --user "${USER}:${PASS}" \
+              -T "${local_path}" \
+              "ftp://${HOST}/${DOMAIN_ROOT}/${remote_rel}"
+          }
+
+          curl_put api/src/app.js "api/src/app.js"
+          curl_put /tmp/ps-restart/restart.txt "api/tmp/restart.txt"
+          echo "API hotfix uploaded"
 
       - name: Summary
         shell: bash
@@ -435,14 +438,17 @@ jobs:
             echo "- **Win x64:** https://github.com/${{ github.repository }}/releases/download/desktop-cloud-v${{ needs.version-lock.outputs.version }}/PharmaSuit-Cloud-Windows-${{ needs.version-lock.outputs.version }}-x64-Setup.exe"
             echo "- **Win ia32:** https://github.com/${{ github.repository }}/releases/download/desktop-cloud-v${{ needs.version-lock.outputs.version }}/PharmaSuit-Cloud-Windows-${{ needs.version-lock.outputs.version }}-ia32-Setup.exe"
             echo "- **FTPS to downloads host:** ${{ steps.ftps.outcome }}"
+            echo "- **API redirect hotfix:** ${{ steps.api_hotfix.outcome }}"
             echo "- **Live feed:** https://server.masatechplc.com/downloads/cloud-multi/latest.json"
+            echo "- **Site button (should 302 after hotfix):** https://server.masatechplc.com/downloads/cloud-multi/1.0.6/PharmaSuit-Cloud-Windows-1.0.6-x64-Setup.exe"
             echo ""
             if [ "${{ steps.ftps.outcome }}" != "success" ]; then
-              echo "⚠️ FTPS failed — that is OK for website downloads. Use the GitHub Release Windows links above"
-              echo "on masatechplc.com/downloads, or upload those EXEs via cPanel into \`downloads/cloud-multi/${{ needs.version-lock.outputs.version }}/\`."
+              echo "⚠️ FTPS installer upload failed — Windows EXEs remain on the GitHub Release."
             else
-              echo "FTPS OK. Website can use \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` Windows installer URLs."
+              echo "FTPS OK for \`cloud-multi/${{ needs.version-lock.outputs.version }}/\` Windows installers."
+            fi
+            if [ "${{ steps.api_hotfix.outcome }}" != "success" ]; then
+              echo "⚠️ API hotfix upload failed — extract \`masatech-deploy.tar.gz\` at domain root and restart Node so website 1.0.6 buttons redirect."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          # Do not fail the job when FTPS fails: Windows installers are on the GitHub Release.
-          echo "Publish finished (ftps=${{ steps.ftps.outcome }}). Windows Release assets are the source of truth if FTPS failed."
+          echo "Publish finished (ftps=${{ steps.ftps.outcome }}, api_hotfix=${{ steps.api_hotfix.outcome }})."
