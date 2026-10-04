@@ -323,8 +323,8 @@ jobs:
             staging/publish/latest.yml
             staging/publish/index.html
 
-      # cPanel FTPS from GitHub-hosted runners often times out.
-      # GitHub Release attach above is the primary Windows delivery path when FTPS fails.
+      # cPanel port 21 is almost always explicit FTPES (ftp:// + --ssl-reqd),
+      # not implicit ftps:// on :21 (that yields OpenSSL "wrong version number").
       - name: Publish Windows to downloads host (FTPS via curl)
         id: ftps
         continue-on-error: true
@@ -342,22 +342,52 @@ jobs:
           test -d "$VERSION_DIR"
           test -f staging/publish/latest.json
 
-          echo "Publishing Windows ${RELEASE_VERSION} → ftps://${DOWNLOADS_HOST}/${SERVER_DIR}/"
-
           USER_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_USERNAME"], safe=""))')"
           PASS_ENC="$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["DOWNLOADS_PASSWORD"], safe=""))')"
-          FTP_BASE="ftps://${USER_ENC}:${PASS_ENC}@${DOWNLOADS_HOST}:21/${SERVER_DIR}"
+          AUTH="${USER_ENC}:${PASS_ENC}@${DOWNLOADS_HOST}"
 
-          curl_ftp() {
-            curl --silent --show-error --fail \
-              --ftp-ssl --ssl-reqd --insecure --ftp-pasv \
-              --connect-timeout 20 --max-time 1800 \
-              --retry 2 --retry-delay 5 --retry-all-errors \
-              "$@"
+          try_list() {
+            local base="$1"
+            shift
+            curl --silent --show-error --fail --ftp-pasv \
+              --connect-timeout 20 --max-time 60 \
+              --retry 1 --retry-delay 2 \
+              "$@" --list-only "${base}/" | head -5
           }
 
-          echo "== probe FTPS =="
-          curl_ftp --list-only "${FTP_BASE}/" | head -20
+          MODE=""
+          FTP_BASE=""
+          CURL_EXTRA=()
+          if try_list "ftp://${AUTH}:21/${SERVER_DIR}" --ftp-ssl --ssl-reqd --insecure; then
+            MODE="ftp+ssl-reqd"
+            FTP_BASE="ftp://${AUTH}:21/${SERVER_DIR}"
+            CURL_EXTRA=(--ftp-ssl --ssl-reqd --insecure)
+          elif try_list "ftp://${AUTH}:21/${SERVER_DIR}" --ftp-ssl --insecure; then
+            MODE="ftp+ssl"
+            FTP_BASE="ftp://${AUTH}:21/${SERVER_DIR}"
+            CURL_EXTRA=(--ftp-ssl --insecure)
+          elif try_list "ftps://${AUTH}:990/${SERVER_DIR}" --insecure; then
+            MODE="ftps:990"
+            FTP_BASE="ftps://${AUTH}:990/${SERVER_DIR}"
+            CURL_EXTRA=(--insecure)
+          elif try_list "ftp://${AUTH}:21/${SERVER_DIR}"; then
+            MODE="ftp-plain"
+            FTP_BASE="ftp://${AUTH}:21/${SERVER_DIR}"
+            CURL_EXTRA=()
+          else
+            echo "All FTP probe modes failed for ${SERVER_DIR}"
+            exit 1
+          fi
+
+          echo "Publishing Windows ${RELEASE_VERSION} via ${MODE} → ${SERVER_DIR}/"
+
+          curl_ftp() {
+            curl --silent --show-error --fail --ftp-pasv \
+              --connect-timeout 20 --max-time 1800 \
+              --retry 2 --retry-delay 5 --retry-all-errors \
+              "${CURL_EXTRA[@]}" \
+              "$@"
+          }
 
           echo "== ensure remote version directory =="
           curl_ftp --ftp-create-dirs -Q "MKD ${RELEASE_VERSION}" "${FTP_BASE}/" -o /dev/null || true
@@ -381,7 +411,7 @@ jobs:
             local_path="${VERSION_DIR}/${f}"
             bytes="$(wc -c < "$local_path" | tr -d ' ')"
             echo "== upload ${f} (${bytes} bytes) =="
-            curl_ftp --upload-file "${local_path}" "${FTP_BASE}/${RELEASE_VERSION}/${f}"
+            curl_ftp --ftp-create-dirs --upload-file "${local_path}" "${FTP_BASE}/${RELEASE_VERSION}/${f}"
             echo "== done ${f} =="
           done
 
@@ -392,7 +422,7 @@ jobs:
             curl_ftp --upload-file "staging/publish/${m}" "${FTP_BASE}/${m}"
           done
 
-          echo "FTPS Windows publish complete for ${RELEASE_VERSION}"
+          echo "FTPS Windows publish complete for ${RELEASE_VERSION} (mode=${MODE})"
 
       - name: Summary
         shell: bash

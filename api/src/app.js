@@ -46,9 +46,36 @@ function resolveDownloadsPath() {
   return path.resolve(__dirname, '../../downloads')
 }
 
-const DOWNLOADS_PATH = resolveDownloadsPath()
+/**
+ * When FTPS cannot refresh Windows installers on disk, redirect website /
+ * latest.json Windows URLs to the GitHub Release that holds the EXEs.
+ * Override with CLOUD_MULTI_WINDOWS_RELEASE_TAG / CLOUD_MULTI_WINDOWS_RELEASE_BASE.
+ */
+export function resolveCloudWindowsRelease() {
+  const tag =
+    process.env.CLOUD_MULTI_WINDOWS_RELEASE_TAG || 'desktop-cloud-v1.0.7'
+  const version = String(tag).replace(/^desktop-cloud-v/i, '') || '1.0.7'
+  const base =
+    process.env.CLOUD_MULTI_WINDOWS_RELEASE_BASE ||
+    `https://github.com/mebratu-wakeni/network_app/releases/download/${tag}`
+  return {
+    tag,
+    version,
+    base: String(base).replace(/\/+$/, ''),
+    x64: `PharmaSuit-Cloud-Windows-${version}-x64-Setup.exe`,
+    ia32: `PharmaSuit-Cloud-Windows-${version}-ia32-Setup.exe`,
+    setup: `PharmaSuit-Cloud-Windows-${version}-Setup.exe`
+  }
+}
+
+function cloudWindowsExeTarget(basename, release = resolveCloudWindowsRelease()) {
+  if (/ia32/i.test(basename)) return `${release.base}/${release.ia32}`
+  if (/x64/i.test(basename)) return `${release.base}/${release.x64}`
+  return `${release.base}/${release.setup}`
+}
 
 export function createApp() {
+  const DOWNLOADS_PATH = resolveDownloadsPath()
   const app = express()
 
   // Strict production origins allowed to speak to your API
@@ -136,6 +163,60 @@ export function createApp() {
       res.sendFile(path.join(ADMIN_DIST_PATH, 'index.html'), (err) => { if (err) next(err) })
     })
   }
+
+  // Cloud-multi Windows fallbacks — register BEFORE express.static so stale
+  // on-disk latest.json / missing EXEs do not win. masatechplc.com buttons still
+  // point at server …/cloud-multi/1.0.6/*-Setup.exe (404 on disk); FTPS from CI
+  // cannot refresh those files, so send browsers to the GitHub Release assets.
+  const cloudWin = resolveCloudWindowsRelease()
+  app.get(
+    /^\/downloads\/cloud-multi\/[^/]+\/PharmaSuit-Cloud-Windows-.+-Setup\.exe$/i,
+    (req, res) => {
+      const target = cloudWindowsExeTarget(path.basename(req.path), cloudWin)
+      res.setHeader('Cache-Control', 'no-cache')
+      return res.redirect(302, target)
+    }
+  )
+  app.get('/downloads/cloud-multi/latest.json', (req, res, next) => {
+    // Prefer on-disk feed when it already advertises this Windows release and
+    // the advertised installer exists locally.
+    try {
+      const onDisk = path.join(DOWNLOADS_PATH, 'cloud-multi', 'latest.json')
+      if (fs.existsSync(onDisk)) {
+        const parsed = JSON.parse(fs.readFileSync(onDisk, 'utf8'))
+        if (String(parsed?.version || '') === cloudWin.version && parsed?.artifacts?.win?.url) {
+          const winUrl = String(parsed.artifacts.win.url)
+          const rel = winUrl.replace(/^https?:\/\/[^/]+\/downloads\//i, '')
+          if (rel && fs.existsSync(path.join(DOWNLOADS_PATH, rel))) {
+            return next()
+          }
+        }
+      }
+    } catch (_) {
+      // fall through to GitHub-backed feed
+    }
+
+    res.setHeader('Cache-Control', 'no-cache')
+    return res.status(200).json({
+      product: 'PharmaSuit Cloud (multi-tenant)',
+      channel: 'cloud-multi',
+      version: cloudWin.version,
+      releaseNotes: `PharmaSuit Cloud ${cloudWin.version} (Windows)`,
+      publishedAt: new Date().toISOString(),
+      mandatory: false,
+      minSupportedVersion: null,
+      artifacts: {
+        win: {
+          file: cloudWin.setup,
+          url: `${cloudWin.base}/${cloudWin.setup}`
+        },
+        win32: {
+          file: cloudWin.ia32,
+          url: `${cloudWin.base}/${cloudWin.ia32}`
+        }
+      }
+    })
+  })
 
   // Desktop installers + update feed (same host as API). Files live on disk at
   // server.masatechplc.com/downloads/ — not in public_html (this vhost is Node).
