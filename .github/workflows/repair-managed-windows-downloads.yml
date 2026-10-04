@@ -1,0 +1,139 @@
+# Hotfix Managed Cloud Windows download buttons on masatechplc.com.
+#
+# Website buttons still hit server.masatechplc.com/downloads/cloud-multi/1.0.6/*
+# Windows Setup.exe URLs. Large EXE FTPS often fails; this pushes the small API
+# redirect (api/src/app.js) + Passenger restart.txt so Node 302s those URLs to
+# the GitHub Release assets (desktop-cloud-v1.0.7).
+#
+# FTPS pattern matches Restore cloud-multi Windows installers:
+#   curl --ftp-ssl --insecure --user … -T file "ftp://host/path"
+
+name: Repair Managed Windows Downloads
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'GitHub Release tag that holds the Windows EXEs'
+        required: true
+        default: 'desktop-cloud-v1.0.7'
+
+permissions:
+  contents: read
+
+jobs:
+  hotfix-api-redirect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: release/managed-cloud
+
+      - name: Check downloads secrets
+        shell: bash
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          missing=0
+          [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
+          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
+          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
+          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR" && missing=1
+          exit $missing
+
+      - name: Stage API hotfix payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f api/src/app.js
+          mkdir -p hotfix/api/src hotfix/api/tmp
+          cp api/src/app.js hotfix/api/src/app.js
+          date -u +'%Y-%m-%dT%H:%M:%SZ hotfix windows download redirects' > hotfix/api/tmp/restart.txt
+          # Confirm redirect helpers are present in the file we will upload
+          grep -q 'resolveCloudWindowsRelease' hotfix/api/src/app.js
+          grep -q 'PharmaSuit-Cloud-Windows-.+-Setup' hotfix/api/src/app.js
+          ls -la hotfix/api/src/app.js hotfix/api/tmp/restart.txt
+
+      - name: Upload API hotfix via FTPS (curl)
+        id: ftps
+        shell: bash
+        env:
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          set -euo pipefail
+          # DOWNLOADS_SERVER_DIR e.g. server.masatechplc.com/downloads/cloud-multi/
+          SERVER_DIR="${DOWNLOADS_SERVER_DIR%/}"
+          DOMAIN_ROOT="$(dirname "$(dirname "$SERVER_DIR")")"
+          echo "Domain root (FTP relative): ${DOMAIN_ROOT}"
+
+          # Known-good cPanel pattern (see Restore cloud-multi Windows installers):
+          # explicit TLS on ftp:// — NOT ftps://host:21 (wrong version number).
+          curl_put() {
+            local local_path="$1"
+            local remote_rel="$2"
+            echo "put ftp://${HOST}/${DOMAIN_ROOT}/${remote_rel}"
+            curl -sS --fail --ftp-ssl --insecure --ftp-pasv \
+              --connect-timeout 30 --max-time 180 \
+              --retry 3 --retry-delay 5 \
+              --user "${USER}:${PASS}" \
+              -T "${local_path}" \
+              "ftp://${HOST}/${DOMAIN_ROOT}/${remote_rel}"
+          }
+
+          echo "== probe =="
+          curl -sS --fail --ftp-ssl --insecure --ftp-pasv \
+            --connect-timeout 30 --max-time 60 \
+            --user "${USER}:${PASS}" \
+            --list-only "ftp://${HOST}/${DOMAIN_ROOT}/" | head -20
+
+          curl_put hotfix/api/src/app.js "api/src/app.js"
+          curl_put hotfix/api/tmp/restart.txt "api/tmp/restart.txt"
+          echo "Hotfix uploaded + restart nudged"
+
+      - name: Verify website Managed Windows buttons redirect
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 12
+          fail=0
+          for path in \
+            '/downloads/cloud-multi/1.0.6/PharmaSuit-Cloud-Windows-1.0.6-x64-Setup.exe' \
+            '/downloads/cloud-multi/1.0.6/PharmaSuit-Cloud-Windows-1.0.6-ia32-Setup.exe'
+          do
+            echo "== GET ${path} =="
+            headers="$(curl -sI --max-time 30 "https://server.masatechplc.com${path}" || true)"
+            echo "$headers" | head -20
+            if echo "$headers" | grep -qiE '^HTTP/2 302|^HTTP/1\.1 302'; then
+              loc="$(echo "$headers" | grep -i '^location:' | head -1)"
+              echo "OK $loc"
+              echo "$loc" | grep -qi 'releases/download/desktop-cloud-v' || fail=1
+            else
+              echo "NOT redirected yet"
+              fail=1
+            fi
+          done
+          echo "== latest.json (first 30 lines) =="
+          curl -sL --max-time 30 'https://server.masatechplc.com/downloads/cloud-multi/latest.json' | head -30
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Live server still 404s website Windows URLs. Extract masatech-deploy.tar.gz at domain root and restart Node."
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Repair Managed Windows Downloads"
+            echo ""
+            echo "- **Release tag:** ${{ inputs.release_tag }}"
+            echo "- **Win x64 (GitHub):** https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}/PharmaSuit-Cloud-Windows-1.0.7-x64-Setup.exe"
+            echo "- **Site button (should 302):** https://server.masatechplc.com/downloads/cloud-multi/1.0.6/PharmaSuit-Cloud-Windows-1.0.6-x64-Setup.exe"
+          } >> "$GITHUB_STEP_SUMMARY"
