@@ -1,0 +1,77 @@
+# Repair Managed Cloud Windows in-app update feed.
+#
+# Re-uploads the correct Setup.exe from the GitHub Release, points latest.yml /
+# latest.json at the x64 installer, and deletes .blockmap files so clients do a
+# full download (avoids net::ERR_CONNECTION_RESET near 99% on LiteSpeed).
+#
+# Runs automatically when this workflow file or the repair script is pushed, and
+# via workflow_dispatch.
+
+name: Repair cloud-multi Windows update feed
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version folder on the downloads host'
+        required: true
+        default: '1.0.7'
+      tag:
+        description: 'GitHub Release tag holding the correct EXEs'
+        required: true
+        default: 'desktop-cloud-v1.0.7'
+  push:
+    branches:
+      - main
+      - release/managed-cloud
+    paths:
+      - '.github/workflows/repair-cloud-multi-win-feed.yml'
+      - 'scripts/repair-cloud-multi-win-feed.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check downloads secrets
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          missing=0
+          [ -z "$DOWNLOADS_HOST" ] && echo "Missing DOWNLOADS_HOST" && missing=1
+          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing DOWNLOADS_USERNAME" && missing=1
+          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing DOWNLOADS_PASSWORD" && missing=1
+          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing DOWNLOADS_SERVER_DIR" && missing=1
+          exit $missing
+
+      - name: Repair Windows update feed
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+          VERSION: ${{ github.event.inputs.version || '1.0.7' }}
+          TAG: ${{ github.event.inputs.tag || 'desktop-cloud-v1.0.7' }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          chmod +x scripts/repair-cloud-multi-win-feed.sh
+          bash scripts/repair-cloud-multi-win-feed.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Repair cloud-multi Windows update feed"
+            echo "- Version: \`${{ github.event.inputs.version || '1.0.7' }}\`"
+            echo "- Tag: \`${{ github.event.inputs.tag || 'desktop-cloud-v1.0.7' }}\`"
+            echo "- Feed: https://server.masatechplc.com/downloads/cloud-multi/latest.yml"
+            echo "- Retry in-app update after this job is green."
+          } >> "$GITHUB_STEP_SUMMARY"
