@@ -1,3 +1,6 @@
+import { parseCSVText } from '../../utils/csvImportParse.js'
+import { csvRowsToProducts, MAX_UPLOAD_ROWS } from './importCsvHelpers.js'
+
 /**
  * Controller: HTTP layer for products
  * Handles request/response, delegates business logic to service
@@ -15,30 +18,22 @@ export class ProductsController {
   list = async (req, res, next) => {
     try {
       const params = req.body || {}
-      const { limit, offset, search, sortBy, orderBy } = params
+      const { limit, offset, search, sortBy, orderBy, filter } = params
       
-      console.log(`[ProductsController] List request:`, {
+      const result = await this.service.findAll(req.tenantId, {
         limit: limit || 10,
         offset: offset || 0,
         search: search || '',
         sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
+        orderBy: orderBy || 'desc',
+        filter: filter || 'all'
       })
-      
-      const result = await this.service.findAll({
-        limit: limit || 10,
-        offset: offset || 0,
-        search: search || '',
-        sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
-      })
-      
-      console.log(`[ProductsController] List response: ${result.products.length} products, total: ${result.total}`)
       
       res.json({
         ok: true,
         products: result.products || [],
-        total: result.total || 0
+        total: result.total || 0,
+        stats: result.stats || { outOfStock: 0, lowStock: 0 }
       })
     } catch (error) {
       console.error('[ProductsController] List error:', error)
@@ -54,36 +49,82 @@ export class ProductsController {
     try {
       const { products } = req.validBody
       
-      console.log(`[ProductsController] Bulk import request: ${products.length} products`)
+      const result = await this.service.bulkImport(req.tenantId, products)
       
-      const result = await this.service.bulkImport(products)
-      
-      // Log failed results for debugging
-      const failed = result.results.filter(r => !r.success)
-      if (failed.length > 0) {
-        console.error(`[ProductsController] Import failed for ${failed.length} products:`)
-        failed.forEach(f => {
-          console.error(`  Row ${f.index}: ${f.error || 'Unknown error'}`)
+      // Log rows that did not import (errors or warnings)
+      const skipped = result.results.filter(r => !r.success)
+      if (skipped.length > 0) {
+        console.error(`[ProductsController] Import skipped ${skipped.length} row(s) (${result.errors} error(s), ${result.warnings} warning(s)):`)
+        skipped.forEach(f => {
+          const kind = f.issueKind === 'warning' ? 'warning' : 'error'
+          console.error(`  Row ${f.index} [${kind}]: ${f.error || 'Unknown'}`)
           if (f.product) {
             console.error(`    Product: ${f.product.name || JSON.stringify(f.product)}`)
           }
         })
       }
       
-      console.log(`[ProductsController] Import summary: ${result.successful} successful, ${result.failed} failed`)
-      
       res.json({
         ok: true,
-        success: result.failed === 0,
+        success: result.errors === 0,
         summary: {
           total: result.total,
           successful: result.successful,
-          failed: result.failed
+          failed: result.failed,
+          errors: result.errors,
+          warnings: result.warnings
         },
         results: result.results
       })
     } catch (error) {
       console.error('[ProductsController] Bulk import error:', error)
+      next(error)
+    }
+  }
+
+  /**
+   * POST /api/products/bulk-import-upload
+   * Multipart CSV upload; parse + normalize + import on server (partial success per row).
+   */
+  bulkImportUpload = async (req, res, next) => {
+    try {
+      if (!req.file?.buffer) {
+        return res.status(400).json({ ok: false, error: 'No file uploaded' })
+      }
+      const text = req.file.buffer.toString('utf8')
+      const { rows } = parseCSVText(text)
+      if (rows.length > MAX_UPLOAD_ROWS) {
+        return res.status(400).json({
+          ok: false,
+          error: `Too many data rows (max ${MAX_UPLOAD_ROWS})`
+        })
+      }
+      const products = csvRowsToProducts(rows)
+      if (products.length === 0) {
+        return res.status(400).json({ ok: false, error: 'No valid product rows in CSV' })
+      }
+
+      const result = await this.service.bulkImport(req.tenantId, products)
+
+      const skipped = result.results.filter(r => !r.success)
+      if (skipped.length > 0) {
+        console.error(`[ProductsController] Import skipped ${skipped.length} row(s) (upload): ${result.errors} error(s), ${result.warnings} warning(s)`)
+      }
+
+      res.json({
+        ok: true,
+        success: result.errors === 0,
+        summary: {
+          total: result.total,
+          successful: result.successful,
+          failed: result.failed,
+          errors: result.errors,
+          warnings: result.warnings
+        },
+        results: result.results
+      })
+    } catch (error) {
+      console.error('[ProductsController] Bulk import upload error:', error)
       next(error)
     }
   }
@@ -97,23 +138,13 @@ export class ProductsController {
       const params = req.query || {}
       const { limit, offset, search, sortBy, orderBy } = params
       
-      console.log(`[ProductsController] Export request:`, {
-        limit: limit || 10000,
-        offset: offset || 0,
-        search: search || '',
-        sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
-      })
-      
-      const csvContent = await this.service.exportToCSV({
+      const csvContent = await this.service.exportToCSV(req.tenantId, {
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
         search: search || '',
         sortBy: sortBy || 'id',
         orderBy: orderBy || 'desc'
       })
-      
-      console.log(`[ProductsController] Export response: ${csvContent.split('\n').length - 1} rows`)
       
       // Set headers for CSV download
       res.setHeader('Content-Type', 'text/csv')
@@ -134,11 +165,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      console.log(`[ProductsController] Create category request:`, data)
-      
-      const category = await this.service.createCategory(data)
-      
-      console.log(`[ProductsController] Category created:`, category)
+      const category = await this.service.createCategory(req.tenantId, data)
       
       res.json({
         ok: true,
@@ -158,11 +185,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      console.log(`[ProductsController] Create unit request:`, data)
-      
-      const unit = await this.service.createUnit(data)
-      
-      console.log(`[ProductsController] Unit created:`, unit)
+      const unit = await this.service.createUnit(req.tenantId, data)
       
       res.json({
         ok: true,
@@ -180,7 +203,7 @@ export class ProductsController {
    */
   getAllCategories = async (req, res, next) => {
     try {
-      const categories = await this.service.getAllCategories()
+      const categories = await this.service.getAllCategories(req.tenantId)
       
       res.json({
         ok: true,
@@ -198,7 +221,7 @@ export class ProductsController {
    */
   getAllUnits = async (req, res, next) => {
     try {
-      const units = await this.service.getAllUnits()
+      const units = await this.service.getAllUnits(req.tenantId)
       
       res.json({
         ok: true,
@@ -218,9 +241,7 @@ export class ProductsController {
     try {
       const { name } = req.params
       
-      console.log(`[ProductsController] Find category by name:`, name)
-      
-      const category = await this.service.findCategoryByName(name)
+      const category = await this.service.findCategoryByName(req.tenantId, name)
       
       if (!category) {
         return res.status(404).json({
@@ -247,9 +268,7 @@ export class ProductsController {
     try {
       const { name } = req.params
       
-      console.log(`[ProductsController] Find unit by name:`, name)
-      
-      const unit = await this.service.findUnitByName(name)
+      const unit = await this.service.findUnitByName(req.tenantId, name)
       
       if (!unit) {
         return res.status(404).json({
@@ -276,11 +295,7 @@ export class ProductsController {
     try {
       const data = req.validBody
       
-      console.log(`[ProductsController] Create product request:`, JSON.stringify(data, null, 2))
-      
-      const product = await this.service.createProduct(data)
-      
-      console.log(`[ProductsController] Product created successfully:`, JSON.stringify(product, null, 2))
+      const product = await this.service.createProduct(req.tenantId, data)
       
       if (!product || !product.id) {
         console.error('[ProductsController] Product creation returned invalid product:', product)
@@ -320,11 +335,7 @@ export class ProductsController {
       const { id } = req.params
       const data = req.validBody
       
-      console.log(`[ProductsController] Update product ${id} request:`, JSON.stringify(data, null, 2))
-      
-      const product = await this.service.updateProduct(parseInt(id), data)
-      
-      console.log(`[ProductsController] Product updated successfully:`, JSON.stringify(product, null, 2))
+      const product = await this.service.updateProduct(req.tenantId, parseInt(id), data)
       
       if (!product || !product.id) {
         console.error('[ProductsController] Product update returned invalid product:', product)
@@ -362,11 +373,7 @@ export class ProductsController {
     try {
       const { id } = req.params
       
-      console.log(`[ProductsController] Delete product ${id} request`)
-      
-      await this.service.deleteProduct(parseInt(id))
-      
-      console.log(`[ProductsController] Product ${id} deleted successfully`)
+      await this.service.deleteProduct(req.tenantId, parseInt(id))
       
       res.json({
         ok: true,

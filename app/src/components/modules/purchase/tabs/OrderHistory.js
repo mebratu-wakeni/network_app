@@ -17,7 +17,38 @@ const FILTER_SMALL_CLASS = 'text-xs py-1 px-2 min-h-0';
 const SELECT_SMALL_CLASS = 'text-xs py-1 pl-2 pr-6 min-h-0';
 
 export function OrderHistory(props) {
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
+  const { pendingPurchaseOpen, navigationVM } = props;
+  props.ensureLocalStateKey('pendingPurchaseOpenProcessed', false);
+  const processed = props.getLocalState('pendingPurchaseOpenProcessed');
+
+  // Cross-module: open drawer when navigated from PayablesTab (View in Purchase / Make Payment)
+  props.ensureLocalStateKey('drawerOrderId', null);
+  props.ensureLocalStateKey('showOrderDrawer', false);
+
+  if (pendingPurchaseOpen && !processed) {
+    props.setLocalState('pendingPurchaseOpenProcessed', true);
+    const openFromPending = async () => {
+      try {
+        await props.viewModel.loadOrderDetails(pendingPurchaseOpen.orderId);
+        props.setLocalState('drawerOrderId', pendingPurchaseOpen.orderId);
+        props.setLocalState('drawerContentType', pendingPurchaseOpen.contentType === 'payment' ? 'payment' : 'details');
+        if (pendingPurchaseOpen.contentType === 'payment') {
+          await props.viewModel.preparePaymentForOrder(pendingPurchaseOpen.orderId);
+        }
+        requestAnimationFrame(() => props.setLocalState('showOrderDrawer', true));
+      } catch (error) {
+        await showAlert({ message: error.message || 'Failed to load order details', variant: 'error' });
+        props.setLocalState('pendingPurchaseOpenProcessed', false);
+      } finally {
+        if (navigationVM) navigationVM.updateState('pending-purchase-open', null);
+      }
+    };
+    openFromPending();
+  } else if (!pendingPurchaseOpen && processed) {
+    props.setLocalState('pendingPurchaseOpenProcessed', false);
+  }
+
+  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-auto' }, [
     OrderHistoryStatsAndFilters(props),
     OrderHistoryTableSection(props),
     props.getLocalState('drawerOrderId') && orderDetailsDrawer(props),
@@ -256,8 +287,8 @@ function OrderHistoryTableSection(props) {
     props.viewModel.updateOrderTableConfig({ offset: paginationOffset + paginationLimit });
   };
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden py-4' }, [
-    Row({ class: 'flex items-center justify-between gap-4 px-4 py-4 border-b border-gray-200 bg-gray-50 flex-shrink-0' }, [
+  return Row({ class: 'flex flex-col py-4' }, [
+    Row({ class: 'sticky top-0 z-20 flex flex-wrap items-center justify-between gap-4 px-4 py-4 border-b border-gray-200 bg-gray-50' }, [
       Row({ class: 'flex-1 min-w-[200px] max-w-md' }, [
         Row({ class: 'relative' }, [
           IonIcon({ name: 'search-outline', class: 'absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xl pointer-events-none' }),
@@ -300,11 +331,10 @@ function OrderHistoryTableSection(props) {
       ? Row({ class: 'p-8 text-center text-gray-500' }, 'Loading orders...')
       : orders.length === 0
         ? Row({ class: 'p-8 text-center text-gray-500' }, 'No orders found')
-        : Row({ class: 'flex-1 flex flex-col min-h-0 border border-gray-200 rounded-lg overflow-hidden' }, [
+        : Row({ class: 'flex flex-col border border-gray-200 rounded-lg' }, [
             Table({
-              class: 'flex-1 min-w-full overflow-hidden',
-              getOpenActionState: () => props.getLocalState('actionId'),
-              setOpenActionState: () => props.setLocalState('actionId', null),
+              class: 'min-w-full',
+              pageScrollable: true,
             }, [
               TableHeader({}, [
                 TableRow({}, [
@@ -330,10 +360,10 @@ function OrderHistoryTableSection(props) {
                   TableHCell({ class: 'w-24' }, 'Actions'),
                 ]),
               ]),
-              TableBody({ class: 'flex-1 min-h-0 overflow-y-auto' }, [
-                orders.map((order) =>
+              TableBody({}, [
+                ...orders.map((order) =>
                   TableRow({ key: order.id }, [
-                    TableDCell({ class: 'font-medium' }, order.receipt_number || `PO${order.id}`),
+                    TableDCell({ class: 'font-medium' }, order.receipt_number || '—'),
                     TableDCell({}, order.supplier_name || 'Unknown'),
                     TableDCell({}, formatDateDDMMYYYY(order.order_date)),
                     TableDCell({ class: 'font-medium' }, `Br ${financeFormat(order.net_amount)}`),

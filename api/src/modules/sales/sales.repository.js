@@ -4,6 +4,10 @@
  * records ledger entries, and creates bin card transactions.
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
+import {
+  effectiveWithholdConfirmed,
+  rawWithholdEffectivelyConfirmed
+} from '../../utils/salesWithhold.js'
 
 export class SalesRepository {
   constructor(knex) {
@@ -14,10 +18,10 @@ export class SalesRepository {
   /**
    * Get last product balance for bin card (from bin_cards by product_id).
    */
-  async getLastProductBalance(productId, trx = null) {
+  async getLastProductBalance(tenantId, productId, trx = null) {
     const db = trx || this.knex
     const last = await db('bin_cards')
-      .where({ product_id: productId })
+      .where({ tenant_id: tenantId, product_id: productId })
       .orderBy('transaction_date', 'desc')
       .orderBy('id', 'desc')
       .select('balance')
@@ -28,11 +32,12 @@ export class SalesRepository {
   /**
    * Generate next sales receipt number (SO000001, SO000002, ...)
    */
-  async generateNextSalesReceiptNumber() {
+  async generateNextSalesReceiptNumber(tenantId) {
     const hasTable = await this.knex.schema.hasTable('sales_orders')
     if (!hasTable) return 'SO000001'
 
     const row = await this.knex('sales_orders')
+      .where({ tenant_id: tenantId })
       .where('receipt_no', 'like', 'SO%')
       .orderBy('id', 'desc')
       .select('receipt_no')
@@ -49,15 +54,22 @@ export class SalesRepository {
    * Create sales order and its items in one transaction; decrement inventory for each item.
    * Payload: { order, items } where order has sales_orders columns, items have product_id, inventory_id, quantity, unit_price (total_price computed).
    */
-  async createOrderWithItems(payload, userId = null) {
+  async createOrderWithItems(tenantId, payload, userId = null) {
     return this.knex.transaction(async (trx) => {
       const { order, items } = payload
 
-      // 1) Insert sales_orders
+      // 1) Insert sales_orders — enforce: non-empty withhold_ref ⇒ withhold_confirmation true; else false and no ref.
+      const trimmedInv =
+        order.withhold_ref != null && String(order.withhold_ref).trim() !== ''
+          ? String(order.withhold_ref).trim()
+          : null
+      const withholdConfirmed = Boolean(trimmedInv)
       const [insertedOrder] = await trx('sales_orders')
         .insert({
+          tenant_id: tenantId,
           customer_id: order.customer_id ?? null,
           order_date: order.order_date,
+          fiscal_year: order.fiscal_year ?? null,
           invoice_no: order.invoice_no ?? null,
           remark: order.remark ?? null,
           payment_type: order.payment_type,
@@ -68,8 +80,8 @@ export class SalesRepository {
           withhold_amount: order.withhold_amount ?? null,
           received_amount: order.received_amount ?? null,
           withhold_settled: order.withhold_settled ?? false,
-          withhold_confirmation: order.withhold_confirmation ?? false,
-          sales_invoice_no: order.sales_invoice_no ?? null,
+          withhold_confirmation: withholdConfirmed,
+          withhold_ref: trimmedInv,
           receipt_no: order.receipt_no,
           status: order.status ?? 'completed',
           is_reversed: order.is_reversed ?? false,
@@ -85,6 +97,7 @@ export class SalesRepository {
 
       // 2) Insert sales_order_items (each with sales_order_id, product_id, inventory_id, quantity, unit_price, total_price)
       const itemsToInsert = items.map(it => ({
+        tenant_id: tenantId,
         sales_order_id: orderId,
         product_id: it.product_id,
         inventory_id: it.inventory_id,
@@ -108,6 +121,7 @@ export class SalesRepository {
         if (hasPaymentsTable) {
           const [payment] = await trx('sales_payments')
             .insert({
+              tenant_id: tenantId,
               sales_order_id: orderId,
               payment_date: initialPayment.payment_date,
               amount: initialPayment.amount,
@@ -132,7 +146,7 @@ export class SalesRepository {
       const itemsWithInv = []
       for (const item of insertedItems) {
         const inv = await trx('inventories')
-          .where({ id: item.inventory_id })
+          .where({ id: item.inventory_id, tenant_id: tenantId })
           .select('quantity', 'purchase_price', 'batch_no', 'expiry_date', 'product_id')
           .first()
         if (!inv) {
@@ -143,7 +157,7 @@ export class SalesRepository {
           throw new Error(`Insufficient quantity for inventory ${item.inventory_id}: has ${currentQty}, need ${item.quantity}`)
         }
         await trx('inventories')
-          .where({ id: item.inventory_id })
+          .where({ id: item.inventory_id, tenant_id: tenantId })
           .update({
             quantity: trx.raw('quantity - ?', [item.quantity]),
             last_updated: trx.fn.now()
@@ -157,12 +171,13 @@ export class SalesRepository {
       const orderDate = order.order_date || insertedOrder.order_date
       const txnDate = typeof orderDate === 'string' && orderDate.includes('T') ? orderDate.slice(0, 10) : orderDate
       for (const { inv, quantity, inventory_id, product_id } of itemsWithInv) {
-        const openingBalance = await this.getLastProductBalance(product_id, trx)
+        const openingBalance = await this.getLastProductBalance(tenantId, product_id, trx)
         const qtyOut = Number(quantity)
         const balance = openingBalance - qtyOut
         const unitCost = Number(inv.purchase_price ?? 0)
         const totalCost = unitCost * qtyOut
         await trx('bin_cards').insert({
+          tenant_id: tenantId,
           product_id: product_id,
           inventory_id: inventory_id,
           batch_no: inv.batch_no ?? null,
@@ -187,16 +202,17 @@ export class SalesRepository {
         })
       }
 
-      // 6) Ledger: DR Cash / AR / Withhold Receivable, CR Revenue; DR COGS, CR Inventory
+      // 6) Ledger: DR Cash / AR, CR Revenue (net), CR Withhold Payable; DR COGS, CR Inventory
       const subtotal = Number(order.total_amount ?? 0)
       const withholdAmount = Number(order.withhold_amount ?? 0)
       const firstPayment = Number(order.amount_paid ?? 0)
-      const receivedAmount = subtotal - withholdAmount
-      const outstandingBalance = Math.max(0, receivedAmount - firstPayment)
+      // AR = full amount customer owes (subtotal - firstPayment); withhold reduces our revenue, not AR
+      const outstandingBalance = Math.max(0, subtotal - firstPayment)
 
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
         await this.ledgerHelper.recordSalesOrder({
+          tenant_id: tenantId,
           salesOrderId: orderId,
           firstPayment,
           outstandingBalance,
@@ -220,11 +236,11 @@ export class SalesRepository {
   /**
    * Get withhold percentage from system_settings (same key as purchase).
    */
-  async getWithholdPercentageSetting() {
+  async getWithholdPercentageSetting(tenantId) {
     const hasTable = await this.knex.schema.hasTable('system_settings')
     if (!hasTable) return null
     const row = await this.knex('system_settings')
-      .where({ setting_key: 'withhold_percentage' })
+      .where({ tenant_id: tenantId, setting_key: 'withhold_percentage' })
       .first()
     if (!row || row.setting_value == null || row.setting_value === '') return null
     const num = parseFloat(row.setting_value)
@@ -236,7 +252,7 @@ export class SalesRepository {
    * net_amount = total_amount - withhold_amount; outstanding = net - amount_paid.
    * Stats are static (no list filters). 'all' excludes reversed and archived.
    */
-  async listOrders(params = {}) {
+  async listOrders(tenantId, params = {}) {
     const hasOrders = await this.knex.schema.hasTable('sales_orders')
     if (!hasOrders) return { orders: [], total: 0, stats: {} }
 
@@ -256,7 +272,10 @@ export class SalesRepository {
     } = params
 
     const base = this.knex('sales_orders as so')
-      .leftJoin('customers as c', 'so.customer_id', 'c.id')
+      .leftJoin('customers as c', function () {
+        this.on('so.customer_id', 'c.id').andOn('so.tenant_id', 'c.tenant_id')
+      })
+      .where('so.tenant_id', tenantId)
 
     base.where(builder => {
       builder.whereIn('so.status', ['pending', 'completed', 'archived'])
@@ -292,15 +311,15 @@ export class SalesRepository {
     }
     if (stat_filter === 'withhold_unconfirmed') {
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_confirmation', false)
       base.andWhere('so.withhold_settled', false)
+      base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
     } else if (stat_filter === 'withhold_confirmed') {
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_confirmation', true)
+      base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
       base.andWhere('so.withhold_settled', false)
     } else if (stat_filter === 'settled') {
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_confirmation', true)
+      base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
       base.andWhere('so.withhold_settled', true)
     } else if (stat_filter === 'unsettled') {
       base.andWhere('so.withhold_amount', '>', 0.009)
@@ -323,7 +342,8 @@ export class SalesRepository {
       'so.is_reversed',
       'so.withhold_confirmation',
       'so.withhold_settled',
-      'so.sales_invoice_no',
+      'so.withhold_ref',
+      'so.remark',
       netRaw,
       outstandingRaw
     )
@@ -331,14 +351,35 @@ export class SalesRepository {
     const totalResult = await base.clone().clearSelect().clearOrder().count('so.id as count').first()
     const total = Number(totalResult?.count || 0)
 
+    let periodSummary = null
+    if (date_from && date_to) {
+      const periodRow = await this.knex('sales_orders as so')
+        .where('so.tenant_id', tenantId)
+        .where('so.status', 'completed')
+        .where('so.is_reversed', false)
+        .where('so.order_date', '>=', date_from)
+        .where('so.order_date', '<=', date_to)
+        .select(this.knex.raw('COUNT(*) as count, COALESCE(SUM(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0)), 0) as value'))
+        .first()
+      periodSummary = {
+        count: Number(periodRow?.count ?? 0),
+        value: parseFloat(periodRow?.value ?? 0)
+      }
+    }
+
     const allowedSort = ['order_date', 'id', 'receipt_no', 'net_amount', 'customer_name']
     const sortCol = allowedSort.includes(sort_by) ? sort_by : 'order_date'
     const sortDir = order_by === 'asc' ? 'asc' : 'desc'
 
-    const orders = await base.orderBy(sortCol, sortDir).limit(limit).offset(offset)
+    let orders = await base.orderBy(sortCol, sortDir).limit(limit).offset(offset)
+    orders = orders.map((row) => ({
+      ...row,
+      withhold_confirmation: effectiveWithholdConfirmed(row)
+    }))
 
     // Stats: static (no list filters). All = completed, non-reversed only.
     const statsBase = this.knex('sales_orders as so')
+      .where('so.tenant_id', tenantId)
       .whereIn('so.status', ['pending', 'completed', 'archived'])
 
     const statsRows = await statsBase.select(
@@ -347,6 +388,8 @@ export class SalesRepository {
       'so.is_reversed',
       'so.withhold_confirmation',
       'so.withhold_settled',
+      'so.withhold_ref',
+      'so.remark',
       this.knex.raw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0)) as net_amount'),
       'so.amount_paid',
       'so.withhold_amount'
@@ -369,7 +412,7 @@ export class SalesRepository {
       const isReversed = !!row.is_reversed
       const isArchived = row.status === 'archived'
       const isCompleted = row.status === 'completed'
-      const confirmed = !!row.withhold_confirmation
+      const confirmed = effectiveWithholdConfirmed(row)
       const settled = !!row.withhold_settled
 
       // All: completed, non-reversed (exclude reversed and archived)
@@ -403,19 +446,20 @@ export class SalesRepository {
       }
     }
 
-    return { orders, total, stats }
+    return { orders, total, stats, period_summary: periodSummary }
   }
 
   /**
    * Create hold order (snapshot + index columns).
    */
-  async createHoldOrder(snapshot, indexColumns, userId = null) {
+  async createHoldOrder(tenantId, snapshot, indexColumns, userId = null) {
     const hasTable = await this.knex.schema.hasTable('sales_hold_orders')
     if (!hasTable) throw new Error('sales_hold_orders table not found')
 
     const payload = typeof snapshot === 'string' ? JSON.parse(snapshot) : snapshot
     const [row] = await this.knex('sales_hold_orders')
       .insert({
+        tenant_id: tenantId,
         snapshot: payload,
         customer_id: indexColumns.customer_id ?? null,
         order_date: indexColumns.order_date,
@@ -434,66 +478,165 @@ export class SalesRepository {
   /**
    * List hold orders with filters.
    */
-  async listHoldOrders(params = {}) {
+  async listHoldOrders(tenantId, params = {}) {
     const hasTable = await this.knex.schema.hasTable('sales_hold_orders')
     if (!hasTable) return { hold_orders: [], total: 0 }
 
     const { limit = 20, offset = 0, search, filter, sort_by = 'created_at', order_by = 'desc' } = params
-    const q = this.knex('sales_hold_orders as ho').leftJoin('customers as c', 'ho.customer_id', 'c.id')
+    const q = this.knex('sales_hold_orders as ho')
+      .leftJoin('customers as c', function () {
+        this.on('ho.customer_id', 'c.id').andOn('ho.tenant_id', 'c.tenant_id')
+      })
+      .where('ho.tenant_id', tenantId)
 
-    if (filter === 'archived') q.andWhere('ho.is_archive', true)
-    else if (filter === 'active') q.andWhere('ho.is_archive', false)
+    // Apply filter first - ensure filter is a string and matches exactly (case-insensitive)
+    const filterValue = typeof filter === 'string' ? filter.trim().toLowerCase() : (filter ? String(filter).toLowerCase() : null)
+    if (filterValue === 'active') {
+      q.where('ho.is_archive', false)
+    } else if (filterValue === 'archived') {
+      q.where('ho.is_archive', true)
+    }
+    // filter === 'all' or undefined or null: no is_archive filter
 
-    if (search) {
-      const term = `%${search}%`
-      q.andWhereILike('c.name', term)
+    // Then apply search if provided
+    const searchTrimmed = typeof search === 'string' ? search.trim() : ''
+    if (searchTrimmed) {
+      const term = `%${searchTrimmed}%`
+      q.andWhere(builder => {
+        builder.whereILike('c.name', term)
+      })
     }
 
-    const totalRow = await q.clone().count('* as count').first()
+    const totalRow = await q.clone().clearSelect().clearOrder().countDistinct({ count: 'ho.id' }).first()
     const total = Number(totalRow?.count || 0)
 
-    const allowedSort = ['created_at', 'order_date', 'total_amount', 'id']
-    const sortCol = allowedSort.includes(sort_by) ? sort_by : 'created_at'
+    const sortColMap = {
+      created_at: 'ho.created_at',
+      order_date: 'ho.order_date',
+      sale_date: 'ho.order_date',
+      customer_name: 'c.name',
+      total_amount: 'ho.total_amount',
+      id: 'ho.id'
+    }
+    const sortCol = sortColMap[sort_by] || 'ho.created_at'
     const sortDir = order_by === 'asc' ? 'asc' : 'desc'
 
     const hold_orders = await q
-      .select('ho.id', 'ho.customer_id', 'ho.order_date', 'ho.total_amount', 'ho.payment_type', 'ho.is_archive', 'ho.encoder_fullname', 'ho.created_at', 'c.name as customer_name')
-      .orderBy(`ho.${sortCol}`, sortDir)
+      .select('ho.id', 'ho.customer_id', 'ho.order_date', 'ho.total_amount', 'ho.payment_type', 'ho.is_archive', 'ho.encoder_fullname', 'ho.created_at', 'ho.snapshot', 'c.name as customer_name')
+      .orderBy(sortCol, sortDir)
       .limit(limit)
       .offset(offset)
 
-    return { hold_orders, total }
+    // Add items_count by parsing snapshot.items
+    const hold_orders_with_count = hold_orders.map(h => {
+      let itemsCount = 0
+      try {
+        const snapshot = typeof h.snapshot === 'string' ? JSON.parse(h.snapshot) : (h.snapshot || {})
+        const items = snapshot.items || []
+        itemsCount = Array.isArray(items) ? items.length : 0
+      } catch (e) {
+        // ignore parse errors
+      }
+      const { snapshot, ...rest } = h
+      return { ...rest, items_count: itemsCount, net_amount: Number(h.total_amount || 0) }
+    })
+
+    return { hold_orders: hold_orders_with_count, total }
   }
 
   /**
    * Get one hold order by ID (full snapshot for restore).
+   * Joins with customers to get customer_name for UI display.
    */
-  async getHoldOrderById(holdOrderId) {
+  async getHoldOrderById(tenantId, holdOrderId) {
     const hasTable = await this.knex.schema.hasTable('sales_hold_orders')
     if (!hasTable) return null
-    const row = await this.knex('sales_hold_orders').where('id', holdOrderId).first()
+    const row = await this.knex('sales_hold_orders as ho')
+      .leftJoin('customers as c', function () {
+        this.on('ho.customer_id', 'c.id').andOn('ho.tenant_id', 'c.tenant_id')
+      })
+      .where({ 'ho.id': holdOrderId, 'ho.tenant_id': tenantId })
+      .select('ho.*', 'c.name as customer_name')
+      .first()
     if (!row) return null
     const snapshot = typeof row.snapshot === 'string' ? JSON.parse(row.snapshot) : row.snapshot
-    return { ...row, snapshot }
+    return { ...row, snapshot, customer_name: row.customer_name || null }
   }
 
   /**
    * Archive hold order (set is_archive = true).
    */
-  async archiveHoldOrder(holdOrderId) {
+  async archiveHoldOrder(tenantId, holdOrderId) {
     const hasTable = await this.knex.schema.hasTable('sales_hold_orders')
     if (!hasTable) return false
-    const n = await this.knex('sales_hold_orders').where('id', holdOrderId).update({ is_archive: true, last_updated: this.knex.fn.now() })
+    const n = await this.knex('sales_hold_orders')
+      .where({ id: holdOrderId, tenant_id: tenantId })
+      .update({ is_archive: true, last_updated: this.knex.fn.now() })
     return n > 0
   }
 
   /**
-   * Record payment on a sales order (increase amount_paid, update payment_status).
-   * Optionally insert into sales_payments when table exists (supports cheque details).
+   * Completed, non-reversed sales for one customer with net outstanding &gt; 0 (same basis as trade receivables).
    */
-  async recordPayment(orderId, paymentData, userId = null) {
+  async queryOutstandingSalesForCustomer(knexOrTrx, tenantId, customerId) {
+    const cid = Number(customerId)
+    if (!Number.isFinite(cid) || cid <= 0) return []
+
+    const spSub = knexOrTrx('sales_payments')
+      .where({ tenant_id: tenantId })
+      .select('sales_order_id')
+      .sum({ total_paid: 'amount' })
+      .groupBy('sales_order_id')
+      .as('sp')
+
+    const rows = await knexOrTrx('sales_orders as so')
+      .leftJoin(spSub, 'so.id', 'sp.sales_order_id')
+      .where('so.tenant_id', tenantId)
+      .where('so.customer_id', cid)
+      .where('so.status', 'completed')
+      .where('so.is_reversed', false)
+      .select(
+        'so.id',
+        'so.receipt_no',
+        'so.order_date',
+        'so.total_amount',
+        'so.withhold_amount',
+        knexOrTrx.raw('coalesce(sp.total_paid, 0) as total_paid')
+      )
+
+    const orders = []
+    for (const row of rows) {
+      const net = Number(row.total_amount || 0) - Number(row.withhold_amount || 0)
+      const paid = Number(row.total_paid || 0)
+      const outstanding = Math.max(0, net - paid)
+      if (outstanding > 0.01) {
+        orders.push({
+          id: row.id,
+          receipt_no: row.receipt_no,
+          order_date: row.order_date,
+          net_amount: net,
+          amount_paid: paid,
+          outstanding_balance: outstanding
+        })
+      }
+    }
+    return orders
+  }
+
+  async getCustomerOutstandingForPayment(tenantId, customerId) {
+    const hasSales = await this.knex.schema.hasTable('sales_orders')
+    if (!hasSales) return { orders: [], total_outstanding: 0 }
+    const orders = await this.queryOutstandingSalesForCustomer(this.knex, tenantId, customerId)
+    const total_outstanding = orders.reduce((s, o) => s + o.outstanding_balance, 0)
+    return { orders, total_outstanding }
+  }
+
+  /**
+   * Apply one payment slice to a sales order inside an existing transaction.
+   */
+  async recordPaymentInTrx(trx, tenantId, orderId, paymentData, userId = null) {
     const amount = Number(paymentData.amount)
-    const order = await this.knex('sales_orders').where({ id: orderId }).first()
+    const order = await trx('sales_orders').where({ id: orderId, tenant_id: tenantId }).first()
     if (!order) {
       const err = new Error('Sales order not found')
       err.status = 404
@@ -507,8 +650,20 @@ export class SalesRepository {
     const totalAmount = Number(order.total_amount || 0)
     const withholdAmount = Number(order.withhold_amount || 0)
     const netAmount = totalAmount - withholdAmount
-    const currentPaid = Number(order.amount_paid || 0)
-    const newPaid = currentPaid + amount
+
+    const hasPaymentsTable = await trx.schema.hasTable('sales_payments')
+    let alreadyPaid = 0
+    if (hasPaymentsTable) {
+      const paymentsAgg = await trx('sales_payments')
+        .where({ sales_order_id: orderId, tenant_id: tenantId })
+        .sum({ total_paid: 'amount' })
+        .first()
+      alreadyPaid = Number(paymentsAgg?.total_paid || 0)
+    } else {
+      alreadyPaid = Number(order.amount_paid || 0)
+    }
+    const newPaid = alreadyPaid + amount
+
     if (newPaid > netAmount + 0.01) {
       const err = new Error('Payment would exceed amount due')
       err.status = 400
@@ -523,29 +678,50 @@ export class SalesRepository {
     if (newPaid >= netAmount - 0.009) payment_status = 'paid'
     else if (newPaid > 0) payment_status = 'partial'
 
-    const hasPaymentsTable = await this.knex.schema.hasTable('sales_payments')
+    const paymentDate = paymentData.payment_date || new Date().toISOString().split('T')[0]
+    let paymentId = orderId
+
     if (hasPaymentsTable) {
-      await this.knex('sales_payments').insert({
-        sales_order_id: orderId,
-        payment_date: paymentData.payment_date || new Date().toISOString().split('T')[0],
-        amount,
-        payment_method: paymentData.payment_method || 'cash',
-        note: paymentData.note || null,
-        cheque_no: paymentData.cheque_no || null,
-        bank_name: paymentData.bank_name || null,
-        cheque_date: paymentData.cheque_date || null,
-        last_updated: this.knex.fn.now(),
-        sync_status: 'pending',
-      })
+      const [payment] = await trx('sales_payments')
+        .insert({
+          tenant_id: tenantId,
+          sales_order_id: orderId,
+          payment_date: paymentDate,
+          amount,
+          payment_method: paymentData.payment_method || 'cash',
+          note: paymentData.note || null,
+          cheque_no: paymentData.cheque_no || null,
+          bank_name: paymentData.bank_name || null,
+          cheque_date: paymentData.cheque_date || null,
+          last_updated: trx.fn.now(),
+          sync_status: 'pending',
+        })
+        .returning('*')
+      if (payment && payment.id) paymentId = payment.id
     }
 
-    await this.knex('sales_orders')
-      .where({ id: orderId })
+    await trx('sales_orders')
+      .where({ id: orderId, tenant_id: tenantId })
       .update({
         amount_paid: newPaid,
         payment_status,
-        last_updated: this.knex.fn.now()
+        last_updated: trx.fn.now()
       })
+
+    const hasLedger = await trx.schema.hasTable('account_ledger')
+    if (hasLedger) {
+      await this.ledgerHelper.recordSalesPayment({
+        tenant_id: tenantId,
+        salesOrderId: orderId,
+        paymentId,
+        amount,
+        paymentMethod: paymentData.payment_method || 'cash',
+        transactionDate: paymentDate,
+        referenceNumber: order.receipt_no || null,
+        memo: paymentData.note || null,
+        createdBy: userId
+      }, trx)
+    }
 
     return {
       amount_paid: newPaid,
@@ -555,14 +731,151 @@ export class SalesRepository {
   }
 
   /**
-   * Confirm withhold: set sales_invoice_no and withhold_confirmation = true.
+   * Record payment on a sales order. Updates amount_paid to the sum total of all payments (from sales_payments when table exists).
+   * Inserts into sales_payments when table exists; posts ledger entry (DR Cash, CR AR) when account_ledger exists.
    */
-  async confirmWithhold(orderId, sales_invoice_no) {
+  async recordPayment(tenantId, orderId, paymentData, userId = null) {
+    return this.knex.transaction(async (trx) => {
+      return this.recordPaymentInTrx(trx, tenantId, orderId, paymentData, userId)
+    })
+  }
+
+  /**
+   * Apply one customer payment across multiple orders (FIFO / LIFO / manual). Single DB transaction.
+   */
+  async recordBulkCustomerPayment(tenantId, {
+    customerId,
+    paymentAmount,
+    allocation,
+    manualAllocations,
+    paymentPayload,
+    userId = null
+  }) {
+    const totalPay = Number(paymentAmount)
+    if (!Number.isFinite(totalPay) || totalPay <= 0) {
+      const err = new Error('Payment amount must be greater than zero')
+      err.status = 400
+      throw err
+    }
+
+    const paymentDate =
+      paymentPayload.payment_date || new Date().toISOString().split('T')[0]
+    const payment_method = paymentPayload.payment_mode || 'cash'
+    const note = paymentPayload.notes || null
+    const cheque = paymentPayload.cheque_details || {}
+    const bank_name = cheque.bank_name || null
+    const cheque_no = cheque.cheque_number || cheque.cheque_no || null
+    const cheque_date = cheque.cheque_date || null
+
+    const baseSlice = {
+      payment_date: paymentDate,
+      payment_method,
+      note,
+      bank_name,
+      cheque_no,
+      cheque_date
+    }
+
+    return this.knex.transaction(async (trx) => {
+      const rows = await this.queryOutstandingSalesForCustomer(trx, tenantId, customerId)
+      if (rows.length === 0) {
+        const err = new Error('No outstanding orders for this customer')
+        err.status = 400
+        throw err
+      }
+
+      const totalOutstanding = rows.reduce((s, r) => s + r.outstanding_balance, 0)
+      if (totalPay > totalOutstanding + 0.02) {
+        const err = new Error('Payment amount exceeds total outstanding for this customer')
+        err.status = 400
+        throw err
+      }
+
+      const applied = []
+
+      if (allocation === 'manual') {
+        const list = manualAllocations || []
+        const sumManual = list.reduce((s, m) => s + Number(m.amount || 0), 0)
+        if (Math.abs(sumManual - totalPay) > 0.02) {
+          const err = new Error('Manual allocations must sum to the payment amount')
+          err.status = 400
+          throw err
+        }
+        const byId = new Map(rows.map((r) => [r.id, r]))
+        for (const m of list) {
+          const oid = Number(m.sales_order_id)
+          const slice = Number(m.amount)
+          if (slice <= 0.009) continue
+          const row = byId.get(oid)
+          if (!row) {
+            const err = new Error(`Order ${oid} is not outstanding for this customer`)
+            err.status = 400
+            throw err
+          }
+          if (slice > row.outstanding_balance + 0.02) {
+            const err = new Error(`Amount for order ${row.receipt_no || oid} exceeds outstanding balance`)
+            err.status = 400
+            throw err
+          }
+          await this.recordPaymentInTrx(trx, tenantId, oid, { ...baseSlice, amount: slice }, userId)
+          applied.push({
+            sales_order_id: oid,
+            receipt_no: row.receipt_no,
+            amount: slice
+          })
+        }
+      } else {
+        let remaining = totalPay
+        let ordered = [...rows]
+        if (allocation === 'fifo') {
+          ordered.sort((a, b) => {
+            const cmp = String(a.order_date || '').localeCompare(String(b.order_date || ''))
+            if (cmp !== 0) return cmp
+            return a.id - b.id
+          })
+        } else {
+          ordered.sort((a, b) => {
+            const cmp = String(b.order_date || '').localeCompare(String(a.order_date || ''))
+            if (cmp !== 0) return cmp
+            return b.id - a.id
+          })
+        }
+
+        for (const row of ordered) {
+          if (remaining <= 0.009) break
+          const slice = Math.min(remaining, row.outstanding_balance)
+          if (slice <= 0.009) continue
+          await this.recordPaymentInTrx(trx, tenantId, row.id, { ...baseSlice, amount: slice }, userId)
+          applied.push({
+            sales_order_id: row.id,
+            receipt_no: row.receipt_no,
+            amount: slice
+          })
+          remaining -= slice
+        }
+        if (remaining > 0.02) {
+          const err = new Error('Could not allocate full payment (data changed during transaction)')
+          err.status = 409
+          throw err
+        }
+      }
+
+      return {
+        total_applied: totalPay,
+        applied
+      }
+    })
+  }
+
+  /**
+   * Confirm withhold: set withhold_ref and withhold_confirmation = true.
+   */
+  async confirmWithhold(tenantId, orderId, withholdRef) {
     const n = await this.knex('sales_orders')
-      .where({ id: orderId })
+      .where({ id: orderId, tenant_id: tenantId })
       .whereNot({ is_reversed: true })
       .update({
-        sales_invoice_no: sales_invoice_no || null,
+        withhold_ref: withholdRef || null,
         withhold_confirmation: true,
         last_updated: this.knex.fn.now()
       })
@@ -570,16 +883,26 @@ export class SalesRepository {
   }
 
   /**
-   * Rollback withhold: clear sales_invoice_no and withhold_confirmation.
+   * Rollback withhold: clear withhold_ref and withhold_confirmation.
    */
-  async rollbackWithhold(orderId) {
+  async rollbackWithhold(tenantId, orderId) {
+    const order = await this.knex('sales_orders').where({ id: orderId, tenant_id: tenantId }).first()
+    if (!order) return false
+
+    let newRemark = order.remark
+    if (newRemark && typeof newRemark === 'string') {
+      newRemark = newRemark.replace(/\n?Withhold Ref:\s*[^\n]*/gi, '').trim()
+      if (newRemark === '') newRemark = null
+    }
+
     const n = await this.knex('sales_orders')
-      .where({ id: orderId })
+      .where({ id: orderId, tenant_id: tenantId })
       .whereNot({ is_reversed: true })
       .update({
-        sales_invoice_no: null,
+        withhold_ref: null,
         withhold_confirmation: false,
         withhold_settled: false,
+        remark: newRemark,
         last_updated: this.knex.fn.now()
       })
     return n > 0
@@ -588,9 +911,9 @@ export class SalesRepository {
   /**
    * Reverse sales order: restore inventory quantities, reverse ledger entries, bin card return entries, set is_reversed = true.
    */
-  async reverseOrder(orderId, userId = null) {
+  async reverseOrder(tenantId, orderId, userId = null) {
     return this.knex.transaction(async (trx) => {
-      const order = await trx('sales_orders').where({ id: orderId }).first()
+      const order = await trx('sales_orders').where({ id: orderId, tenant_id: tenantId }).first()
       if (!order) {
         const err = new Error('Sales order not found')
         err.status = 404
@@ -602,13 +925,13 @@ export class SalesRepository {
         throw err
       }
 
-      const items = await trx('sales_order_items').where('sales_order_id', orderId)
+      const items = await trx('sales_order_items').where({ sales_order_id: orderId, tenant_id: tenantId })
       const reversalDate = new Date().toISOString().split('T')[0]
 
       // 1) Restore inventory quantities
       for (const item of items) {
         await trx('inventories')
-          .where({ id: item.inventory_id })
+          .where({ id: item.inventory_id, tenant_id: tenantId })
           .update({
             quantity: trx.raw('quantity + ?', [item.quantity]),
             last_updated: trx.fn.now()
@@ -619,14 +942,15 @@ export class SalesRepository {
       const hasBinCards = await trx.schema.hasTable('bin_cards')
       if (hasBinCards) {
         for (const item of items) {
-          const inv = await trx('inventories').where({ id: item.inventory_id }).select('batch_no', 'expiry_date', 'purchase_price', 'product_id').first()
+          const inv = await trx('inventories').where({ id: item.inventory_id, tenant_id: tenantId }).select('batch_no', 'expiry_date', 'purchase_price', 'product_id').first()
           if (!inv) continue
-          const openingBalance = await this.getLastProductBalance(item.product_id, trx)
+          const openingBalance = await this.getLastProductBalance(tenantId, item.product_id, trx)
           const qtyIn = Number(item.quantity)
           const balance = openingBalance + qtyIn
           const unitCost = Number(inv.purchase_price ?? 0)
           const totalCost = unitCost * qtyIn
           await trx('bin_cards').insert({
+            tenant_id: tenantId,
             product_id: item.product_id,
             inventory_id: item.inventory_id,
             batch_no: inv.batch_no ?? null,
@@ -656,6 +980,7 @@ export class SalesRepository {
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
         await this.ledgerHelper.reverseSalesOrder({
+          tenant_id: tenantId,
           salesOrderId: orderId,
           transactionDate: reversalDate,
           reason: 'Order reversal',
@@ -665,7 +990,7 @@ export class SalesRepository {
       }
 
       await trx('sales_orders')
-        .where({ id: orderId })
+        .where({ id: orderId, tenant_id: tenantId })
         .update({
           is_reversed: true,
           status: 'archived',
@@ -679,13 +1004,15 @@ export class SalesRepository {
   /**
    * Get sales order by ID with customer and items.
    */
-  async getOrderById(orderId) {
+  async getOrderById(tenantId, orderId) {
     const hasOrders = await this.knex.schema.hasTable('sales_orders')
     if (!hasOrders) return null
 
     const order = await this.knex('sales_orders as so')
-      .leftJoin('customers as c', 'so.customer_id', 'c.id')
-      .where('so.id', orderId)
+      .leftJoin('customers as c', function () {
+        this.on('so.customer_id', 'c.id').andOn('so.tenant_id', 'c.tenant_id')
+      })
+      .where({ 'so.id': orderId, 'so.tenant_id': tenantId })
       .select('so.*', 'c.name as customer_name')
       .first()
 
@@ -694,9 +1021,13 @@ export class SalesRepository {
     const hasItems = await this.knex.schema.hasTable('sales_order_items')
     const items = hasItems
       ? await this.knex('sales_order_items as i')
-          .leftJoin('products as p', 'i.product_id', 'p.id')
-          .leftJoin('inventories as inv', 'i.inventory_id', 'inv.id')
-          .where('i.sales_order_id', orderId)
+          .leftJoin('products as p', function () {
+            this.on('i.product_id', 'p.id').andOn('i.tenant_id', 'p.tenant_id')
+          })
+          .leftJoin('inventories as inv', function () {
+            this.on('i.inventory_id', 'inv.id').andOn('i.tenant_id', 'inv.tenant_id')
+          })
+          .where({ 'i.sales_order_id': orderId, 'i.tenant_id': tenantId })
           .select(
             'i.*',
             'p.product_code',
@@ -711,12 +1042,14 @@ export class SalesRepository {
     const amountPaid = Number(order.amount_paid ?? 0)
     const receivedAmount = totalAmount - withholdAmount
     const outstanding_balance = Math.max(0, receivedAmount - amountPaid)
+    const withhold_confirmation = effectiveWithholdConfirmed(order)
 
     return {
       order: {
         ...order,
         customer_name: order.customer_name ?? null,
-        outstanding_balance
+        outstanding_balance,
+        withhold_confirmation
       },
       items
     }
@@ -726,16 +1059,19 @@ export class SalesRepository {
    * Get receipt for a sales order (built from order + items + customer).
    * Returns same shape as purchase receipt: receipt_no, order_meta, order_items, order_payment, encoder_fullname.
    */
-  async getReceiptByOrderId(orderId) {
+  async getReceiptByOrderId(tenantId, orderId) {
     const hasOrders = await this.knex.schema.hasTable('sales_orders')
     if (!hasOrders) return null
 
     const order = await this.knex('sales_orders as so')
-      .leftJoin('customers as c', 'so.customer_id', 'c.id')
-      .where('so.id', orderId)
+      .leftJoin('customers as c', function () {
+        this.on('so.customer_id', 'c.id').andOn('so.tenant_id', 'c.tenant_id')
+      })
+      .where({ 'so.id': orderId, 'so.tenant_id': tenantId })
       .select(
         'so.id',
         'so.receipt_no',
+        'so.invoice_no',
         'so.order_date',
         'so.total_amount',
         'so.withhold_percentage',
@@ -745,6 +1081,9 @@ export class SalesRepository {
         'so.payment_status',
         'so.encoder_fullname',
         'so.customer_id',
+        'so.remark',
+        'so.withhold_ref',
+        'so.withhold_confirmation',
         'c.name as customer_name',
         'c.address as customer_address',
         'c.phone as customer_phone',
@@ -759,9 +1098,13 @@ export class SalesRepository {
     const hasItems = await this.knex.schema.hasTable('sales_order_items')
     const items = hasItems
       ? await this.knex('sales_order_items as i')
-          .leftJoin('products as p', 'i.product_id', 'p.id')
-          .leftJoin('inventories as inv', 'i.inventory_id', 'inv.id')
-          .where('i.sales_order_id', orderId)
+          .leftJoin('products as p', function () {
+            this.on('i.product_id', 'p.id').andOn('i.tenant_id', 'p.tenant_id')
+          })
+          .leftJoin('inventories as inv', function () {
+            this.on('i.inventory_id', 'inv.id').andOn('i.tenant_id', 'inv.tenant_id')
+          })
+          .where({ 'i.sales_order_id': orderId, 'i.tenant_id': tenantId })
           .select(
             'i.product_id',
             'i.quantity',
@@ -780,6 +1123,15 @@ export class SalesRepository {
     const amountPaid = Number(order.amount_paid ?? 0)
     const remainingBalance = Math.max(0, netAmount - amountPaid)
 
+    // Extract withhold_reference from remark if present
+    let withhold_reference = null;
+    if (order.remark) {
+      const match = order.remark.match(/Withhold Ref:\s*(.+?)(?:\n|$)/i);
+      if (match) {
+        withhold_reference = match[1].trim();
+      }
+    }
+
     const order_meta = {
       order_date: order.order_date,
       payment_type: order.payment_type,
@@ -795,6 +1147,10 @@ export class SalesRepository {
       withhold_percentage: order.withhold_percentage != null ? Number(order.withhold_percentage) : null,
       withhold_amount: withholdAmount,
       net_amount: netAmount,
+      invoice_no: order.invoice_no || null,
+      withhold_reference: withhold_reference,
+      withhold_ref: order.withhold_ref || null,
+      withhold_confirmation: effectiveWithholdConfirmed(order),
     }
 
     const order_items = items.map((it) => ({
@@ -827,7 +1183,7 @@ export class SalesRepository {
    * Schema ref: sales_orders (so), customers (c), sales_order_items (i), products (p), inventories (inv).
    * sales_orders has no voided column; use is_reversed for exclusions.
    */
-  async exportSalesOrder() {
+  async exportSalesOrder(tenantId) {
     const rows = await this.knex('sales_orders as so')
       .select('so.id as order_id', 'so.receipt_no as receipt_no', 'so.order_date as order_date',
         'so.invoice_no as invoice_no', 'so.total_amount as total_amount',
@@ -840,10 +1196,19 @@ export class SalesRepository {
         'i.unit_price as unit_price', 'i.total_price as total_price', 'inv.batch_no as batch_number',
         'inv.expiry_date as expiry_date'
       )
-      .leftJoin('customers as c', 'so.customer_id', 'c.id')
-      .leftJoin('sales_order_items as i', 'so.id', 'i.sales_order_id')
-      .leftJoin('products as p', 'i.product_id', 'p.id')
-      .leftJoin('inventories as inv', 'i.inventory_id', 'inv.id')
+      .leftJoin('customers as c', function () {
+        this.on('so.customer_id', 'c.id').andOn('so.tenant_id', 'c.tenant_id')
+      })
+      .leftJoin('sales_order_items as i', function () {
+        this.on('so.id', 'i.sales_order_id').andOn('so.tenant_id', 'i.tenant_id')
+      })
+      .leftJoin('products as p', function () {
+        this.on('i.product_id', 'p.id').andOn('i.tenant_id', 'p.tenant_id')
+      })
+      .leftJoin('inventories as inv', function () {
+        this.on('i.inventory_id', 'inv.id').andOn('i.tenant_id', 'inv.tenant_id')
+      })
+      .where('so.tenant_id', tenantId)
       .where('so.status', 'completed')
       .where('so.is_reversed', false)
     return { export: rows }

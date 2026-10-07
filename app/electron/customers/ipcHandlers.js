@@ -27,7 +27,12 @@ export function CustomersIpcHandlers() {
     return await customersManager.deleteCustomer(customerId, getToken());
   });
 
-  // Bulk import customers
+  // Bulk import customers (CSV upload — server parse)
+  ipcMain.handle('customers:bulk-import-customers-upload', async (event, { fileBuffer, fileName }) => {
+    return await customersManager.bulkImportCustomersUpload(fileBuffer, fileName, getToken());
+  });
+
+  // Bulk import customers (JSON)
   ipcMain.handle('customers:bulk-import-customers', async (event, { customers }) => {
     return await customersManager.bulkImportCustomers(customers, getToken());
   });

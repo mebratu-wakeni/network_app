@@ -4,12 +4,26 @@
   "description": "",
   "main": "index.js",
   "type": "module",
+  "engines": {
+    "node": ">=20 <21"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon --watch src --exec \"node src/index.js\"",
-    "migrate": "knex --knexfile db/knexfile.js migrate:latest",
-    "rollback": "knex --knexfile db/knexfile.js migrate:rollback",
-    "seed": "knex --knexfile db/knexfile.js seed:run"
+    "migrate": "./node_modules/.bin/knex --knexfile db/knexfile.js migrate:latest",
+    "migrate:lite": "node scripts/migrate-lite.mjs",
+    "rollback": "./node_modules/.bin/knex --knexfile db/knexfile.js migrate:rollback",
+    "seed": "./node_modules/.bin/knex --knexfile db/knexfile.js seed:run",
+    "seed:lite": "node scripts/seed-lite.mjs",
+    "db:reset": "node scripts/reset-db.js",
+    "db:reset:seed": "node scripts/reset-db.js --seed",
+    "db:diagnose-ledger": "node scripts/diagnose-ledger.js",
+    "db:clear-financial": "node scripts/clear-financial-data.js",
+    "db:reset-operational-full": "node scripts/clear-financial-data.js --yes --scope=full",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run tests/integration --passWithNoTests"
   },
   "keywords": [],
   "author": "",
@@ -22,12 +36,16 @@
     "jsonwebtoken": "^9.0.2",
     "knex": "^3.1.0",
     "multer": "^2.0.2",
-    "pg": "^8.16.3",
+    "pg": "^8.22.0",
     "sharp": "^0.34.5",
+    "sqlite3": "^5.1.7",
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "@vitest/coverage-v8": "^0.34.6",
+    "nodemon": "^3.1.10",
+    "supertest": "^7.1.4",
+    "vitest": "^0.34.6"
   },
   "private": true
 }

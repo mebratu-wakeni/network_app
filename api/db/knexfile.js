@@ -1,49 +1,85 @@
-import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url'
+import fs from 'fs'
 
-// Resolve paths relative to this file
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const isDocker = process.env.IS_DOCKER === 'true'
-// Load env for local dev only; in Docker, rely on container env
-if (!isDocker) {
-  dotenv.config()
-  dotenv.config({ path: path.resolve(__dirname, '../../.env') })
+// cPanel injects DB_* / DATABASE_URL via the Node.js App panel — loading dotenv
+// there can OOM on CloudLinux (dotenv v17 + Wasm). Only read .env locally when unset.
+if (!process.env.DB_HOST && !process.env.DATABASE_URL) {
+  const { default: dotenv } = await import('dotenv')
+  dotenv.config({ path: path.resolve(__dirname, '../.env') })
 }
 
-// Prefer DATABASE_URL if present; otherwise use host-based vars (e.g., in Docker)
-const useUrlBased = Boolean(process.env.DATABASE_URL)
-let connection
-if (useUrlBased) {
-  connection = process.env.DATABASE_URL
-} else {
-  const host = isDocker
-    ? (process.env.DB_HOST && process.env.DB_HOST !== 'localhost' ? process.env.DB_HOST : 'db')
-    : process.env.DB_HOST
-  connection = {
-    host,
+const migrationsDir = path.resolve(__dirname, './migrations')
+const seedsDir = path.resolve(__dirname, './seeds')
+
+/**
+ * Multi-tenant cloud deployment: always Postgres. Prefer a single DATABASE_URL
+ * (matches most hosting providers incl. cPanel's Postgres), fall back to
+ * discrete DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME vars for local dev.
+ */
+function resolveConnection() {
+  if (process.env.DATABASE_URL && process.env.DATABASE_URL.trim() !== '') {
+    return process.env.DATABASE_URL.trim()
+  }
+  return {
+    host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT || 5432),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'postgres',
+    database: process.env.DB_NAME || 'pharma_dev',
+  }
+}
+
+/**
+ * Filters out macOS resource-fork ghost files (._*) that get created when
+ * zipping/uploading from macOS and extracted on a Linux server (e.g. cPanel).
+ * Knex would otherwise try to execute them as JS and crash on their binary content.
+ */
+class FilteredMigrationSource {
+  getMigrations(loadExtensions) {
+    const files = fs.readdirSync(migrationsDir)
+      .filter(f => !f.startsWith('._') && loadExtensions.some(ext => f.endsWith(ext)))
+      .sort()
+    return Promise.resolve(files)
+  }
+
+  getMigrationName(migration) {
+    return migration
+  }
+
+  getMigration(migration) {
+    return import(path.join(migrationsDir, migration))
+  }
+}
+
+class FilteredSeedSource {
+  getSeeds(config) {
+    const loadExtensions = config.loadExtensions || ['.js']
+    const files = fs.readdirSync(seedsDir)
+      .filter(f => !f.startsWith('._') && loadExtensions.some(ext => f.endsWith(ext)))
+      .sort()
+      .map(f => path.join(seedsDir, f))
+    return Promise.resolve(files)
+  }
+
+  getSeed(filepath) {
+    return import(filepath)
   }
 }
 
 const config = {
   client: 'pg',
-  connection,
-  pool: {
-    min: 2,
-    max: 10,
-  },
+  connection: resolveConnection(),
+  pool: { min: 2, max: 10 },
   migrations: {
-    directory: path.resolve(__dirname, './migrations'),
+    migrationSource: new FilteredMigrationSource(),
     tableName: 'knex_migrations',
   },
   seeds: {
-    directory: path.resolve(__dirname, './seeds'),
+    seedSource: new FilteredSeedSource(),
   },
 };
 

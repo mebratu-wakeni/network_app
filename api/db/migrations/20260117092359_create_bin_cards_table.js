@@ -1,7 +1,9 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('bin_cards', (t) => {
     t.bigIncrements('id').primary()
-    
+    t.bigInteger('tenant_id').unsigned().notNullable()
+
     // Product Reference (Primary)
     t.bigInteger('product_id').notNullable()
     
@@ -42,11 +44,13 @@ export const up = async (knex) => {
     t.string('sync_status', 255).defaultTo('pending')
     
     // Foreign Keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('product_id').references('id').inTable('products').onDelete('CASCADE')
     t.foreign('inventory_id').references('id').inTable('inventories').onDelete('SET NULL')
     t.foreign('created_by').references('id').inTable('users')
     
     // Indexes
+    t.index('tenant_id', 'bin_cards_tenant_id_index')
     t.index('product_id', 'bin_cards_product_id_index')
     t.index('inventory_id', 'bin_cards_inventory_id_index')
     t.index('transaction_date', 'bin_cards_transaction_date_index')
@@ -55,12 +59,13 @@ export const up = async (knex) => {
     t.index('created_by', 'bin_cards_created_by_index')
   })
   
-  // Add CHECK constraint for transaction_type
-  await knex.raw(`
-    ALTER TABLE bin_cards 
-    ADD CONSTRAINT check_transaction_type 
-    CHECK (transaction_type IN ('received', 'issued', 'voided', 'adjustment', 'opening', 'return', 'transfer_in', 'transfer_out', 'expired', 'damaged'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE bin_cards 
+      ADD CONSTRAINT check_transaction_type 
+      CHECK (transaction_type IN ('received', 'issued', 'voided', 'adjustment', 'opening', 'return', 'transfer_in', 'transfer_out', 'expired', 'damaged'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

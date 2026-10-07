@@ -1,7 +1,8 @@
 export const up = async (knex) => {
   await knex.schema.createTable('purchase_payments', (t) => {
     t.bigIncrements('id').primary()
-    
+    t.bigInteger('tenant_id').unsigned().notNullable()
+
     // Order Reference
     t.bigInteger('purchase_order_id').notNullable()
     
@@ -24,9 +25,11 @@ export const up = async (knex) => {
     t.string('sync_status', 255).defaultTo('pending')
     
     // Foreign Keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('purchase_order_id').references('id').inTable('purchase_orders').onDelete('CASCADE')
     
     // Indexes
+    t.index('tenant_id', 'purchase_payments_tenant_id_index')
     t.index('purchase_order_id', 'purchase_payments_purchase_order_id_index')
     t.index('payment_date', 'purchase_payments_payment_date_index')
     t.index('payment_method', 'purchase_payments_payment_method_index')

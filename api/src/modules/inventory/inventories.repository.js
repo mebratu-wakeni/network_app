@@ -3,6 +3,7 @@
  * Encapsulates all database queries for inventories table
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
+import { DEFAULT_STOCK_IMPORT_LOCATION } from './importCsvHelpers.js'
 
 export class InventoriesRepository {
   constructor(knex) {
@@ -14,9 +15,10 @@ export class InventoriesRepository {
    * Get the last balance for a product from bin cards
    * Returns the most recent balance for the product, or 0 if no transactions exist
    */
-  async getLastProductBalance(productId) {
-    const lastTransaction = await this.knex('bin_cards')
-      .where({ product_id: productId })
+  async getLastProductBalance(tenantId, productId, trx = null) {
+    const db = trx || this.knex
+    const lastTransaction = await db('bin_cards')
+      .where({ tenant_id: tenantId, product_id: productId })
       .orderBy('transaction_date', 'desc')
       .orderBy('id', 'desc')
       .select('balance')
@@ -30,7 +32,7 @@ export class InventoriesRepository {
    * @param {Object} params - Transaction parameters
    * @returns {Object} Created bin card transaction
    */
-  async createBinCardTransaction(params, trx = null) {
+  async createBinCardTransaction(tenantId, params, trx = null) {
     const {
       productId,
       inventoryId,
@@ -60,6 +62,7 @@ export class InventoriesRepository {
 
     const [binCard] = await db('bin_cards')
       .insert({
+        tenant_id: tenantId,
         product_id: productId,
         inventory_id: inventoryId,
         batch_no: batchNo || null,
@@ -88,26 +91,130 @@ export class InventoriesRepository {
   /**
    * Find product by product code
    */
-  async findProductByCode(productCode) {
-    return this.knex('products').where({ product_code: productCode }).first()
+  async findProductByCode(tenantId, productCode) {
+    return this.knex('products').where({ tenant_id: tenantId, product_code: productCode }).first()
   }
 
   /**
    * Find product by name
    */
-  async findProductByName(name) {
+  async findProductByName(tenantId, name) {
     return this.knex('products')
+      .where({ tenant_id: tenantId })
       .whereRaw('LOWER(name) = LOWER(?)', [name])
       .first()
+  }
+
+  /**
+   * Get default category id for auto-created products (supplies or first category).
+   * @param {Object} trx - Optional knex transaction
+   */
+  async getDefaultCategoryId(tenantId, trx = null) {
+    const db = trx || this.knex
+    const byName = await db('categories').where({ tenant_id: tenantId }).whereRaw('LOWER(name) = ?', ['supplies']).select('id').first()
+    if (byName) return byName.id
+    const first = await db('categories').where({ tenant_id: tenantId }).select('id').limit(1).first()
+    return first ? first.id : null
+  }
+
+  /**
+   * Get default unit id for auto-created products (bottle or first unit).
+   * @param {Object} trx - Optional knex transaction
+   */
+  async getDefaultUnitId(tenantId, trx = null) {
+    const db = trx || this.knex
+    const byName = await db('units').where({ tenant_id: tenantId }).whereRaw('LOWER(name) = ?', ['bottle']).select('id').first()
+    if (byName) return byName.id
+    const first = await db('units').where({ tenant_id: tenantId }).select('id').limit(1).first()
+    return first ? first.id : null
+  }
+
+  /**
+   * Resolve category id by name; create category when missing.
+   * Falls back to default category when name is not provided.
+   */
+  async resolveCategoryId(tenantId, categoryName, trx = null) {
+    const db = trx || this.knex
+    const normalized = String(categoryName || '').trim()
+    if (!normalized) return this.getDefaultCategoryId(tenantId, trx)
+
+    const existing = await db('categories')
+      .where({ tenant_id: tenantId })
+      .whereRaw('LOWER(name) = LOWER(?)', [normalized])
+      .select('id')
+      .first()
+    if (existing) return existing.id
+
+    const [created] = await db('categories')
+      .insert({
+        tenant_id: tenantId,
+        name: normalized,
+        created_at: db.fn.now(),
+        last_updated: db.fn.now()
+      })
+      .returning('id')
+    return created?.id || created
+  }
+
+  /**
+   * Resolve unit id by name; create unit when missing.
+   * Falls back to default unit when name is not provided.
+   */
+  async resolveUnitId(tenantId, unitName, trx = null) {
+    const db = trx || this.knex
+    const normalized = String(unitName || '').trim()
+    if (!normalized) return this.getDefaultUnitId(tenantId, trx)
+
+    const existing = await db('units')
+      .where({ tenant_id: tenantId })
+      .whereRaw('LOWER(name) = LOWER(?)', [normalized])
+      .select('id')
+      .first()
+    if (existing) return existing.id
+
+    const [created] = await db('units')
+      .insert({
+        tenant_id: tenantId,
+        name: normalized,
+        created_at: db.fn.now(),
+        last_updated: db.fn.now()
+      })
+      .returning('id')
+    return created?.id || created
+  }
+
+  /**
+   * Get next available product code (PRD0001, PRD0002, ...) for auto-created products.
+   * @param {Object} trx - Optional knex transaction
+   */
+  async getNextProductCode(tenantId, trx = null) {
+    const db = trx || this.knex
+    const products = await db('products')
+      .where({ tenant_id: tenantId })
+      .select('product_code')
+      .whereNotNull('product_code')
+      .where('product_code', 'like', 'PRD%')
+      .orderBy('id', 'desc')
+      .limit(1000)
+    let maxNum = 0
+    for (const p of products) {
+      const code = p.product_code
+      if (code && code.startsWith('PRD')) {
+        const num = parseInt(code.substring(3), 10)
+        if (!isNaN(num) && num > maxNum) maxNum = num
+      }
+    }
+    return `PRD${String(maxNum + 1).padStart(4, '0')}`
   }
 
   /**
    * Find existing inventory record by product and variation details
    * Checks for existing record with same product_id, batch_no, expiry_date, purchase_price
    */
-  async findExistingInventory(productId, batchNo, expiryDate, purchasePrice) {
-    let query = this.knex('inventories')
-      .where({ product_id: productId })
+  async findExistingInventory(tenantId, productId, batchNo, expiryDate, purchasePrice, trx = null) {
+    const db = trx || this.knex
+    let query = db('inventories')
+      .where({ tenant_id: tenantId, product_id: productId })
       .where({ purchase_price: purchasePrice })
 
     if (batchNo) {
@@ -130,7 +237,8 @@ export class InventoriesRepository {
    * Extracts the numeric part from inventory_code pattern 'I###XXXX'
    * where ### is the variation number and XXXX is the 4-digit product code
    */
-  async getMaxVariationNumber(productCode) {
+  async getMaxVariationNumber(tenantId, productCode, trx = null) {
+    const db = trx || this.knex
     // Extract 4 digits from product code (e.g., 'PRD0011' -> '0011')
     const productCodeDigits = this.extractProductCodeDigits(productCode)
     if (!productCodeDigits) {
@@ -138,8 +246,12 @@ export class InventoriesRepository {
     }
 
     // Find all inventory codes for this product that match pattern 'I###XXXX'
-    const inventories = await this.knex('inventories')
-      .join('products', 'inventories.product_id', 'products.id')
+    const inventories = await db('inventories')
+      .join('products', function () {
+        this.on('inventories.product_id', 'products.id')
+          .andOn('inventories.tenant_id', 'products.tenant_id')
+      })
+      .where('inventories.tenant_id', tenantId)
       .where('products.product_code', productCode)
       .where('inventories.inventory_code', 'like', `I%${productCodeDigits}`)
       .select('inventories.inventory_code')
@@ -187,13 +299,13 @@ export class InventoriesRepository {
    * Generate inventory code for a product variation
    * Format: 'I###XXXX' where ### is variation number (001, 002, etc.) and XXXX is 4-digit product code
    */
-  async generateInventoryCode(productCode) {
+  async generateInventoryCode(tenantId, productCode, trx = null) {
     const productCodeDigits = this.extractProductCodeDigits(productCode)
     if (!productCodeDigits) {
       throw new Error(`Invalid product code format: ${productCode}`)
     }
 
-    const maxVariation = await this.getMaxVariationNumber(productCode)
+    const maxVariation = await this.getMaxVariationNumber(tenantId, productCode, trx)
     const nextVariation = maxVariation + 1
     
     // Format variation number as 3-digit string (001, 002, ..., 999)
@@ -203,192 +315,415 @@ export class InventoriesRepository {
   }
 
   /**
-   * Bulk import stock items
-   * @param {Array} stockItems - Array of stock items to import
-   * @param {Object} options - Import options (e.g., purchase_date, reason, created_by)
+   * Max numeric suffix of PRD#### codes (used to allocate sequential codes during stock import).
+   */
+  async _getMaxPrdCodeNumber (tenantId, trx = null) {
+    const db = trx || this.knex
+    const products = await db('products')
+      .where({ tenant_id: tenantId })
+      .select('product_code')
+      .whereNotNull('product_code')
+      .where('product_code', 'like', 'PRD%')
+      .orderBy('id', 'desc')
+      .limit(1000)
+    let maxNum = 0
+    for (const p of products) {
+      const code = p.product_code
+      if (code && code.startsWith('PRD')) {
+        const num = parseInt(code.substring(3), 10)
+        if (!isNaN(num) && num > maxNum) maxNum = num
+      }
+    }
+    return maxNum
+  }
+
+  /**
+   * Latest bin-card balance per product (single batched lookup for bulk import).
+   */
+  async getLatestBalancesForProducts (tenantId, productIds, trx = null) {
+    const db = trx || this.knex
+    const map = new Map()
+    if (!productIds || productIds.length === 0) return map
+    const unique = [...new Set(productIds.filter((id) => id != null))]
+    const CHUNK = 100
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const chunk = unique.slice(i, i + CHUNK)
+      const latest = db
+        .select('product_id', db.raw('MAX(id) AS mid'))
+        .from('bin_cards')
+        .where({ tenant_id: tenantId })
+        .whereIn('product_id', chunk)
+        .groupBy('product_id')
+        .as('latest')
+
+      const rows = await db('bin_cards as b')
+        .where('b.tenant_id', tenantId)
+        .join(latest, function () {
+          this.on('b.product_id', '=', 'latest.product_id')
+            .andOn('b.id', '=', 'latest.mid')
+        })
+        .select('b.product_id', 'b.balance')
+
+      for (const r of rows) {
+        map.set(r.product_id, parseInt(r.balance, 10) || 0)
+      }
+    }
+    return map
+  }
+
+  /**
+   * Bulk import stock items (all-or-nothing: single DB transaction).
+   * On any row DB/processing error, the whole import is rolled back.
+   * Preflight (missing required fields) returns per-row failures without touching the DB.
    * @returns {Object} - { successful: [], failed: [], summary: {...} }
    */
-  async bulkImport(stockItems, options = {}) {
+  async bulkImport (tenantId, stockItems, options = {}) {
     const successful = []
-    const failed = []
     const purchaseDate = options.purchase_date || new Date().toISOString().split('T')[0]
     const reason = (options.reason || 'Bulk Import').trim()
     const createdBy = options.created_by || null
 
-    // Validate reason - reject 'other' reason (not yet implemented)
     const reasonLower = reason.toLowerCase()
-    if (reasonLower === 'other') {
-      throw new Error('Import with "other" reason is not yet implemented. Please use "initial stock" for now.')
-    }
-
-    // Only "initial stock" is currently supported
     const isInitialStock = reasonLower === 'initial stock'
 
+    const preflightFailed = []
     for (let i = 0; i < stockItems.length; i++) {
       const item = stockItems[i]
-      
-      try {
-        // Validate required fields
-        if (!item.product_name || !item.quantity || !item.unit_cost) {
-          failed.push({
-            index: i,
-            item,
-            error: 'Missing required fields: product_name, quantity, or unit_cost'
-          })
-          continue
-        }
-
-        // Wrap each item's processing in its own transaction for atomicity
-        await this.knex.transaction(async (trx) => {
-          // Find product by code or name
-          let product = null
-          if (item.product_code) {
-            product = await this.findProductByCode(item.product_code)
-          }
-          
-          if (!product && item.product_name) {
-            product = await this.findProductByName(item.product_name)
-          }
-
-          if (!product) {
-            throw new Error(`Product not found: ${item.product_code || item.product_name}`)
-          }
-
-          // Check if inventory record already exists with same variation
-          const existing = await this.findExistingInventory(
-            product.id,
-            item.batch_number || null,
-            item.expiry_date || null,
-            parseFloat(item.unit_cost)
-          )
-
-          let inventoryCode
-          let inventoryId
-          let quantityAdded = parseInt(item.quantity)
-          let purchasePrice = parseFloat(item.unit_cost)
-
-          if (existing) {
-            // Use existing inventory code
-            inventoryCode = existing.inventory_code
-            inventoryId = existing.id
-            
-            // Update quantity (add to existing)
-            await trx('inventories')
-              .where({ id: existing.id })
-              .update({
-                quantity: trx.raw('quantity + ?', [quantityAdded]),
-                last_updated: trx.fn.now()
-              })
-          } else {
-            // Generate new inventory code
-            inventoryCode = await this.generateInventoryCode(product.product_code)
-            
-            // Insert new inventory record
-            const [inserted] = await trx('inventories')
-              .insert({
-                product_id: product.id,
-                inventory_code: inventoryCode,
-                batch_no: item.batch_number || null,
-                expiry_date: item.expiry_date || null,
-                purchase_date: purchaseDate,
-                acquisition_type: options.acquisition_type || 'cash', // Use provided type or default to 'cash'
-                purchase_price: purchasePrice,
-                quantity: quantityAdded,
-                selling_price: item.selling_price ? parseFloat(item.selling_price) : null,
-                location: item.location || null,
-                notes: reason,
-                created_at: trx.fn.now(),
-                last_updated: trx.fn.now()
-              })
-              .returning('id')
-            
-            inventoryId = inserted.id || inserted
-          }
-
-          // Get opening balance for bin card transaction
-          const openingBalance = await this.getLastProductBalance(product.id)
-
-          // Create bin card transaction for this import
-          await this.createBinCardTransaction({
-            productId: product.id,
-            inventoryId: inventoryId,
-            batchNo: item.batch_number || null,
-            expiryDate: item.expiry_date || null,
-            transactionDate: purchaseDate,
-            quantity: quantityAdded,
-            unitCost: purchasePrice,
-            openingBalance: openingBalance,
-            reason: reason,
-            createdBy: createdBy
-          }, trx)
-
-          // Create ledger entry for initial stock import (within transaction)
-          if (isInitialStock) {
-            await this.ledgerHelper.recordInitialStockImport({
-              inventoryId: inventoryId,
-              quantity: quantityAdded,
-              unitCost: purchasePrice,
-              transactionDate: purchaseDate,
-              referenceNumber: `INIT-${inventoryCode}`,
-              memo: `Initial stock import - ${reason}`,
-              createdBy: createdBy
-            }, trx)
-          }
-
-          // If we reach here, transaction will commit
-          successful.push({
-            index: i,
-            item,
-            inventory_id: inventoryId,
-            inventory_code: inventoryCode,
-            product_id: product.id,
-            product_code: product.product_code
-          })
-        })
-
-      } catch (error) {
-        failed.push({
+      if (!item.product_name || item.quantity == null || item.unit_cost == null) {
+        preflightFailed.push({
           index: i,
           item,
-          error: error.message || 'Unknown error during import'
+          error: 'Missing required fields: product_name, quantity, or unit_cost (purchase cost)'
         })
+      }
+    }
+    if (preflightFailed.length > 0) {
+      return {
+        successful: [],
+        failed: preflightFailed,
+        summary: {
+          total: stockItems.length,
+          successful: 0,
+          failed: preflightFailed.length
+        }
+      }
+    }
+
+    const QUERY_CHUNK = 80
+    const codes = [...new Set(stockItems.map((i) => String(i.product_code || '').trim()).filter(Boolean))]
+    const names = [...new Set(stockItems.map((i) => String(i.product_name || '').trim()).filter(Boolean))]
+
+    const productByCode = new Map()
+    const productByNameLower = new Map()
+
+    for (let i = 0; i < codes.length; i += QUERY_CHUNK) {
+      const chunk = codes.slice(i, i + QUERY_CHUNK)
+      const rows = await this.knex('products').where({ tenant_id: tenantId }).whereIn('product_code', chunk).select('*')
+      for (const r of rows) productByCode.set(r.product_code, r)
+    }
+    for (let i = 0; i < names.length; i += QUERY_CHUNK) {
+      const chunk = names.slice(i, i + QUERY_CHUNK)
+      const lowered = chunk.map((n) => n.toLowerCase())
+      const rows = await this.knex('products').where({ tenant_id: tenantId }).whereRaw(
+        `LOWER(TRIM(name)) IN (${lowered.map(() => '?').join(',')})`,
+        lowered
+      ).select('*')
+      for (const r of rows) {
+        const k = String(r.name || '').trim().toLowerCase()
+        if (!productByNameLower.has(k)) productByNameLower.set(k, r)
+      }
+    }
+
+    const invCacheKey = (productId, batchNo, expiryDate, purchasePrice) => {
+      const b = batchNo == null ? '∅' : String(batchNo)
+      const e = expiryDate == null ? '∅' : String(expiryDate)
+      return `${productId}|${b}|${e}|${Number(purchasePrice)}`
+    }
+
+    const processOne = async (trx, item, i, ctx) => {
+      const {
+        productByCode: pByCode,
+        productByNameLower: pByName,
+        balanceByProduct,
+        invKeyCache,
+        allocProductCode,
+        allocInventoryCode
+      } = ctx
+
+      let product = null
+      const codeTrim = item.product_code && String(item.product_code).trim()
+      if (codeTrim) product = pByCode.get(codeTrim)
+      if (!product && item.product_name) {
+        const nk = String(item.product_name).trim().toLowerCase()
+        product = pByName.get(nk)
+      }
+
+      if (!product) {
+        const categoryId = await this.resolveCategoryId(tenantId, item.category, trx)
+        const unitId = await this.resolveUnitId(tenantId, item.unit, trx)
+        if (categoryId == null || unitId == null) {
+          throw new Error('Cannot auto-create product: no categories or units in database. Import products first or add a category and unit.')
+        }
+        let productCode = codeTrim || null
+        if (productCode) {
+          const hit = pByCode.get(productCode)
+          if (hit) product = hit
+        }
+        if (!product) {
+          if (!productCode) productCode = allocProductCode()
+          const createdRows = await trx('products')
+            .insert({
+              tenant_id: tenantId,
+              name: item.product_name.trim(),
+              product_code: productCode,
+              category_id: categoryId,
+              unit_id: unitId,
+              description: null,
+              remark: null,
+              sync_status: 'pending'
+            })
+            .returning('*')
+          const created = Array.isArray(createdRows) ? createdRows[0] : createdRows
+          product = created
+          pByCode.set(product.product_code, product)
+          pByName.set(String(product.name).trim().toLowerCase(), product)
+          balanceByProduct.set(product.id, 0)
+        }
+      }
+
+      const batchNo = item.batch_number || null
+      const expiryDate = item.expiry_date || null
+      const purchasePrice = parseFloat(item.unit_cost)
+
+      const ik = invCacheKey(product.id, batchNo, expiryDate, purchasePrice)
+      let existing = invKeyCache.has(ik) ? invKeyCache.get(ik) : null
+      if (!existing) {
+        existing = await this.findExistingInventory(
+          tenantId,
+          product.id,
+          batchNo,
+          expiryDate,
+          purchasePrice,
+          trx
+        )
+        if (existing) invKeyCache.set(ik, existing)
+      }
+
+      let inventoryCode
+      let inventoryId
+      const quantityAdded = parseInt(item.quantity, 10)
+
+      if (existing) {
+        inventoryCode = existing.inventory_code
+        inventoryId = existing.id
+
+        await trx('inventories')
+          .where({ id: existing.id, tenant_id: tenantId })
+          .update({
+            quantity: trx.raw('quantity + ?', [quantityAdded]),
+            last_updated: trx.fn.now()
+          })
+      } else {
+        inventoryCode = await allocInventoryCode(product.product_code)
+
+        const insertedRows = await trx('inventories')
+          .insert({
+            tenant_id: tenantId,
+            product_id: product.id,
+            inventory_code: inventoryCode,
+            batch_no: batchNo,
+            expiry_date: expiryDate,
+            purchase_date: purchaseDate,
+            acquisition_type: options.acquisition_type || 'cash',
+            purchase_price: purchasePrice,
+            quantity: quantityAdded,
+            selling_price: item.selling_price ? parseFloat(item.selling_price) : null,
+            location: (item.location && String(item.location).trim()) || DEFAULT_STOCK_IMPORT_LOCATION,
+            notes: reason,
+            created_at: trx.fn.now(),
+            last_updated: trx.fn.now()
+          })
+          .returning('*')
+
+        const insertedRaw = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows
+        const insertedRow = insertedRaw?.id != null ? insertedRaw : await trx('inventories').where({ id: insertedRaw, tenant_id: tenantId }).first()
+        inventoryId = insertedRow.id
+        invKeyCache.set(ik, insertedRow)
+      }
+
+      let openingBalance
+      if (balanceByProduct.has(product.id)) {
+        openingBalance = balanceByProduct.get(product.id)
+      } else {
+        openingBalance = await this.getLastProductBalance(tenantId, product.id, trx)
+        balanceByProduct.set(product.id, openingBalance)
+      }
+
+      const binCard = await this.createBinCardTransaction(tenantId, {
+        productId: product.id,
+        inventoryId,
+        batchNo,
+        expiryDate,
+        transactionDate: purchaseDate,
+        quantity: quantityAdded,
+        unitCost: purchasePrice,
+        openingBalance,
+        reason,
+        createdBy
+      }, trx)
+
+      balanceByProduct.set(product.id, parseInt(binCard.balance, 10))
+
+      if (isInitialStock) {
+        await this.ledgerHelper.recordInitialStockImport({
+          tenant_id: tenantId,
+          inventoryId,
+          quantity: quantityAdded,
+          unitCost: purchasePrice,
+          transactionDate: purchaseDate,
+          referenceNumber: `INIT-${inventoryCode}`,
+          memo: `Initial stock import - ${reason}`,
+          createdBy
+        }, trx)
+      }
+
+      successful.push({
+        index: i,
+        item,
+        inventory_id: inventoryId,
+        inventory_code: inventoryCode,
+        product_id: product.id,
+        product_code: product.product_code
+      })
+    }
+
+    try {
+      await this.knex.transaction(async (trx) => {
+        let nextPrdNum = await this._getMaxPrdCodeNumber(tenantId, trx)
+        const allocProductCode = () => {
+          nextPrdNum++
+          return `PRD${String(nextPrdNum).padStart(4, '0')}`
+        }
+
+        const variationNext = new Map()
+        const allocInventoryCode = async (productCode) => {
+          const productCodeDigits = this.extractProductCodeDigits(productCode)
+          if (!productCodeDigits) {
+            throw new Error(`Invalid product code format: ${productCode}`)
+          }
+          if (!variationNext.has(productCode)) {
+            const max = await this.getMaxVariationNumber(tenantId, productCode, trx)
+            variationNext.set(productCode, max + 1)
+          }
+          const v = variationNext.get(productCode)
+          variationNext.set(productCode, v + 1)
+          const variationStr = String(v).padStart(3, '0')
+          return `I${variationStr}${productCodeDigits}`
+        }
+
+        const knownIds = [...new Set([...productByCode.values(), ...productByNameLower.values()].map((p) => p.id))]
+        const balanceByProduct = await this.getLatestBalancesForProducts(tenantId, knownIds, trx)
+        const invKeyCache = new Map()
+
+        const ctx = {
+          productByCode,
+          productByNameLower,
+          balanceByProduct,
+          invKeyCache,
+          allocProductCode,
+          allocInventoryCode
+        }
+
+        for (let i = 0; i < stockItems.length; i++) {
+          const item = stockItems[i]
+          try {
+            await processOne(trx, item, i, ctx)
+          } catch (err) {
+            const e = new Error(err.message || 'Unknown error during import')
+            e.rowIndex = i
+            throw e
+          }
+        }
+      })
+    } catch (error) {
+      return {
+        successful: [],
+        failed: [{
+          index: error.rowIndex ?? 0,
+          csvRowNumber: stockItems[error.rowIndex ?? 0]?._csvRowNumber ?? null,
+          error: error.message || 'Import rolled back (all-or-nothing)'
+        }],
+        summary: {
+          total: stockItems.length,
+          successful: 0,
+          failed: stockItems.length
+        },
+        atomicAborted: true
       }
     }
 
     return {
       successful,
-      failed,
+      failed: [],
       summary: {
         total: stockItems.length,
         successful: successful.length,
-        failed: failed.length
+        failed: 0
       }
     }
   }
 
+  /** Default low-stock threshold: total quantity (across all batches) below this = low stock. Later: system_settings or per-product. */
+  static get DEFAULT_LOW_STOCK_THRESHOLD() { return 50 }
+  /** Default high-value threshold (unit cost). Later: system_settings. */
+  static get DEFAULT_HIGH_VALUE_THRESHOLD() { return 1000 }
+  /** Default expiry threshold (days). Per-product expiry_threshold overrides this. */
+  static get DEFAULT_EXPIRY_THRESHOLD() { return 30 }
+
   /**
    * Calculate constant stats from ALL inventory items (regardless of filter)
-   * Stats are calculated from all inventory items and remain constant regardless of filter
+   * Low stock = count of PRODUCTS whose total quantity (sum of all batches) < threshold.
+   * Out of stock = count of products with zero total quantity.
    * @returns {Object} Statistics object matching frontend expectations
    */
-  async calculateConstantStats() {
+  async calculateConstantStats(tenantId) {
+    const today = new Date()
+    const todayStr = today.toISOString().split('T')[0]
+    const DEFAULT_EXPIRY_THRESHOLD = InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD
+    const HIGH_VALUE_THRESHOLD = InventoriesRepository.DEFAULT_HIGH_VALUE_THRESHOLD
+    const LOW_STOCK_THRESHOLD = InventoriesRepository.DEFAULT_LOW_STOCK_THRESHOLD
+
+    // Product-level totals: total quantity per product (sum across batches)
+    const productTotals = await this.knex('inventories')
+      .where({ tenant_id: tenantId })
+      .select('product_id')
+      .sum('quantity as total_quantity')
+      .groupBy('product_id')
+
+    const productTotalById = new Map()
+    let outOfStock = 0
+    let lowStock = 0
+    productTotals.forEach(row => {
+      const total = parseInt(row.total_quantity || 0, 10)
+      productTotalById.set(Number(row.product_id), total)
+      if (total === 0) outOfStock++
+      else if (total < LOW_STOCK_THRESHOLD) lowStock++
+    })
+
     const allInventory = await this.knex('inventories')
+      .where('inventories.tenant_id', tenantId)
       .select(
         'inventories.quantity',
         'inventories.purchase_price',
         'inventories.expiry_date',
         'products.expiry_threshold'
       )
-      .leftJoin('products', 'inventories.product_id', 'products.id')
-
-    const today = new Date()
-    const todayStr = today.toISOString().split('T')[0]
-    const DEFAULT_EXPIRY_THRESHOLD = 30
-    const HIGH_VALUE_THRESHOLD = 1000
+      .leftJoin('products', function () {
+        this.on('inventories.product_id', 'products.id')
+          .andOn('inventories.tenant_id', 'products.tenant_id')
+      })
 
     let total = 0
-    let outOfStock = 0
-    let lowStock = 0
     let expiringSoon = 0
     let expired = 0
     let highValue = 0
@@ -400,40 +735,23 @@ export class InventoriesRepository {
       total++
       const quantity = parseInt(item.quantity || 0, 10)
       const purchasePrice = parseFloat(item.purchase_price || 0)
-      
-      // Calculate total cost (quantity * purchase_price)
       totalCost += quantity * purchasePrice
       totalQuantity += quantity
-      
-      if (quantity > 0) {
-        itemsWithStock++
-      }
-      
-      if (quantity === 0) {
-        outOfStock++
-      } else if (quantity > 0 && quantity < 50) {
-        lowStock++
-      }
-      
-      if (purchasePrice >= HIGH_VALUE_THRESHOLD) {
-        highValue++
-      }
-      
+      if (quantity > 0) itemsWithStock++
+
+      if (purchasePrice >= HIGH_VALUE_THRESHOLD) highValue++
+
+      // Only batches with a valid expiry_date count as expired or expiring soon; null expiry is excluded
       if (item.expiry_date) {
         const expiry = new Date(item.expiry_date)
         const expiryDateStr = expiry.toISOString().split('T')[0]
         const expiryThreshold = item.expiry_threshold || DEFAULT_EXPIRY_THRESHOLD
-        
-        if (expiryDateStr < todayStr) {
-          expired++
-        } else {
+        if (expiryDateStr < todayStr) expired++
+        else {
           const thresholdDate = new Date(today)
           thresholdDate.setDate(today.getDate() + expiryThreshold)
           const thresholdDateStr = thresholdDate.toISOString().split('T')[0]
-          
-          if (expiryDateStr <= thresholdDateStr) {
-            expiringSoon++
-          }
+          if (expiryDateStr <= thresholdDateStr) expiringSoon++
         }
       }
     })
@@ -445,7 +763,7 @@ export class InventoriesRepository {
     const borrowFromTableExists = await this.knex.schema.hasTable('borrow_from_inventories')
     if (borrowFromTableExists) {
       const borrowFromCount = await this.knex('borrow_from_inventories')
-        .where('status', 'active')
+        .where({ tenant_id: tenantId, status: 'active' })
         .count('id as total')
         .first()
       borrowedFrom = parseInt(borrowFromCount?.total || 0, 10)
@@ -454,7 +772,7 @@ export class InventoriesRepository {
     const borrowToTableExists = await this.knex.schema.hasTable('borrow_to_inventories')
     if (borrowToTableExists) {
       const borrowToCount = await this.knex('borrow_to_inventories')
-        .where('status', 'active')
+        .where({ tenant_id: tenantId, status: 'active' })
         .count('id as total')
         .first()
       borrowedTo = parseInt(borrowToCount?.total || 0, 10)
@@ -482,7 +800,7 @@ export class InventoriesRepository {
    * @param {Object} params - { limit, offset, search, sortBy, orderBy, includeReturned }
    * @returns {Object} - { stock, total }
    */
-  async findBorrowedFrom(params = {}) {
+  async findBorrowedFrom(tenantId, params = {}) {
     const { 
       limit = 10, 
       offset = 0, 
@@ -499,6 +817,7 @@ export class InventoriesRepository {
     }
 
     let query = this.knex('borrow_from_inventories')
+      .where('borrow_from_inventories.tenant_id', tenantId)
       .select(
         'borrow_from_inventories.*',
         'borrow_from_inventories.inventory_id',
@@ -510,9 +829,18 @@ export class InventoriesRepository {
         'units.name as unit',
         'customers.name as partner_name'
       )
-      .leftJoin('products', 'borrow_from_inventories.product_id', 'products.id')
-      .leftJoin('categories', 'products.category_id', 'categories.id')
-      .leftJoin('units', 'products.unit_id', 'units.id')
+      .leftJoin('products', function () {
+        this.on('borrow_from_inventories.product_id', 'products.id')
+          .andOn('borrow_from_inventories.tenant_id', 'products.tenant_id')
+      })
+      .leftJoin('categories', function () {
+        this.on('products.category_id', 'categories.id')
+          .andOn('products.tenant_id', 'categories.tenant_id')
+      })
+      .leftJoin('units', function () {
+        this.on('products.unit_id', 'units.id')
+          .andOn('products.tenant_id', 'units.tenant_id')
+      })
       .leftJoin('customers', 'borrow_from_inventories.partner_id', 'customers.id')
     
     // Filter: show all statuses if includeReturned=true, otherwise exclude fully 'returned'
@@ -571,6 +899,7 @@ export class InventoriesRepository {
       
       if (inventoryIds.length > 0) {
         const returnRows = await this.knex('borrow_from_returns')
+          .where({ tenant_id: tenantId })
           .whereIn('borrowed_inventory_id', inventoryIds)
           .select('borrowed_inventory_id', 'quantity_returned')
         
@@ -590,20 +919,6 @@ export class InventoriesRepository {
       const totalReturned = inventoryId ? (returnDataMap.get(inventoryId) || 0) : 0
       const remaining = Math.max(0, totalBorrowed - totalReturned)
       const borrowStatus = item.status || 'active' // 'active', 'partially_returned', 'returned'
-      
-      // Debug logging for remaining quantity calculation
-      if (totalBorrowed > 0) {
-        console.log('[findBorrowedFrom] Item calculation:', {
-          borrowFromId: item.id,
-          inventoryId,
-          totalBorrowed,
-          totalReturned,
-          remaining,
-          borrowStatus,
-          hasReturnData: returnDataMap.has(inventoryId),
-          returnDataMapSize: returnDataMap.size
-        })
-      }
       
       return {
         id: item.id,
@@ -641,8 +956,6 @@ export class InventoriesRepository {
       }
     })
 
-    console.log('[InventoriesRepository] transformedStock:', transformedStock);
-
     return {
       stock: transformedStock,
       total: parseInt(total || 0, 10)
@@ -655,7 +968,7 @@ export class InventoriesRepository {
    * @param {Object} params - { limit, offset, search, sortBy, orderBy, includeReturned }
    * @returns {Object} - { stock, total }
    */
-  async findBorrowedTo(params = {}) {
+  async findBorrowedTo(tenantId, params = {}) {
     const { 
       limit = 10, 
       offset = 0, 
@@ -672,6 +985,7 @@ export class InventoriesRepository {
     }
 
     let query = this.knex('borrow_to_inventories')
+      .where('borrow_to_inventories.tenant_id', tenantId)
       .select(
         'borrow_to_inventories.*',
         'borrow_to_inventories.status',
@@ -684,11 +998,23 @@ export class InventoriesRepository {
         'inventories.inventory_code as source_inventory_code',
         'inventories.id as source_inventory_id'
       )
-      .leftJoin('products', 'borrow_to_inventories.product_id', 'products.id')
-      .leftJoin('categories', 'products.category_id', 'categories.id')
-      .leftJoin('units', 'products.unit_id', 'units.id')
+      .leftJoin('products', function () {
+        this.on('borrow_to_inventories.product_id', 'products.id')
+          .andOn('borrow_to_inventories.tenant_id', 'products.tenant_id')
+      })
+      .leftJoin('categories', function () {
+        this.on('products.category_id', 'categories.id')
+          .andOn('products.tenant_id', 'categories.tenant_id')
+      })
+      .leftJoin('units', function () {
+        this.on('products.unit_id', 'units.id')
+          .andOn('products.tenant_id', 'units.tenant_id')
+      })
       .leftJoin('customers', 'borrow_to_inventories.partner_id', 'customers.id')
-      .leftJoin('inventories', 'borrow_to_inventories.source_inventory_id', 'inventories.id')
+      .leftJoin('inventories', function () {
+        this.on('borrow_to_inventories.source_inventory_id', 'inventories.id')
+          .andOn('borrow_to_inventories.tenant_id', 'inventories.tenant_id')
+      })
     
     // Filter: show all statuses if includeReturned=true, otherwise exclude fully 'returned'
     if (!includeReturned) {
@@ -746,6 +1072,7 @@ export class InventoriesRepository {
       
       if (borrowToIds.length > 0) {
         const returnRows = await this.knex('borrow_to_returns')
+          .where({ tenant_id: tenantId })
           .whereIn('borrow_to_inventory_id', borrowToIds)
           .select('borrow_to_inventory_id', 'quantity_returned')
         
@@ -765,19 +1092,6 @@ export class InventoriesRepository {
       const totalReturned = returnDataMap.get(borrowToId) || 0
       const remaining = Math.max(0, totalBorrowed - totalReturned)
       const borrowStatus = item.status || 'active' // 'active', 'partially_returned', 'returned'
-      
-      // Debug logging for remaining quantity calculation
-      if (totalBorrowed > 0) {
-        console.log('[findBorrowedTo] Item calculation:', {
-          borrowToId: item.id,
-          totalBorrowed,
-          totalReturned,
-          remaining,
-          borrowStatus,
-          hasReturnData: returnDataMap.has(borrowToId),
-          returnDataMapSize: returnDataMap.size
-        })
-      }
       
       return {
         id: item.id,
@@ -828,7 +1142,7 @@ export class InventoriesRepository {
    * @param {Object} params - { limit, offset, search, filter, sortBy, orderBy }
    * @returns {Object} - { stock, total, stats }
    */
-  async findAll(params = {}) {
+  async findAll(tenantId, params = {}) {
     const { 
       limit = 10, 
       offset = 0, 
@@ -839,11 +1153,11 @@ export class InventoriesRepository {
     } = params
 
     // Calculate constant stats from ALL inventory items (regardless of filter)
-    const constantStats = await this.calculateConstantStats()
+    const constantStats = await this.calculateConstantStats(tenantId)
 
     // Handle borrowed-from filter - fetch directly from borrow_from_inventories table
     if (filter === 'borrowed-from') {
-      const result = await this.findBorrowedFrom({ limit, offset, search, sortBy, orderBy })
+      const result = await this.findBorrowedFrom(tenantId, { limit, offset, search, sortBy, orderBy })
       return {
         stock: result.stock,
         total: result.total,
@@ -853,7 +1167,7 @@ export class InventoriesRepository {
 
     // Handle borrowed-to filter - fetch directly from borrow_to_inventories table
     if (filter === 'borrowed-to') {
-      const result = await this.findBorrowedTo({ limit, offset, search, sortBy, orderBy })
+      const result = await this.findBorrowedTo(tenantId, { limit, offset, search, sortBy, orderBy })
       return {
         stock: result.stock,
         total: result.total,
@@ -861,21 +1175,42 @@ export class InventoriesRepository {
       }
     }
 
-    // Base query with joins for product and category/unit names
-    // Note: expiry_threshold column may not exist if migration hasn't been run
-    // We'll default to 30 in the transformation code
+    // Subquery: total quantity per product (sum across all batches)
+    const productTotalsSubquery = this.knex('inventories')
+      .where({ tenant_id: tenantId })
+      .select('product_id')
+      .sum('quantity as product_total')
+      .groupBy('product_id')
+      .as('product_totals')
+
+    // Base query with joins for product, category, unit, and product total quantity
+    // Exclude zero-quantity rows so the stock table only shows batches that have stock
     let query = this.knex('inventories')
+      .where('inventories.tenant_id', tenantId)
       .select(
         'inventories.*',
         'products.product_code',
         'products.name as product_name',
         'products.description as product_description',
+        'products.expiry_threshold as product_expiry_threshold',
         'categories.name as category',
-        'units.name as unit'
+        'units.name as unit',
+        'product_totals.product_total'
       )
-      .leftJoin('products', 'inventories.product_id', 'products.id')
-      .leftJoin('categories', 'products.category_id', 'categories.id')
-      .leftJoin('units', 'products.unit_id', 'units.id')
+      .leftJoin('products', function () {
+        this.on('inventories.product_id', 'products.id')
+          .andOn('inventories.tenant_id', 'products.tenant_id')
+      })
+      .leftJoin('categories', function () {
+        this.on('products.category_id', 'categories.id')
+          .andOn('products.tenant_id', 'categories.tenant_id')
+      })
+      .leftJoin('units', function () {
+        this.on('products.unit_id', 'units.id')
+          .andOn('products.tenant_id', 'units.tenant_id')
+      })
+      .leftJoin(productTotalsSubquery, 'inventories.product_id', 'product_totals.product_id')
+      .where('inventories.quantity', '>', 0)
 
     // Apply search filter
     if (search && search.trim()) {
@@ -889,29 +1224,29 @@ export class InventoriesRepository {
       })
     }
 
+    const LOW_STOCK_THRESHOLD = InventoriesRepository.DEFAULT_LOW_STOCK_THRESHOLD
+    const HIGH_VALUE_THRESHOLD = InventoriesRepository.DEFAULT_HIGH_VALUE_THRESHOLD
+
     // Apply other filters (not borrowed-from/borrowed-to, those are handled above)
     if (filter !== 'all' && filter !== 'borrowed-from' && filter !== 'borrowed-to') {
       const today = new Date()
       const todayStr = today.toISOString().split('T')[0]
-      const HIGH_VALUE_THRESHOLD = 1000
 
       query = query.where(function() {
         if (filter === 'out-of-stock') {
           this.where('inventories.quantity', 0)
-        } else if (filter === 'low-stock') {
-          this.where('inventories.quantity', '>', 0)
-            .where('inventories.quantity', '<', 50)
         } else if (filter === 'expired') {
+          // Only batches with a valid expiry_date; null expiry is excluded
           this.whereNotNull('inventories.expiry_date')
             .where('inventories.expiry_date', '<', todayStr)
         } else if (filter === 'expiring-soon') {
-          // Get products with expiry_threshold
+          // Only batches with valid expiry_date; use product-level expiry_threshold (days)
           this.whereNotNull('inventories.expiry_date')
             .where('inventories.expiry_date', '>=', todayStr)
-            .where(function() {
-              // Use default 30 days (expiry_threshold column may not exist if migration hasn't been run)
-              this.whereRaw(`inventories.expiry_date <= (?::date + INTERVAL '30 days')`, [todayStr])
-            })
+            .whereRaw(
+              `DATE(inventories.expiry_date) <= DATE(?, '+' || COALESCE(products.expiry_threshold, ?) || ' days')`,
+              [todayStr, InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD]
+            )
         } else if (filter === 'high-value') {
           this.where('inventories.purchase_price', '>=', HIGH_VALUE_THRESHOLD)
         }
@@ -948,27 +1283,34 @@ export class InventoriesRepository {
 
     const stock = await query
 
-    // Transform to frontend format
-    const transformedStock = stock.map(item => ({
-      id: item.id,
-      productId: item.product_id,
-      inventoryCode: item.inventory_code,
-      productCode: item.product_code,
-      name: item.product_name,
-      category: item.category,
-      location: item.location,
-      quantity: parseInt(item.quantity, 10),
-      unit: item.unit,
-      unitCost: parseFloat(item.purchase_price),
-      sellingPrice: item.selling_price ? parseFloat(item.selling_price) : null,
-      expiryDate: item.expiry_date,
-      batchNumber: item.batch_no,
-      status: item.quantity === 0 ? 'out-of-stock' : (item.quantity < 50 ? 'low-stock' : 'active'),
-      expiry_threshold: item.expiry_threshold || 30,
-      product: {
-        expiry_threshold: item.expiry_threshold || 30
+    // Transform to frontend format. Status and low-stock are based on product total quantity (all batches).
+    const transformedStock = stock.map(item => {
+      const productTotal = parseInt(item.product_total || 0, 10)
+      const quantity = parseInt(item.quantity, 10)
+      const expiryThreshold = item.product_expiry_threshold != null ? parseInt(item.product_expiry_threshold, 10) : InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD
+      const status = productTotal === 0 ? 'out-of-stock' : (productTotal < LOW_STOCK_THRESHOLD ? 'low-stock' : 'active')
+      return {
+        id: item.id,
+        productId: item.product_id,
+        inventoryCode: item.inventory_code,
+        productCode: item.product_code,
+        name: item.product_name,
+        category: item.category,
+        location: item.location,
+        quantity,
+        unit: item.unit,
+        unitCost: parseFloat(item.purchase_price),
+        sellingPrice: item.selling_price ? parseFloat(item.selling_price) : null,
+        expiryDate: item.expiry_date,
+        batchNumber: item.batch_no,
+        status,
+        productTotalQuantity: productTotal,
+        expiry_threshold: expiryThreshold,
+        product: {
+          expiry_threshold: expiryThreshold
+        }
       }
-    }))
+    })
 
     return {
       stock: transformedStock,
@@ -983,7 +1325,7 @@ export class InventoriesRepository {
    * @param {number} productId
    * @returns {Promise<Array<{ id, inventoryCode, productCode, name, batchNumber, expiryDate, unitCost, quantity, location }>>}
    */
-  async findInventoriesByProduct(productId) {
+  async findInventoriesByProduct(tenantId, productId) {
     const id = Number(productId)
     if (!id) return []
     const rows = await this.knex('inventories')
@@ -998,8 +1340,11 @@ export class InventoriesRepository {
         'products.product_code',
         'products.name as product_name'
       )
-      .leftJoin('products', 'inventories.product_id', 'products.id')
-      .where('inventories.product_id', id)
+      .leftJoin('products', function () {
+        this.on('inventories.product_id', 'products.id')
+          .andOn('inventories.tenant_id', 'products.tenant_id')
+      })
+      .where({ 'inventories.tenant_id': tenantId, 'inventories.product_id': id })
       .where('inventories.quantity', '>', 0)
       .orderBy('inventories.id', 'asc')
     return rows.map(r => ({
@@ -1016,15 +1361,16 @@ export class InventoriesRepository {
   }
 
   /**
-   * Calculate stock statistics
-   * @param {Array} stockList - Array of stock items
+   * Calculate stock statistics. Low/out-of-stock counts are per PRODUCT (total quantity across batches).
+   * @param {Array} stockList - Array of stock items (may include productTotalQuantity from API)
    * @returns {Object} Statistics object
    */
   calculateStockStats(stockList) {
     const today = new Date()
     const todayStr = today.toISOString().split('T')[0]
-    const DEFAULT_EXPIRY_THRESHOLD = 30
-    const HIGH_VALUE_THRESHOLD = 1000
+    const DEFAULT_EXPIRY_THRESHOLD = InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD
+    const HIGH_VALUE_THRESHOLD = InventoriesRepository.DEFAULT_HIGH_VALUE_THRESHOLD
+    const LOW_STOCK_THRESHOLD = InventoriesRepository.DEFAULT_LOW_STOCK_THRESHOLD
 
     const stats = {
       total: stockList.length,
@@ -1037,30 +1383,36 @@ export class InventoriesRepository {
       highValue: 0
     }
 
+    // Product-level totals for low/out-of-stock (by product_id)
+    const productTotalsMap = new Map()
     stockList.forEach(item => {
-      const quantity = parseInt(item.quantity || 0, 10)
-      const purchasePrice = parseFloat(item.purchase_price || 0)
-      const expiryDate = item.expiry_date
-      const expiryThreshold = item.expiry_threshold || DEFAULT_EXPIRY_THRESHOLD
+      const pid = item.productId ?? item.product_id
+      if (pid == null) return
+      const qty = parseInt(item.quantity || 0, 10)
+      productTotalsMap.set(pid, (productTotalsMap.get(pid) || 0) + qty)
+    })
+    productTotalsMap.forEach((total, _pid) => {
+      if (total === 0) stats.outOfStock++
+      else if (total < LOW_STOCK_THRESHOLD) stats.lowStock++
+    })
 
-      if (quantity === 0) stats.outOfStock++
-      if (quantity > 0 && quantity < 50) stats.lowStock++
+    stockList.forEach(item => {
+      const purchasePrice = parseFloat(item.purchase_price || item.unitCost || 0)
+      const expiryDate = item.expiry_date || item.expiryDate
+      const expiryThreshold = item.expiry_threshold ?? item.product?.expiry_threshold ?? DEFAULT_EXPIRY_THRESHOLD
+
       if (purchasePrice >= HIGH_VALUE_THRESHOLD) stats.highValue++
 
+      // Only count expired/expiring soon when batch has a valid expiry date; null excluded
       if (expiryDate) {
         const expiry = new Date(expiryDate)
         const expiryDateStr = expiry.toISOString().split('T')[0]
-        
-        if (expiryDateStr < todayStr) {
-          stats.expired++
-        } else {
+        if (expiryDateStr < todayStr) stats.expired++
+        else {
           const thresholdDate = new Date(today)
           thresholdDate.setDate(today.getDate() + expiryThreshold)
           const thresholdDateStr = thresholdDate.toISOString().split('T')[0]
-          
-          if (expiryDateStr <= thresholdDateStr) {
-            stats.expiringSoon++
-          }
+          if (expiryDateStr <= thresholdDateStr) stats.expiringSoon++
         }
       }
     })
@@ -1074,7 +1426,7 @@ export class InventoriesRepository {
    * @param {Object} updateData - Fields to update (snake_case format)
    * @returns {Object} Updated inventory record
    */
-  async updateById(inventoryId, updateData) {
+  async updateById(tenantId, inventoryId, updateData) {
     // Transform camelCase to snake_case for database fields
     // Database columns are snake_case: expiry_date, batch_no, purchase_price, selling_price
     const transformedData = {}
@@ -1121,7 +1473,7 @@ export class InventoriesRepository {
     transformedData.last_updated = this.knex.fn.now()
 
     const [updated] = await this.knex('inventories')
-      .where({ id: inventoryId })
+      .where({ id: inventoryId, tenant_id: tenantId })
       .update(transformedData)
       .returning('*')
 
@@ -1139,7 +1491,7 @@ export class InventoriesRepository {
    * @param {number} userId - User ID performing the adjustment
    * @returns {Object} Updated inventory record
    */
-  async adjustStockQuantity(inventoryId, adjustmentData, userId = null) {
+  async adjustStockQuantity(tenantId, inventoryId, adjustmentData, userId = null) {
     const {
       adjustmentType,
       amount,
@@ -1154,7 +1506,7 @@ export class InventoriesRepository {
 
     // Get current inventory record
     const inventory = await this.knex('inventories')
-      .where({ id: inventoryId })
+      .where({ id: inventoryId, tenant_id: tenantId })
       .first()
 
     if (!inventory) {
@@ -1163,7 +1515,7 @@ export class InventoriesRepository {
 
     // Get product info for bin card
     const product = await this.knex('products')
-      .where({ id: inventory.product_id })
+      .where({ id: inventory.product_id, tenant_id: tenantId })
       .first()
 
     if (!product) {
@@ -1172,8 +1524,8 @@ export class InventoriesRepository {
 
     // Wrap all operations in a transaction for atomicity
     return await this.knex.transaction(async (trx) => {
-      // Get last balance for this product
-      const openingBalance = await this.getLastProductBalance(product.id)
+      // Get last balance for this product (same transaction — avoids pool deadlock)
+      const openingBalance = await this.getLastProductBalance(tenantId, product.id, trx)
 
       // Calculate quantity change
       let quantityIn = 0
@@ -1214,14 +1566,14 @@ export class InventoriesRepository {
 
       // Update inventory quantity
       const [updated] = await trx('inventories')
-        .where({ id: inventoryId })
+        .where({ id: inventoryId, tenant_id: tenantId })
         .update({
           quantity: newQuantity
         })
         .returning('*')
 
       // Create bin card transaction
-      await this.createBinCardTransaction({
+      await this.createBinCardTransaction(tenantId, {
         productId: product.id,
         inventoryId: inventoryId,
         batchNo: inventory.batch_no,
@@ -1240,29 +1592,80 @@ export class InventoriesRepository {
         partnerId: partnerIdValue
       }, trx)
 
+      let borrowToRecordId = null
       // If reason is "Borrow To" and we're subtracting stock, create borrow_to_inventories record
       if (isBorrowTo && quantityOut > 0 && partnerIdValue) {
-        // Check if borrow_to_inventories table exists (for migration safety)
-        const tableExists = await this.knex.schema.hasTable('borrow_to_inventories')
-        
-        if (tableExists) {
-          await trx('borrow_to_inventories').insert({
-            product_id: product.id,
-            partner_id: partnerIdValue,
-            source_inventory_id: inventoryId,
-            batch_no: inventory.batch_no,
-            expiry_date: inventory.expiry_date,
-            unit_cost: inventory.purchase_price,
-            selling_price: inventory.selling_price,
-            quantity: quantityOut,
-            lent_date: transactionDate,
-            status: 'active',
-            notes: notes || null,
-            created_by: userId,
-            created_at: trx.fn.now(),
-            last_updated: trx.fn.now(),
-            sync_status: 'pending'
-          })
+        const borrowToTableExists = await trx.schema.hasTable('borrow_to_inventories')
+        if (borrowToTableExists) {
+          const [borrowToRecord] = await trx('borrow_to_inventories')
+            .insert({
+              tenant_id: tenantId,
+              product_id: product.id,
+              partner_id: partnerIdValue,
+              source_inventory_id: inventoryId,
+              batch_no: inventory.batch_no,
+              expiry_date: inventory.expiry_date,
+              unit_cost: inventory.purchase_price,
+              selling_price: inventory.selling_price,
+              quantity: quantityOut,
+              lent_date: transactionDate,
+              status: 'active',
+              notes: notes || null,
+              created_by: userId,
+              created_at: trx.fn.now(),
+              last_updated: trx.fn.now(),
+              sync_status: 'pending'
+            })
+            .returning('id')
+          borrowToRecordId = borrowToRecord?.id ?? borrowToRecord
+        }
+      }
+
+      // Ledger: post GL entries when account_ledger exists
+      const ledgerTableExists = await trx.schema.hasTable('account_ledger')
+      if (ledgerTableExists) {
+        const unitCost = parseFloat(inventory.purchase_price) || 0
+        const refNo = `ADJ-${inventoryId}-${Date.now()}`
+        if (quantityIn > 0) {
+          await this.ledgerHelper.recordStockAdjustmentAdd({
+            tenant_id: tenantId,
+            inventoryId,
+            quantity: quantityIn,
+            unitCost,
+            transactionDate,
+            reason: reason || 'Adjustment',
+            referenceNumber: refNo,
+            memo: notes,
+            createdBy: userId
+          }, trx)
+        } else if (quantityOut > 0) {
+          if (isBorrowTo && partnerIdValue) {
+            await this.ledgerHelper.recordStockAdjustmentSubtractBorrowTo({
+              tenant_id: tenantId,
+              inventoryId,
+              quantity: quantityOut,
+              unitCost,
+              partnerId: partnerIdValue,
+              transactionDate,
+              reason: reason || 'Borrow To',
+              referenceNumber: borrowToRecordId != null ? `BORROW-TO-${borrowToRecordId}` : undefined,
+              referenceId: borrowToRecordId,
+              memo: notes,
+              createdBy: userId
+            }, trx)
+          } else {
+            await this.ledgerHelper.recordStockAdjustmentSubtract({
+              tenant_id: tenantId,
+              inventoryId,
+              quantity: quantityOut,
+              unitCost,
+              transactionDate,
+              reason: reason || 'Adjustment',
+              referenceNumber: refNo,
+              memo: notes,
+              createdBy: userId
+            }, trx)
+          }
         }
       }
 
@@ -1280,7 +1683,7 @@ export class InventoriesRepository {
    * @param {number} userId - User ID creating the record
    * @returns {Object} Created borrow_from_inventories record with inventory info
    */
-  async createBorrowFromInventory(borrowData, userId = null) {
+  async createBorrowFromInventory(tenantId, borrowData, userId = null) {
     const {
       partnerId,
       partner_id,
@@ -1319,7 +1722,7 @@ export class InventoriesRepository {
     return await this.knex.transaction(async (trx) => {
       // 1. Get product information to generate inventory code
       const product = await trx('products')
-        .where({ id: productIdValue })
+        .where({ id: productIdValue, tenant_id: tenantId })
         .first()
 
       if (!product) {
@@ -1328,10 +1731,12 @@ export class InventoriesRepository {
 
       // 2. Check if inventory record already exists with same variation
       const existing = await this.findExistingInventory(
+        tenantId,
         productIdValue,
         batchNoValue,
         expiryDateValue,
-        purchasePriceValue
+        purchasePriceValue,
+        trx
       )
 
       let inventoryCode
@@ -1347,18 +1752,19 @@ export class InventoriesRepository {
         
         // Update quantity (add to existing)
         await trx('inventories')
-          .where({ id: existing.id })
+          .where({ id: existing.id, tenant_id: tenantId })
           .update({
             quantity: trx.raw('quantity + ?', [quantityAdded]),
             last_updated: trx.fn.now()
           })
       } else {
         // Generate new inventory code
-        inventoryCode = await this.generateInventoryCode(product.product_code)
+        inventoryCode = await this.generateInventoryCode(tenantId, product.product_code, trx)
         
         // Insert new inventory record
         const [inserted] = await trx('inventories')
           .insert({
+            tenant_id: tenantId,
             product_id: productIdValue,
             inventory_code: inventoryCode,
             batch_no: batchNoValue,
@@ -1381,6 +1787,7 @@ export class InventoriesRepository {
       // 3. Create borrow_from_inventories record (link to inventory for return-status / returns)
       const [borrowFromRecord] = await trx('borrow_from_inventories')
         .insert({
+          tenant_id: tenantId,
           product_id: productIdValue,
           partner_id: partnerIdValue,
           inventory_id: inventoryId,
@@ -1402,9 +1809,8 @@ export class InventoriesRepository {
         })
         .returning('*')
 
-      // 4. Get opening balance for bin card transaction
-      // For opening balance, we want the last committed balance, so using this.knex is fine
-      const openingBalance = await this.getLastProductBalance(productIdValue)
+      // 4. Get opening balance for bin card transaction (use trx — avoid nested pool connections)
+      const openingBalance = await this.getLastProductBalance(tenantId, productIdValue, trx)
 
       // 5. Create bin card transaction for this borrow from (within transaction)
       const finalQuantityIn = quantityAdded
@@ -1414,6 +1820,7 @@ export class InventoriesRepository {
 
       await trx('bin_cards')
         .insert({
+          tenant_id: tenantId,
           product_id: productIdValue,
           inventory_id: inventoryId,
           batch_no: batchNoValue || null,
@@ -1435,6 +1842,29 @@ export class InventoriesRepository {
           last_updated: trx.fn.now()
         })
 
+      const ledgerTableExists = await trx.schema.hasTable('account_ledger')
+      if (ledgerTableExists) {
+        const borrowFromId =
+          borrowFromRecord != null && typeof borrowFromRecord === 'object'
+            ? borrowFromRecord.id
+            : borrowFromRecord
+        await this.ledgerHelper.recordBorrowFrom(
+          {
+            tenant_id: tenantId,
+            inventoryId,
+            borrowFromId,
+            quantity: quantityValue,
+            unitCost: purchasePrice,
+            partnerId: partnerIdValue,
+            transactionDate: purchaseDate,
+            referenceNumber: `BORROW-FROM-${borrowFromId}`,
+            memo: notes || description || null,
+            createdBy: userId
+          },
+          trx
+        )
+      }
+
       // Return borrow_from_inventories record with inventory info
       return {
         ...borrowFromRecord,
@@ -1449,14 +1879,14 @@ export class InventoriesRepository {
    * @param {number} borrowToInventoryId - ID from borrow_to_inventories table
    * @returns {Array} Array of return records
    */
-  async getBorrowToReturnHistory(borrowToInventoryId) {
+  async getBorrowToReturnHistory(tenantId, borrowToInventoryId) {
     const tableExists = await this.knex.schema.hasTable('borrow_to_returns')
     if (!tableExists) {
       return []
     }
 
     return await this.knex('borrow_to_returns')
-      .where('borrow_to_inventory_id', borrowToInventoryId)
+      .where({ tenant_id: tenantId, borrow_to_inventory_id: borrowToInventoryId })
       .orderBy('returned_date', 'desc')
       .orderBy('id', 'desc')
   }
@@ -1469,7 +1899,7 @@ export class InventoriesRepository {
    * @param {number} userId - User ID processing the return
    * @returns {Object} Created return record with inventory info
    */
-  async processBorrowToReturn(returnData, userId = null) {
+  async processBorrowToReturn(tenantId, returnData, userId = null) {
     const {
       borrowToInventoryId,
       borrow_to_inventory_id,
@@ -1523,7 +1953,7 @@ export class InventoriesRepository {
     return await this.knex.transaction(async (trx) => {
       // 1. Get the borrow_to_inventory record
       const borrowToRecord = await trx('borrow_to_inventories')
-        .where({ id: borrowToId })
+        .where({ id: borrowToId, tenant_id: tenantId })
         .first()
 
       if (!borrowToRecord) {
@@ -1541,30 +1971,10 @@ export class InventoriesRepository {
         const borrowedProductId = Number(borrowToRecord.product_id)
         const borrowedUnitCost = parseFloat(borrowToRecord.unit_cost)
         
-        console.log('[processBorrowToReturn] Validation - Borrowed record:', {
-          product_id: borrowToRecord.product_id,
-          product_id_type: typeof borrowToRecord.product_id,
-          normalized_product_id: borrowedProductId,
-          unit_cost: borrowToRecord.unit_cost,
-          unit_cost_type: typeof borrowToRecord.unit_cost,
-          normalized_unit_cost: borrowedUnitCost
-        });
-        
         itemsToProcess.forEach((item, idx) => {
           const itemProductId = Number(item.product_id)
           const itemUnitCost = Number(item.unit_cost)
-          
-          console.log(`[processBorrowToReturn] Validating item ${idx + 1}:`, {
-            item_product_id: item.product_id,
-            item_product_id_type: typeof item.product_id,
-            normalized_item_product_id: itemProductId,
-            item_unit_cost: item.unit_cost,
-            item_unit_cost_type: typeof item.unit_cost,
-            normalized_item_unit_cost: itemUnitCost,
-            match_product: itemProductId === borrowedProductId,
-            match_cost: Math.abs(itemUnitCost - borrowedUnitCost) <= 0.01
-          });
-          
+
           if (itemProductId !== borrowedProductId) {
             throw new Error(`Return item ${idx + 1}: Product ID (${itemProductId}) must match borrowed product (${borrowedProductId})`)
           }
@@ -1583,7 +1993,7 @@ export class InventoriesRepository {
 
       // 3. Check how much has already been returned
       const previousReturns = await trx('borrow_to_returns')
-        .where('borrow_to_inventory_id', borrowToId)
+        .where({ tenant_id: tenantId, borrow_to_inventory_id: borrowToId })
         .sum('quantity_returned as total_returned')
         .first()
 
@@ -1597,7 +2007,7 @@ export class InventoriesRepository {
 
       // 4. Get product information
       const product = await trx('products')
-        .where({ id: borrowToRecord.product_id })
+        .where({ id: borrowToRecord.product_id, tenant_id: tenantId })
         .first()
 
       if (!product) {
@@ -1606,22 +2016,24 @@ export class InventoriesRepository {
 
       // Get partner name for notes
       const partner = await trx('customers')
-        .where({ id: borrowToRecord.partner_id })
+        .where({ id: borrowToRecord.partner_id, tenant_id: tenantId })
         .first()
 
       const partnerName = partner?.name || `Partner ID: ${borrowToRecord.partner_id}`
 
       // 5. Process each return item (create inventory, bin card, return record)
       const returnRecords = []
-      let currentOpeningBalance = await this.getLastProductBalance(borrowToRecord.product_id)
+      let currentOpeningBalance = await this.getLastProductBalance(tenantId, borrowToRecord.product_id, trx)
 
       for (const item of itemsToProcess) {
         // Find or create inventory record for this batch/expiry combination
         const existing = await this.findExistingInventory(
+          tenantId,
           item.product_id,
           item.batch_no,
           item.expiry_date,
-          item.unit_cost
+          item.unit_cost,
+          trx
         )
 
         let inventoryId
@@ -1633,7 +2045,7 @@ export class InventoriesRepository {
           inventoryCode = existing.inventory_code
           
           await trx('inventories')
-            .where({ id: existing.id })
+            .where({ id: existing.id, tenant_id: tenantId })
             .update({
               quantity: trx.raw('quantity + ?', [item.quantity_returned]),
               location: item.location || existing.location, // Update location if provided
@@ -1641,11 +2053,12 @@ export class InventoriesRepository {
             })
         } else {
           // Create new inventory record
-          inventoryCode = await this.generateInventoryCode(product.product_code)
+          inventoryCode = await this.generateInventoryCode(tenantId, product.product_code, trx)
           
           // Insert new inventory record
           const [inserted] = await trx('inventories')
             .insert({
+              tenant_id: tenantId,
               product_id: item.product_id,
               inventory_code: inventoryCode,
               batch_no: item.batch_no || null,
@@ -1674,6 +2087,7 @@ export class InventoriesRepository {
         // Create borrow_to_returns record
         const [returnRecord] = await trx('borrow_to_returns')
           .insert({
+            tenant_id: tenantId,
             borrow_to_inventory_id: borrowToId,
             quantity_returned: item.quantity_returned,
             returned_date: returnDate,
@@ -1690,6 +2104,7 @@ export class InventoriesRepository {
         // Create bin card entry referencing the return record
         await trx('bin_cards')
           .insert({
+            tenant_id: tenantId,
             product_id: item.product_id,
             inventory_id: inventoryId,
             batch_no: item.batch_no || null,
@@ -1711,6 +2126,23 @@ export class InventoriesRepository {
             last_updated: trx.fn.now()
           })
 
+        // Ledger: DR Inventory (1300), CR Accounts Receivable (1200) when account_ledger exists
+        const ledgerTableExists = await trx.schema.hasTable('account_ledger')
+        if (ledgerTableExists) {
+          await this.ledgerHelper.recordReturnBorrowedTo({
+            tenant_id: tenantId,
+            inventoryId,
+            returnId: returnRecord.id,
+            quantity: item.quantity_returned,
+            unitCost: parseFloat(item.unit_cost) || 0,
+            partnerId: borrowToRecord.partner_id,
+            transactionDate: returnDate,
+            referenceNumber: `RETURN-TO-${returnRecord.id}`,
+            memo: notes,
+            createdBy: userId
+          }, trx)
+        }
+
         // Update opening balance for next item
         currentOpeningBalance = finalBalance
 
@@ -1730,7 +2162,7 @@ export class InventoriesRepository {
       }
 
       await trx('borrow_to_inventories')
-        .where({ id: borrowToId })
+        .where({ id: borrowToId, tenant_id: tenantId })
         .update({
           status: newStatus,
           last_updated: trx.fn.now()
@@ -1760,7 +2192,7 @@ export class InventoriesRepository {
    * @param {Object} opts - { borrowFromId?: number, borrowedInventoryId?: number }
    * @returns {Promise<{ totalBorrowed: number, totalReturned: number, remaining: number }>}
    */
-  async getBorrowFromReturnStatus(opts = {}) {
+  async getBorrowFromReturnStatus(tenantId, opts = {}) {
     // Require borrowFromId - frontend should always provide this
     const borrowFromId = opts.borrowFromId != null ? Number(opts.borrowFromId) : null
     if (!borrowFromId) {
@@ -1768,7 +2200,9 @@ export class InventoriesRepository {
     }
 
     // Get borrow record directly by ID
-    const borrowRecord = await this.knex('borrow_from_inventories').where('id', borrowFromId).first()
+    const borrowRecord = await this.knex('borrow_from_inventories')
+      .where({ id: borrowFromId, tenant_id: tenantId })
+      .first()
     if (!borrowRecord) {
       throw new Error('Borrow-from record not found')
     }
@@ -1791,7 +2225,7 @@ export class InventoriesRepository {
       if (inventoryId) {
         // Primary method: Query by inventory_id from borrow_from_inventories
         const returnRows = await this.knex('borrow_from_returns')
-          .where('borrowed_inventory_id', inventoryId)
+          .where({ tenant_id: tenantId, borrowed_inventory_id: inventoryId })
         
         totalReturned = returnRows.reduce((sum, r) => {
           const qty = parseInt(r.quantity_returned || 0, 10)
@@ -1811,36 +2245,20 @@ export class InventoriesRepository {
     // 3. Remaining to return = original − sum(returns)
     const remaining = Math.max(0, totalBorrowed - totalReturned)
     
-    // Debug logging to help diagnose the issue
-    console.log('[getBorrowFromReturnStatus] Status calculation:', {
-      borrowFromId,
-      borrowedInventoryId,
-      inventoryId,
-      totalBorrowed,
-      totalReturned,
-      remaining,
-      borrowRecordQuantity: borrowRecord?.quantity,
-      borrowRecordInventoryId: borrowRecord?.inventory_id,
-      borrowRecordStatus: borrowRecord?.status
-    })
-    
     return { totalBorrowed, totalReturned, remaining }
   }
 
   /**
-   * Process borrow returns - Main processing routine
-   * Accepts data from frontend with array of returning inventories {inventory_id, quantity}
-   * Loops through each return item and processes them using processBorrowReturn routine
-   * 
-   * @param {Object} returnData - Return data from frontend
-   * @param {number} returnData.borrowedInventoryId - ID of the borrowed inventory
-   * @param {Array} returnData.returnItems - Array of {inventory_id, quantity} or {returningInventoryId, quantityReturned}
-   * @param {string} returnData.returnedOn - Return date (YYYY-MM-DD)
-   * @param {string} [returnData.note] - Optional note
-   * @param {number} userId - User ID processing the return
-   * @returns {Object} Result of the operation
+   * Process borrow-from returns: one `borrow_from_returns` row and GL per line (AP + BV + 1300).
+   *
+   * @param {Object} returnData
+   * @param {number} returnData.borrowedInventoryId - Borrowed lot `inventories.id`
+   * @param {Array} returnData.returnItems - `{ inventory_id, quantity }` or `{ returningInventoryId, quantityReturned }`
+   * @param {string} returnData.returnedOn - YYYY-MM-DD
+   * @param {string} [returnData.note]
+   * @returns {Object} borrowReturnIds, isSettled, obligationUnitCost, totalQuantityReturned, processedReturns (per line)
    */
-  async processBorrowFromReturn(returnData, userId = null) {
+  async processBorrowFromReturn(tenantId, returnData, userId = null) {
     const {
       borrowedInventoryId,
       borrowed_inventory_id,
@@ -1868,28 +2286,18 @@ export class InventoriesRepository {
       throw new Error('No valid return items provided')
     }
 
-    // Use transaction to ensure all operations succeed or fail together
     return await this.knex.transaction(async (trx) => {
-      const processedReturns = []
-      const allGlEntries = []
-      let highestCost = 0
-      let initialBorrowedPrice = 0
-
-      // Get initial borrowed inventory price (before any returns)
       const borrowedInventory = await trx('inventories')
-        .where('id', borrowed_inventory_id_value)
+        .where({ id: borrowed_inventory_id_value, tenant_id: tenantId })
         .first()
 
       if (!borrowedInventory) {
         throw new Error('Borrowed inventory record not found')
       }
 
-      initialBorrowedPrice = parseFloat(borrowedInventory.purchase_price) || 0
-      highestCost = initialBorrowedPrice
-
-      // Loop through each return item and process using processBorrowReturn routine
+      const processedReturns = []
       for (const returnItem of normalizedReturnItems) {
-        const result = await this.processBorrowReturn(trx, {
+        const result = await this.processBorrowReturn(tenantId, trx, {
           borrowed_inventory_id: borrowed_inventory_id_value,
           returning_inventory_id: returnItem.returning_inventory_id,
           quantity_returned: returnItem.quantity_returned,
@@ -1897,333 +2305,36 @@ export class InventoriesRepository {
           note: note || null,
           userId: userId || null
         })
-
         processedReturns.push(result)
-
-        // Track highest cost (high-water mark)
-        if (result.newAdjustedPrice > highestCost) {
-          highestCost = result.newAdjustedPrice
-        }
-
-        // Collect GL entries (they're already posted by processBorrowReturn, but we track them)
-        if (result.glEntries && result.glEntries.entries) {
-          allGlEntries.push(...result.glEntries.entries)
-        }
       }
 
-      // Get final status after all returns
-      const borrowFromRecord = await trx('borrow_from_inventories')
-        .where('inventory_id', borrowed_inventory_id_value)
-        .whereIn('status', ['active', 'partially_returned', 'returned'])
+      const finalBorrow = await trx('borrow_from_inventories')
+        .where({ inventory_id: borrowed_inventory_id_value, tenant_id: tenantId })
         .orderBy('id', 'desc')
         .first()
 
-      const totalQuantityReturned = normalizedReturnItems.reduce((sum, item) => sum + item.quantity_returned, 0)
-      const isSettled = borrowFromRecord && totalQuantityReturned >= borrowFromRecord.quantity
+      const totalQuantityReturned = normalizedReturnItems.reduce(
+        (sum, item) => sum + item.quantity_returned,
+        0
+      )
 
       return {
         success: true,
         borrowReturnIds: processedReturns.map(r => r.borrowReturnId),
-        isSettled: isSettled || false,
-        oldAdjustedPrice: initialBorrowedPrice,
-        newAdjustedPrice: highestCost, // High-water mark (highest cost among all returns)
-        priceDifference: highestCost - initialBorrowedPrice,
-        totalQuantityReturned: totalQuantityReturned,
-        processedReturns: processedReturns // Individual return results
+        isSettled: finalBorrow?.status === 'returned',
+        obligationUnitCost: processedReturns[0]?.obligationUnitCost ?? null,
+        totalQuantityReturned,
+        processedReturns
       }
     })
   }
 
   /**
-   * Process a single borrow return item
-   * Enhanced version that processes one returning inventory with quantity
-   * Designed to be called in a loop for multiple return items
-    const {
-      borrowedInventoryId,
-      borrowed_inventory_id,
-      returnItems,
-      returnedOn,
-      returned_on,
-      note
-    } = returnData
-
-    const borrowed_inventory_id_value = borrowedInventoryId || borrowed_inventory_id
-    const returned_on_value = returnedOn || returned_on || new Date().toISOString().split('T')[0]
-
-    // Validate returnItems array
-    if (!Array.isArray(returnItems) || returnItems.length === 0) {
-      throw new Error('returnItems must be a non-empty array')
-    }
-
-    // Normalize return items
-    const normalizedReturnItems = returnItems.map(item => ({
-      returningInventoryId: item.returningInventoryId || item.returning_inventory_id,
-      quantityReturned: parseInt(item.quantityReturned || item.quantity_returned || 0, 10)
-    })).filter(item => item.returningInventoryId && item.quantityReturned > 0)
-
-    if (normalizedReturnItems.length === 0) {
-      throw new Error('No valid return items provided')
-    }
-
-    // Helper for financial rounding to 2 decimal places
-    const fm = (num) => Math.round((num + Number.EPSILON) * 100) / 100
-
-    // Use transaction to ensure all operations succeed or fail together
-    return await this.knex.transaction(async (trx) => {
-      // 1. Data Retrieval - Get borrowed inventory
-      const borrowedInventory = await trx('inventories')
-        .where('id', borrowed_inventory_id_value)
-        .first()
-
-      if (!borrowedInventory) {
-        throw new Error('Borrowed inventory record not found.')
-      }
-
-      // Get all returning inventories
-      const returningInventoryIds = normalizedReturnItems.map(item => item.returningInventoryId)
-      const returningInventories = await trx('inventories')
-        .whereIn('id', returningInventoryIds)
-        .select('*')
-
-      if (returningInventories.length !== returningInventoryIds.length) {
-        throw new Error('One or more returning inventory records not found.')
-      }
-
-      const returningInventoryMap = {}
-      returningInventories.forEach(inv => {
-        returningInventoryMap[inv.id] = inv
-      })
-
-      // Find the borrow_from_inventories record by matching product and characteristics
-      // Note: inventory_id exists but may be NULL if inventory was deleted, so we match by product_id, batch_no, expiry_date, and unit_cost
-      let originalBorrowRecord = await trx('borrow_from_inventories')
-        .where('product_id', borrowedInventory.product_id)
-        .where('unit_cost', borrowedInventory.purchase_price)
-        .where(function() {
-          if (borrowedInventory.batch_no) {
-            this.where('batch_no', borrowedInventory.batch_no)
-          } else {
-            this.whereNull('batch_no')
-          }
-        })
-        .where(function() {
-          if (borrowedInventory.expiry_date) {
-            this.where('expiry_date', borrowedInventory.expiry_date)
-          } else {
-            this.whereNull('expiry_date')
-          }
-        })
-        .where('status', 'active')
-        .orderBy('id', 'desc')
-        .first()
-
-      if (!originalBorrowRecord) {
-        throw new Error('Borrow from inventory record not found for this inventory item.')
-      }
-
-      // Check if borrow_from_returns table exists
-      const returnsTableExists = await trx.schema.hasTable('borrow_from_returns')
-      if (!returnsTableExists) {
-        throw new Error('borrow_from_returns table does not exist')
-      }
-
-      // 2. Get existing return history and sales data
-      const borrowReturnsRaw = await trx('borrow_from_returns')
-        .where('borrowed_inventory_id', borrowed_inventory_id_value)
-        .select('*')
-      const borrowReturns = Array.isArray(borrowReturnsRaw) ? borrowReturnsRaw : []
-
-      const salesTableExists = await trx.schema.hasTable('sales_order_items')
-      const soldItemsRaw = salesTableExists
-        ? await trx('sales_order_items').where('inventory_id', borrowed_inventory_id_value).select('*')
-        : []
-      const soldItems = Array.isArray(soldItemsRaw) ? soldItemsRaw : []
-
-      const totalReturnedBefore = borrowReturns.reduce((sum, r) => sum + (r.quantity_returned || 0), 0)
-      const totalSoldBefore = soldItems.reduce((sum, s) => sum + (s.quantity || 0), 0)
-
-      // 3. Calculate total quantity to return and validate
-      const totalQuantityToReturn = normalizedReturnItems.reduce((sum, item) => sum + item.quantityReturned, 0)
-      const unreturnedQty = originalBorrowRecord.quantity - totalReturnedBefore
-
-      if (totalQuantityToReturn > unreturnedQty) {
-        throw new Error(`Cannot return ${totalQuantityToReturn}. Only ${unreturnedQty} remaining in debt.`)
-      }
-
-      // 4. Process each return item and determine high-water mark (highest cost)
-      const lastAdjustedCost = borrowedInventory.purchase_price
-      const borrowReturnIds = []
-      let highestReturningCost = lastAdjustedCost // Start with current price
-
-      // First pass: Create return records and find the highest cost (high-water mark)
-      for (const returnItem of normalizedReturnItems) {
-        const returningInventory = returningInventoryMap[returnItem.returningInventoryId]
-        if (!returningInventory) {
-          throw new Error(`Returning inventory ${returnItem.returningInventoryId} not found`)
-        }
-
-        const returningCost = parseFloat(returningInventory.purchase_price) || 0
-        
-        // Track highest cost (true high-water mark)
-        if (returningCost > highestReturningCost) {
-          highestReturningCost = returningCost
-        }
-
-        // Create return record (using same pattern as other inserts in this file)
-        const insertResult = await trx('borrow_from_returns')
-          .insert({
-            borrowed_inventory_id: borrowed_inventory_id_value,
-            returning_inventory_id: returnItem.returningInventoryId,
-            estimated_price: returningCost,
-            actual_price: returningCost,
-            quantity_returned: returnItem.quantityReturned,
-            returned_on: returned_on_value,
-            note: note || null,
-            created_at: trx.fn.now(),
-            last_updated: trx.fn.now(),
-            sync_status: 'pending'
-          })
-          .returning('id')
-        
-        // Handle insert result (PostgreSQL returns array of objects: [{id: 1}])
-        if (!insertResult || !Array.isArray(insertResult) || insertResult.length === 0) {
-          throw new Error('Failed to create borrow_from_returns record')
-        }
-        
-        const borrowReturnId = insertResult[0]?.id || insertResult[0]
-        if (borrowReturnId) {
-          borrowReturnIds.push(borrowReturnId)
-        }
-
-        // Decrement quantity from returning inventory
-        await trx('inventories')
-          .where('id', returnItem.returningInventoryId)
-          .decrement('quantity', returnItem.quantityReturned)
-      }
-
-      // Update borrowed inventory price to the highest cost (high-water mark)
-      // This ensures the borrowed inventory is valued at the highest cost among all returns
-      await trx('inventories')
-        .where('id', borrowed_inventory_id_value)
-        .update({
-          purchase_price: highestReturningCost,
-          last_updated: trx.fn.now()
-        })
-
-      // 5. Update borrow_from_inventories status
-      const totalReturnedAfter = totalReturnedBefore + totalQuantityToReturn
-      const isSettled = totalReturnedAfter === originalBorrowRecord.quantity
-
-      await trx('borrow_from_inventories')
-        .where('id', originalBorrowRecord.id)
-        .update({
-          status: isSettled ? 'returned' : 'partially_returned',
-          last_updated: trx.fn.now()
-        })
-
-      // 6. GL Entry Generation (aggregated across all returns)
-      // Use high-water mark (highest cost) for GL calculations
-      const entries = []
-      const finalCostDiff = fm(highestReturningCost - lastAdjustedCost)
-      const excessSoldQty = Math.max(totalSoldBefore, totalReturnedBefore) - totalReturnedBefore
-      const unreturnedQtyAfter = originalBorrowRecord.quantity - totalReturnedAfter
-
-      // A. Revalue the Debt/Inventory Basis (Mark-to-Market) - based on final price
-      if (finalCostDiff !== 0) {
-        const totalAdj = fm(Math.abs(finalCostDiff * unreturnedQtyAfter))
-        entries.push({
-          account_code: '1300', // Inventory
-          debit: finalCostDiff > 0 ? totalAdj : 0,
-          credit: finalCostDiff < 0 ? totalAdj : 0,
-          description: `Mark-to-market adjustment for unreturned quantity (${unreturnedQtyAfter} units)`
-        })
-        entries.push({
-          account_code: '3100', // Accounts Payable
-          debit: finalCostDiff < 0 ? totalAdj : 0,
-          credit: finalCostDiff > 0 ? totalAdj : 0,
-          description: `Mark-to-market adjustment for unreturned quantity (${unreturnedQtyAfter} units)`
-        })
-      }
-
-      // B. Catch-up COGS for units already sold at the old price
-      if (excessSoldQty > 0 && finalCostDiff !== 0) {
-        const cogsAdj = fm(Math.abs(finalCostDiff * excessSoldQty))
-        entries.push({
-          account_code: '6100', // Cost of Goods Sold
-          debit: finalCostDiff > 0 ? cogsAdj : 0,
-          credit: finalCostDiff < 0 ? cogsAdj : 0,
-          description: `COGS catch-up for excess sold quantity (${excessSoldQty} units)`
-        })
-        entries.push({
-          account_code: '1300', // Inventory
-          debit: finalCostDiff < 0 ? cogsAdj : 0,
-          credit: finalCostDiff > 0 ? cogsAdj : 0,
-          description: `COGS catch-up for excess sold quantity (${excessSoldQty} units)`
-        })
-      }
-
-      // C. Settlement (Clear specific quantity from debt) - aggregate all returns
-      const totalSettlementVal = normalizedReturnItems.reduce((sum, item) => {
-        const returningInv = returningInventoryMap[item.returningInventoryId]
-        return sum + fm(returningInv.purchase_price * item.quantityReturned)
-      }, 0)
-
-      entries.push({
-        account_code: '3100', // Accounts Payable
-        debit: totalSettlementVal,
-        credit: 0,
-        description: `Settlement for returned quantity (${totalQuantityToReturn} units)`
-      })
-      entries.push({
-        account_code: '1300', // Inventory
-        debit: 0,
-        credit: totalSettlementVal,
-        description: `Settlement for returned quantity (${totalQuantityToReturn} units)`
-      })
-
-      // 7. Post GL Transaction (single transaction for all returns)
-      if (Array.isArray(entries) && entries.length > 0 && borrowReturnIds.length > 0) {
-        await this.ledgerHelper.postGLTransaction({
-          transaction_date: returned_on_value,
-          reference_no: `BR-${borrowReturnIds.join(',')}`,
-          reference_table: 'borrow_from_returns',
-          reference_id: borrowReturnIds[0], // Use first return ID as primary reference
-          description: `Market adjustment & return for debt batch ${borrowed_inventory_id_value} (${normalizedReturnItems.length} items)`,
-          transaction_type: 'borrow_return',
-          entries: entries,
-          inventory_id: borrowed_inventory_id_value,
-          created_by: userId
-        }, trx)
-      }
-
-      return {
-        success: true,
-        borrowReturnIds,
-        isSettled,
-        oldAdjustedPrice: lastAdjustedCost,
-        newAdjustedPrice: highestReturningCost, // High-water mark (highest cost)
-        priceDifference: finalCostDiff,
-        totalQuantityReturned: totalQuantityToReturn
-      }
-    })
-  }
-
-  /**
-   * Process a single borrow return item
-   * Enhanced version that processes one returning inventory with quantity
-   * Designed to be called in a loop for multiple return items
-   * 
-   * @param {Object} trx - Knex transaction object (must be provided)
-   * @param {Object} borrowReturnData - Return data for single item
-   * @param {number} borrowReturnData.borrowed_inventory_id - ID of the borrowed inventory
-   * @param {number} borrowReturnData.returning_inventory_id - ID of the returning inventory
-   * @param {number} borrowReturnData.quantity_returned - Quantity being returned
-   * @param {string} borrowReturnData.returned_on - Return date (YYYY-MM-DD)
-   * @param {string} [borrowReturnData.note] - Optional note
-   * @param {number} [borrowReturnData.userId] - User ID processing the return
-   * @returns {Promise<Object>} Result with borrowReturnId and adjustment details
+   * Process one borrow-from return line: persist row, status, returning qty, bin card, GL (AP + BV + inventory).
+   * Settlement uses obligation cost C_b from `borrow_from_inventories.unit_cost`; physical out at returning lot `purchase_price`.
+   * Does not adjust borrowed inventory cost or COGS.
    */
-  async processBorrowReturn(trx, borrowReturnData) {
+  async processBorrowReturn(tenantId, trx, borrowReturnData) {
     const {
       borrowed_inventory_id,
       returning_inventory_id,
@@ -2233,7 +2344,6 @@ export class InventoriesRepository {
       userId
     } = borrowReturnData
 
-    // Validate required fields
     if (!borrowed_inventory_id || !returning_inventory_id || !quantity_returned || !returned_on) {
       throw new Error('Missing required fields: borrowed_inventory_id, returning_inventory_id, quantity_returned, returned_on')
     }
@@ -2242,27 +2352,19 @@ export class InventoriesRepository {
       throw new Error('quantity_returned must be greater than 0')
     }
 
-    // Account codes constants
-    const ACC_INVENTORY = { code: '1300', name: 'Inventory' }
-    const ACC_COGS = { code: '6100', name: 'Cost of Goods Sold' }
-    const ACC_AP = { code: '3100', name: 'Accounts Payable' }
-
-    // Helper for financial rounding to 2 decimal places
     const fm = (num) => Math.round((num + Number.EPSILON) * 100) / 100
 
     try {
-      // 1. Validate the borrowed inventory exists
       const borrowedInventory = await trx('inventories')
-        .where('id', borrowed_inventory_id)
+        .where({ id: borrowed_inventory_id, tenant_id: tenantId })
         .first()
 
       if (!borrowedInventory) {
         throw new Error(`Borrowed inventory with ID ${borrowed_inventory_id} not found`)
       }
 
-      // 2. Validate the returning inventory exists and has sufficient quantity
       const returningInventory = await trx('inventories')
-        .where('id', returning_inventory_id)
+        .where({ id: returning_inventory_id, tenant_id: tenantId })
         .first()
 
       if (!returningInventory) {
@@ -2275,32 +2377,28 @@ export class InventoriesRepository {
         )
       }
 
-      // 3. Get all previous borrow returns for this borrowed inventory
       const borrowReturns = await trx('borrow_from_returns')
-        .where('borrowed_inventory_id', borrowed_inventory_id)
+        .where({ tenant_id: tenantId, borrowed_inventory_id })
         .orderBy('id', 'desc')
 
-      // 4. Find the original borrow_from_inventories record
-      // Try by inventory_id first (preferred), then fallback to product matching
       let originalBorrowRecord = await trx('borrow_from_inventories')
-        .where('inventory_id', borrowed_inventory_id)
+        .where({ inventory_id: borrowed_inventory_id, tenant_id: tenantId })
         .whereIn('status', ['active', 'partially_returned'])
         .orderBy('id', 'desc')
         .first()
 
-      // Fallback: match by product characteristics if inventory_id match fails
       if (!originalBorrowRecord) {
         originalBorrowRecord = await trx('borrow_from_inventories')
-          .where('product_id', borrowedInventory.product_id)
+          .where({ tenant_id: tenantId, product_id: borrowedInventory.product_id })
           .where('unit_cost', borrowedInventory.purchase_price)
-          .where(function() {
+          .where(function () {
             if (borrowedInventory.batch_no) {
               this.where('batch_no', borrowedInventory.batch_no)
             } else {
               this.whereNull('batch_no')
             }
           })
-          .where(function() {
+          .where(function () {
             if (borrowedInventory.expiry_date) {
               this.where('expiry_date', borrowedInventory.expiry_date)
             } else {
@@ -2316,38 +2414,20 @@ export class InventoriesRepository {
         throw new Error('Borrow from inventory record not found for this inventory item')
       }
 
-      // 5. Get all sold items from the borrowed inventory
-      const salesTableExists = await trx.schema.hasTable('sales_order_items')
-      const soldBorrowedInventory = salesTableExists
-        ? await trx('sales_order_items')
-            .where('inventory_id', borrowed_inventory_id)
-            .select('*')
-        : []
-
-      // 6. Calculate totals
-      const lastReturnedAdjustedCost = parseFloat(borrowedInventory.purchase_price) || 0
+      const obligationUnitCost = parseFloat(originalBorrowRecord.unit_cost) || 0
       const totalBorrowedQuantity = parseInt(originalBorrowRecord.quantity, 10) || 0
 
       let totalReturnedQuantityBeforeReturn = 0
-      if (borrowReturns && borrowReturns.length > 0) {
+      if (borrowReturns?.length > 0) {
         totalReturnedQuantityBeforeReturn = borrowReturns.reduce(
           (acc, curr) => acc + (parseInt(curr.quantity_returned, 10) || 0),
           0
         )
       }
 
-      let totalSoldQuantityBeforeReturn = 0
-      if (soldBorrowedInventory && soldBorrowedInventory.length > 0) {
-        totalSoldQuantityBeforeReturn = soldBorrowedInventory.reduce(
-          (acc, curr) => acc + (parseInt(curr.quantity, 10) || 0),
-          0
-        )
-      }
-
       const quantityToReturn = parseInt(quantity_returned, 10)
-      const returningInventoryCost = parseFloat(returningInventory.purchase_price) || 0
+      const returningUnitCost = parseFloat(returningInventory.purchase_price) || 0
 
-      // Validate we're not returning more than borrowed
       const unreturnedQuantity = totalBorrowedQuantity - totalReturnedQuantityBeforeReturn
       if (quantityToReturn > unreturnedQuantity) {
         throw new Error(
@@ -2355,17 +2435,13 @@ export class InventoriesRepository {
         )
       }
 
-      // 7. Calculate cost difference and excess sold quantity
-      const costDifference = fm(returningInventoryCost - lastReturnedAdjustedCost)
-      const excessSoldQuantity = Math.max(totalSoldQuantityBeforeReturn, totalReturnedQuantityBeforeReturn) - totalReturnedQuantityBeforeReturn
-
-      // 8. Insert borrow return record
       const insertResult = await trx('borrow_from_returns')
         .insert({
+          tenant_id: tenantId,
           borrowed_inventory_id,
           returning_inventory_id,
-          estimated_price: returningInventoryCost,
-          actual_price: returningInventoryCost,
+          estimated_price: returningUnitCost,
+          actual_price: returningUnitCost,
           quantity_returned: quantityToReturn,
           returned_on: returned_on,
           note: note || null,
@@ -2379,61 +2455,45 @@ export class InventoriesRepository {
         throw new Error('Failed to create borrow_from_returns record')
       }
 
-      const borrowReturnId = insertResult[0]?.id || insertResult[0]
+      const borrowReturnId = insertResult[0]?.id ?? insertResult[0]
 
-      // 9. Update borrow_from_inventories status
       const totalReturnedAfter = totalReturnedQuantityBeforeReturn + quantityToReturn
-      const isSettled = totalReturnedAfter >= totalBorrowedQuantity
+      const isBorrowFullyReturned = totalReturnedAfter >= totalBorrowedQuantity
 
       await trx('borrow_from_inventories')
-        .where('id', originalBorrowRecord.id)
+        .where({ id: originalBorrowRecord.id, tenant_id: tenantId })
         .update({
-          status: isSettled ? 'returned' : 'partially_returned',
+          status: isBorrowFullyReturned ? 'returned' : 'partially_returned',
           last_updated: trx.fn.now()
         })
 
-      // 10. Update borrowed inventory price to the returning cost (high-water mark logic)
-      // Only update if returning cost is higher than current cost
-      if (returningInventoryCost > lastReturnedAdjustedCost) {
-        await trx('inventories')
-          .where('id', borrowed_inventory_id)
-          .update({
-            purchase_price: returningInventoryCost,
-            last_updated: trx.fn.now()
-          })
-      }
-
-      // 11. Decrement quantity from returning inventory
       await trx('inventories')
-        .where('id', returning_inventory_id)
-        .decrement('quantity', quantityToReturn)
+        .where({ id: returning_inventory_id, tenant_id: tenantId })
         .update({
+          quantity: trx.raw('quantity - ?', [quantityToReturn]),
           last_updated: trx.fn.now()
         })
 
-      // 12. Create bin card entry for the return
-      const binRecord = await trx('bin_cards')
-        .where({ product_id: returningInventory.product_id })
-        .orderBy('id', 'desc')
-        .first()
-
-      const binBalance = binRecord ? (parseInt(binRecord.balance, 10) || 0) : 0
+      const openingBalance = await this.getLastProductBalance(tenantId, returningInventory.product_id, trx)
+      const balanceAfter = openingBalance - quantityToReturn
 
       await trx('bin_cards')
         .insert({
+          tenant_id: tenantId,
           product_id: returningInventory.product_id,
           inventory_id: returning_inventory_id,
-          transaction_type: 'issued', // Outgoing transaction
+          transaction_type: 'issued',
           quantity_out: quantityToReturn,
           quantity_in: 0,
-          unit_cost: returningInventoryCost,
-          total_cost: fm(returningInventoryCost * quantityToReturn),
-          balance: binBalance - quantityToReturn,
+          unit_cost: returningUnitCost,
+          total_cost: fm(returningUnitCost * quantityToReturn),
+          balance: balanceAfter,
           batch_no: returningInventory.batch_no || null,
           expiry_date: returningInventory.expiry_date || null,
           transaction_date: returned_on,
           reference_id: borrowReturnId,
           reference_table: 'borrow_from_returns',
+          opening_balance: openingBalance,
           reason: 'Borrow Return - Return to Supplier',
           notes: note || null,
           created_by: userId || null,
@@ -2442,118 +2502,39 @@ export class InventoriesRepository {
           sync_status: 'pending'
         })
 
-      // 13. Prepare GL entries
-      const entries = []
-      const unreturnedQtyAfter = totalBorrowedQuantity - totalReturnedAfter
-
-      // A. Revalue the unreturned inventory (mark-to-market adjustment)
-      if (costDifference !== 0 && unreturnedQtyAfter > 0) {
-        if (costDifference > 0) {
-          // Cost increased: DR Inventory, CR Accounts Payable
-          entries.push({
-            account_code: ACC_INVENTORY.code,
-            debit: fm(costDifference * unreturnedQtyAfter),
-            credit: 0,
-            description: `Inventory revaluation for unreturned quantity (${unreturnedQtyAfter} units)`
-          })
-          entries.push({
-            account_code: ACC_AP.code,
-            debit: 0,
-            credit: fm(costDifference * unreturnedQtyAfter),
-            description: `Accounts Payable adjustment for inventory revaluation`
-          })
-        } else {
-          // Cost decreased: CR Inventory, DR Accounts Payable
-          entries.push({
-            account_code: ACC_INVENTORY.code,
-            debit: 0,
-            credit: fm(Math.abs(costDifference) * unreturnedQtyAfter),
-            description: `Inventory revaluation for unreturned quantity (${unreturnedQtyAfter} units)`
-          })
-          entries.push({
-            account_code: ACC_AP.code,
-            debit: fm(Math.abs(costDifference) * unreturnedQtyAfter),
-            credit: 0,
-            description: `Accounts Payable adjustment for inventory revaluation`
-          })
-        }
-      }
-
-      // B. Adjust COGS for excess sold quantity (if any)
-      if (excessSoldQuantity > 0 && costDifference !== 0) {
-        if (costDifference > 0) {
-          // Cost increased: DR COGS, CR Inventory
-          entries.push({
-            account_code: ACC_COGS.code,
-            debit: fm(costDifference * excessSoldQuantity),
-            credit: 0,
-            description: `COGS adjustment for excess sold quantity (${excessSoldQuantity} units)`
-          })
-          entries.push({
-            account_code: ACC_INVENTORY.code,
-            debit: 0,
-            credit: fm(costDifference * excessSoldQuantity),
-            description: `Inventory adjustment for excess sold quantity`
-          })
-        } else {
-          // Cost decreased: CR COGS, DR Inventory
-          entries.push({
-            account_code: ACC_COGS.code,
-            debit: 0,
-            credit: fm(Math.abs(costDifference) * excessSoldQuantity),
-            description: `COGS adjustment for excess sold quantity (${excessSoldQuantity} units)`
-          })
-          entries.push({
-            account_code: ACC_INVENTORY.code,
-            debit: fm(Math.abs(costDifference) * excessSoldQuantity),
-            credit: 0,
-            description: `Inventory adjustment for excess sold quantity`
-          })
-        }
-      }
-
-      // C. Record the return transaction (reduce Accounts Payable, reduce Inventory)
-      const returnValue = fm(returningInventoryCost * quantityToReturn)
-      if (returnValue > 0) {
-        entries.push({
-          account_code: ACC_AP.code,
-          debit: returnValue,
-          credit: 0,
-          description: `Accounts Payable reduction for returned quantity (${quantityToReturn} units)`
-        })
-        entries.push({
-          account_code: ACC_INVENTORY.code,
-          debit: 0,
-          credit: returnValue,
-          description: `Inventory reduction for returned quantity (${quantityToReturn} units)`
-        })
-      }
-
-      // 14. Post GL transaction if there are entries
       let glEntries = null
-      if (entries.length > 0) {
-        const referenceNo = `BR-${returned_on.replace(/-/g, '')}-${borrowReturnId}`
-        glEntries = await this.ledgerHelper.postGLTransaction({
-          transaction_date: returned_on,
-          reference_no: referenceNo,
-          reference_table: 'borrow_from_returns',
-          reference_id: borrowReturnId,
-          description: `Borrow return adjustments for inventory ${borrowed_inventory_id} on ${returned_on}${note ? ` - ${note}` : ''}`,
-          transaction_type: 'borrow_return',
-          entries: entries,
-          inventory_id: borrowed_inventory_id,
-          created_by: userId || null
-        }, trx)
+      const hasLedger = await trx.schema.hasTable('account_ledger')
+      if (hasLedger) {
+        const referenceNo = `BR-${String(returned_on).replace(/-/g, '')}-${borrowReturnId}`
+        glEntries = await this.ledgerHelper.recordBorrowReturnSettlement(
+          {
+            tenant_id: tenantId,
+            borrowReturnId,
+            borrowedInventoryId: borrowed_inventory_id,
+            obligationUnitCost,
+            returningUnitCost,
+            quantity: quantityToReturn,
+            transactionDate: returned_on,
+            referenceNumber: referenceNo,
+            memo: note ? `${note} — borrow return` : null,
+            createdBy: userId
+          },
+          trx
+        )
       }
+
+      const varianceLine = fm((returningUnitCost - obligationUnitCost) * quantityToReturn)
 
       return {
         success: true,
         borrowReturnId,
-        oldAdjustedPrice: lastReturnedAdjustedCost,
-        newAdjustedPrice: returningInventoryCost,
-        priceDifference: costDifference,
-        adjustments: entries.length,
-        glEntries: glEntries,
+        obligationUnitCost,
+        returningUnitCost,
+        quantityReturned: quantityToReturn,
+        settlementAmountAp: fm(obligationUnitCost * quantityToReturn),
+        inventoryAmount: fm(returningUnitCost * quantityToReturn),
+        varianceAmount: varianceLine,
+        glEntries,
         message: 'Borrow return processed successfully'
       }
     } catch (error) {

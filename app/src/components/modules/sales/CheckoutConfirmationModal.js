@@ -46,6 +46,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
   const items = currentSale.items || [];
   const itemCount = items.length;
   const isWithholding = currentSale.is_withholding;
+  const withholdRef = currentSale.withhold_ref || '';
   const withholdPct = viewModel.getState('withhold-percentage');
   const amountPaid =
     paymentMode === 'credit'
@@ -58,7 +59,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
     paymentMode === 'cash' ? 0 : Math.max(0, netAmount - (paymentMode === 'cheque' ? chequeAmount : currentSale.first_payment || 0));
 
   const handleComplete = async () => {
-    if (loading) return;
+    if (viewModel.getState('loading')) return;
     try {
       await viewModel.processSale();
       handleClose();
@@ -69,7 +70,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
   };
 
   const handleHold = async () => {
-    if (loading) return;
+    if (viewModel.getState('loading')) return;
     try {
       await viewModel.saveAsHoldOrder();
       handleClose();
@@ -100,6 +101,8 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
         Row({ class: 'font-medium text-gray-900' }, currentSale.sale_date || currentSale.order_date || '—'),
         Row({ class: 'text-gray-500' }, 'Invoice No.'),
         Row({ class: 'font-medium text-gray-900' }, currentSale.invoice_no || '—'),
+        Row({ class: 'text-gray-500' }, 'Withhold Ref.'),
+        Row({ class: 'font-medium text-gray-900' }, withholdRef || 'Not confirmed'),
         Row({ class: 'text-gray-500' }, 'Payment'),
         Row({ class: 'font-medium text-gray-900' }, paymentLabel),
         Row({ class: 'text-gray-500' }, 'Items'),

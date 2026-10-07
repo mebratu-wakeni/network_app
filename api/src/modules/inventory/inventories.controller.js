@@ -1,3 +1,7 @@
+import { parseCSVText } from '../../utils/csvImportParse.js'
+import { ddMmYyyyToIso } from '../../utils/ddMmYyyy.js'
+import { validateStockRowsForUpload, MAX_UPLOAD_ROWS } from './importCsvHelpers.js'
+
 /**
  * Controller: HTTP layer for inventories/stock
  * Handles request/response, delegates business logic to service
@@ -17,8 +21,6 @@ export class InventoriesController {
       const { stockItems, purchase_date, purchaseDate, acquisition_type, acquisitionType, reason, created_by, createdBy } = req.validBody
       const userId = req.user?.id || created_by || createdBy || null
 
-      console.log(`[InventoriesController] Bulk import request: ${stockItems.length} items`)
-
       // Transform stockItems from frontend format (camelCase) to backend format (snake_case)
       const transformedStockItems = stockItems.map(item => {
         const productName = item.productName || item.product_name
@@ -36,6 +38,8 @@ export class InventoriesController {
         return {
           product_code: productCode || null,
           product_name: productName.trim(),
+          category: item.category || item.product_category || null,
+          unit: item.unit || item.product_unit || null,
           location: item.location || null,
           quantity: item.quantity,
           unit_cost: unitCost,
@@ -45,7 +49,7 @@ export class InventoriesController {
         }
       })
 
-      const result = await this.service.bulkImport(transformedStockItems, {
+      const result = await this.service.bulkImport(req.tenantId, transformedStockItems, {
         purchase_date: purchase_date || purchaseDate,
         acquisition_type: acquisition_type || acquisitionType,
         reason,
@@ -60,8 +64,6 @@ export class InventoriesController {
           console.error(`  Row ${f.index}: ${f.error || 'Unknown error'}`)
         })
       }
-
-      console.log(`[InventoriesController] Import summary: ${result.successful} successful, ${result.failed} failed`)
 
       res.json({
         ok: true,
@@ -80,6 +82,111 @@ export class InventoriesController {
   }
 
   /**
+   * POST /api/inventories/bulk-import-upload
+   * Multipart CSV: validate on server, then all-or-nothing stock import.
+   */
+  bulkImportUpload = async (req, res, next) => {
+    try {
+      const purchase_date_raw = req.body.purchase_date || req.body.purchaseDate
+      let purchase_date = undefined
+      if (purchase_date_raw != null && String(purchase_date_raw).trim() !== '') {
+        const iso = ddMmYyyyToIso(String(purchase_date_raw).trim())
+        if (!iso) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Purchase date must be dd/mm/yyyy (e.g. 31/12/2025)'
+          })
+        }
+        purchase_date = iso
+      }
+      const acquisition_type = req.body.acquisition_type || req.body.acquisitionType
+      const reason = (req.body.reason || 'Initial Stock').trim()
+      const userId = req.user?.id || req.body.created_by || req.body.createdBy || null
+
+      if (!req.file?.buffer) {
+        return res.status(400).json({ ok: false, error: 'No file uploaded' })
+      }
+
+      const text = req.file.buffer.toString('utf8')
+      const { rows } = parseCSVText(text)
+      if (rows.length > MAX_UPLOAD_ROWS) {
+        return res.status(400).json({
+          ok: false,
+          error: `Too many data rows (max ${MAX_UPLOAD_ROWS})`
+        })
+      }
+
+      const { validItems, errors: rowErrors } = validateStockRowsForUpload(rows)
+      if (rowErrors.length > 0) {
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          validationFailed: true,
+          rowErrors,
+          summary: {
+            total: rows.length,
+            successful: 0,
+            failed: rowErrors.length,
+            errors: rowErrors.length,
+            warnings: 0
+          }
+        })
+      }
+
+      if (validItems.length === 0) {
+        return res.status(400).json({ ok: false, error: 'No data rows in CSV' })
+      }
+
+      const result = await this.service.bulkImport(req.tenantId, validItems, {
+        purchase_date,
+        acquisition_type,
+        reason,
+        created_by: userId
+      })
+
+      if (result.failed > 0) {
+        const rowErrors = (result.results || [])
+          .filter((r) => r && r.success === false)
+          .map((r) => ({
+            rowNumber: r.csvRowNumber ?? (r.index != null ? r.index + 2 : null),
+            error: r.error || 'Import failed',
+            issueKind: 'error'
+          }))
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          atomicFailed: true,
+          summary: {
+            total: result.total,
+            successful: result.successful,
+            failed: result.failed,
+            errors: result.failed,
+            warnings: 0
+          },
+          rowErrors: rowErrors.length ? rowErrors : [{ rowNumber: null, error: 'Import failed (all rows rolled back)', issueKind: 'error' }],
+          results: result.results
+        })
+      }
+
+      res.json({
+        ok: true,
+        success: true,
+        summary: {
+          total: result.total,
+          successful: result.successful,
+          failed: result.failed,
+          errors: 0,
+          warnings: 0
+        },
+        results: result.results
+      })
+    } catch (error) {
+      console.error('[InventoriesController] Bulk import upload error:', error)
+      next(error)
+    }
+  }
+
+  /**
    * POST /api/inventories
    * List stock/inventories with pagination, search, filters, and sorting
    */
@@ -88,7 +195,7 @@ export class InventoriesController {
       const params = req.body || {}
       const { limit, offset, search, filter, sortBy, orderBy } = params
 
-      console.log(`[InventoriesController] List request:`, {
+      const result = await this.service.findAll(req.tenantId, {
         limit: limit || 10,
         offset: offset || 0,
         search: search || '',
@@ -96,17 +203,6 @@ export class InventoriesController {
         sortBy: sortBy || 'id',
         orderBy: orderBy || 'desc'
       })
-
-      const result = await this.service.findAll({
-        limit: limit || 10,
-        offset: offset || 0,
-        search: search || '',
-        filter: filter || 'all',
-        sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
-      })
-
-      console.log(`[InventoriesController] List response: ${result.stock.length} items, total: ${result.total}`)
 
       res.json({
         ok: true,
@@ -131,7 +227,7 @@ export class InventoriesController {
       if (!productId) {
         return res.status(400).json({ ok: false, error: 'Valid product ID is required' })
       }
-      const items = await this.service.findInventoriesByProduct(productId)
+      const items = await this.service.findInventoriesByProduct(req.tenantId, productId)
       res.json({ ok: true, success: true, items: items || [] })
     } catch (error) {
       console.error('[InventoriesController] List by product error:', error)
@@ -148,16 +244,7 @@ export class InventoriesController {
       const params = req.query || {}
       const { limit, offset, search, filter, sortBy, orderBy } = params
       
-      console.log(`[InventoriesController] Export request:`, {
-        limit: limit || 10000,
-        offset: offset || 0,
-        search: search || '',
-        filter: filter || 'all',
-        sortBy: sortBy || 'id',
-        orderBy: orderBy || 'desc'
-      })
-      
-      const csvContent = await this.service.exportToCSV({
+      const csvContent = await this.service.exportToCSV(req.tenantId, {
         limit: limit ? parseInt(limit) : 10000,
         offset: offset ? parseInt(offset) : 0,
         search: search || '',
@@ -165,8 +252,6 @@ export class InventoriesController {
         sortBy: sortBy || 'id',
         orderBy: orderBy || 'desc'
       })
-      
-      console.log(`[InventoriesController] Export response: ${csvContent.split('\n').length - 1} rows`)
       
       // Set headers for CSV download
       res.setHeader('Content-Type', 'text/csv')
@@ -188,7 +273,7 @@ export class InventoriesController {
       const { id } = req.params
       const updateData = req.validBody
 
-      const updated = await this.service.update(parseInt(id, 10), updateData)
+      const updated = await this.service.update(req.tenantId, parseInt(id, 10), updateData)
 
       res.json({
         ok: true,
@@ -211,7 +296,7 @@ export class InventoriesController {
       const adjustmentData = req.validBody
       const userId = req.user?.id || null
 
-      const updated = await this.service.adjustStock(parseInt(id, 10), adjustmentData, userId)
+      const updated = await this.service.adjustStock(req.tenantId, parseInt(id, 10), adjustmentData, userId)
 
       res.json({
         ok: true,
@@ -233,11 +318,7 @@ export class InventoriesController {
       const borrowData = req.validBody
       const userId = req.user?.id || null
 
-      console.log('[InventoriesController] Borrow from request:', JSON.stringify(borrowData, null, 2))
-
-      const result = await this.service.createBorrowFrom(borrowData, userId)
-
-      console.log('[InventoriesController] Borrow from success:', JSON.stringify(result, null, 2))
+      const result = await this.service.createBorrowFrom(req.tenantId, borrowData, userId)
 
       res.json({
         ok: true,
@@ -257,7 +338,7 @@ export class InventoriesController {
   getBorrowToReturnHistory = async (req, res, next) => {
     try {
       const { id } = req.params
-      const history = await this.service.getBorrowToReturnHistory(parseInt(id, 10))
+      const history = await this.service.getBorrowToReturnHistory(req.tenantId, parseInt(id, 10))
 
       res.json({
         ok: true,
@@ -279,11 +360,7 @@ export class InventoriesController {
       const returnData = req.validBody
       const userId = req.user?.id || null
 
-      console.log('[InventoriesController] Process borrow to return request:', JSON.stringify(returnData, null, 2))
-
-      const result = await this.service.processBorrowToReturn(returnData, userId)
-
-      console.log('[InventoriesController] Process borrow to return success:', JSON.stringify(result, null, 2))
+      const result = await this.service.processBorrowToReturn(req.tenantId, returnData, userId)
 
       res.json({
         ok: true,
@@ -318,7 +395,7 @@ export class InventoriesController {
       if (!inventoryId) {
         return res.status(400).json({ ok: false, error: 'Valid inventory ID is required' })
       }
-      const status = await this.service.getBorrowFromReturnStatus({ borrowedInventoryId: inventoryId })
+      const status = await this.service.getBorrowFromReturnStatus(req.tenantId, { borrowedInventoryId: inventoryId })
       res.json({ ok: true, success: true, ...status })
     } catch (error) {
       console.error('[InventoriesController] Get borrow from return status error:', error)
@@ -341,9 +418,9 @@ export class InventoriesController {
         ? parseInt(req.query.borrowedInventoryId, 10) 
         : null
       
-      const status = await this.service.getBorrowFromReturnStatus({ 
+      const status = await this.service.getBorrowFromReturnStatus(req.tenantId, {
         borrowFromId,
-        borrowedInventoryId 
+        borrowedInventoryId
       })
       res.json({ ok: true, success: true, ...status })
     } catch (error) {
@@ -354,20 +431,14 @@ export class InventoriesController {
 
   /**
    * POST /api/inventories/borrow-from/return
-   * Process return of borrowed-from items with GL adjustments
+   * Process return of borrowed-from items (AP, Borrow Variance 6400, inventory at returning lot cost)
    */
   processBorrowFromReturn = async (req, res, next) => {
     try {
       const returnData = req.validBody
       const userId = req.user?.id || null
 
-      console.log('[InventoriesController] Process borrow from return request:', JSON.stringify(returnData, null, 2))
-      console.log('[InventoriesController] returnData type:', typeof returnData, Array.isArray(returnData), returnData && typeof returnData === 'object')
-
-      const result = await this.service.processBorrowFromReturn(returnData, userId)
-
-      console.log('[InventoriesController] Process borrow from return success. result type:', typeof result, Array.isArray(result))
-      console.log('[InventoriesController] result keys:', result && typeof result === 'object' ? Object.keys(result) : 'n/a')
+      const result = await this.service.processBorrowFromReturn(req.tenantId, returnData, userId)
 
       res.json({
         ok: true,

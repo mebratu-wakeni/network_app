@@ -28,6 +28,8 @@ export function Products(props) {
   const loading = props.viewModel.getState('loading');
   const productList = props.viewModel.getProductList();
   const searchQuery = props.viewModel.getState('product-search-query');
+  const productFilter = props.viewModel.getState('product-filter') || 'all';
+  const productStats = props.viewModel.getState('product-stats') || { outOfStock: 0, lowStock: 0 };
   
   // Get drawer state from viewModel
   const selectedProduct = props.viewModel.getState('selected-product');
@@ -44,26 +46,14 @@ export function Products(props) {
   props.ensureLocalStateKey('searchInputValueInitialized', false);
   const searchInputValueInitialized = props.getLocalState('searchInputValueInitialized');
 
-  // if (!searchInputValueInitialized) {
-  //   props.setLocalState('searchInputValue', searchQuery || '');
-  //   props.setLocalState('searchInputValueInitialized', true);
-  // }
-
-  const handleSearchFocusIn = () => {
+  // Initialize once from VM state; do not reset on focus/blur.
+  if (!searchInputValueInitialized) {
     props.setLocalState('searchInputValue', searchQuery || '');
     props.setLocalState('searchInputValueInitialized', true);
-  }
-
-  const handleSearchFocusOut = () => {
-    props.setLocalState('searchInputValueInitialized', false);
   }
   
   const selectedRowId = props.getLocalState('selectedRowId');
   const searchInputValue = props.getLocalState('searchInputValue') || '';
-
-  let timeout;
-
-  console.log('newQuery', searchInputValue);
 
   const handleSearchChange = (e) => {
     const newQuery = e.target.value;
@@ -73,39 +63,38 @@ export function Products(props) {
     
     // Clear existing timeout
     // const existingTimeout = props.getLocalState('searchTimeout');
-    if (timeout) {
-      clearTimeout(timeout);
+    const existingTimeout = props.getLocalState('searchTimeout');
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
     }
     
     // If search is cleared, update ViewModel and reload immediately
     if (!newQuery || newQuery.trim() === '') {
       props.viewModel.updateProductSearchQuery('');
       props.viewModel.loadProducts();
-      // props.setLocalState('searchTimeout', null);
-      timeout = null;
+      props.setLocalState('searchTimeout', null);
       return;
     }
     
     // Debounce: wait 500ms after user stops typing before updating ViewModel and searching
     // Defer ViewModel updates (which trigger 2 updateState calls) to avoid complex re-renders during typing
     // This prevents input from losing focus while user is actively typing
-    timeout = setTimeout(() => {
+    const timeout = setTimeout(() => {
       props.viewModel.updateProductSearchQuery(newQuery);
       props.viewModel.loadProducts();
-      // props.setLocalState('searchTimeout', null);
-      timeout = null;
+      props.setLocalState('searchTimeout', null);
     }, 500);
     
-    // props.setLocalState('searchTimeout', timeout);
+    props.setLocalState('searchTimeout', timeout);
   };
 
-  return Row({ class: 'w-full flex-1 flex flex-col overflow-hidden'}, [
+  return Row({ class: 'w-full flex flex-col'}, [
     !searchInputValueInitialized && loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'Loading products...'),
     !searchInputValueInitialized && !loading && productList.length === 0 && Row({ class: 'py-6 text-sm text-gray-500 flex-shrink-0 px-6' }, 'No products found'),
     
     // Header Section with Actions
-    Row({ class: 'flex items-center justify-between gap-6 p-6 border-b border-gray-200' }, [
-      Row({ class: 'flex items-center gap-4' }, [
+    Row({ class: 'flex flex-wrap items-center justify-between gap-3 px-3 md:px-4 py-2 border-b border-gray-200' }, [
+      Row({ class: 'flex flex-wrap items-center gap-2 md:gap-3' }, [
         Button({ 
           variant: 'primary', 
           class: 'text-nowrap flex items-center gap-2',
@@ -154,9 +143,28 @@ export function Products(props) {
       ])
     ]),
 
+    // Product filter: All | Out of stock | Low stock (by bin card balance)
+    Row({ class: 'flex items-center gap-2 px-3 md:px-4 py-2 border-b border-gray-100 bg-gray-50 flex-shrink-0 flex-wrap' }, [
+      Button({
+        variant: productFilter === 'all' ? 'primary' : 'outline',
+        class: 'text-xs py-0.5 px-2 min-h-0',
+        onClick: () => props.viewModel.setProductFilter('all')
+      }, 'All'),
+      Button({
+        variant: productFilter === 'out-of-stock' ? 'primary' : 'outline',
+        class: 'text-xs py-0.5 px-2 min-h-0',
+        onClick: () => props.viewModel.setProductFilter('out-of-stock')
+      }, `Out of Stock (${(productStats.outOfStock || 0).toLocaleString()})`),
+      Button({
+        variant: productFilter === 'low-stock' ? 'primary' : 'outline',
+        class: 'text-xs py-0.5 px-2 min-h-0',
+        onClick: () => props.viewModel.setProductFilter('low-stock')
+      }, `Low Stock (${(productStats.lowStock || 0).toLocaleString()})`)
+    ]),
+
     // Search and Pagination Section
-    Row({ class: 'flex items-center justify-between gap-6 px-6 py-4 border-b border-gray-200 bg-gray-50' }, [
-      Row({ class: 'flex-1 max-w-md' }, [
+    Row({ class: 'sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 px-3 md:px-4 py-3 border-b border-gray-200 bg-gray-50' }, [
+      Row({ class: 'flex-1 min-w-[220px] max-w-md' }, [
         Row({ class: 'relative' }, [
           IonIcon({ 
             name: 'search-outline', 
@@ -167,20 +175,17 @@ export function Products(props) {
             class: 'pl-10 pr-4',
             value: searchInputValue,
             onInput: handleSearchChange,
-            focusIn: handleSearchFocusIn,
-            focusOut: handleSearchFocusOut,
             // name: 'product-search-input',
             // id: 'product-search-input'
           })
         ])
       ]),
-      Row({ class: 'flex items-center gap-4' }, [
+      Row({ class: 'flex items-center gap-3 ml-auto' }, [
         Row({ tagType: 'p', class: 'text-sm text-gray-400 text-nowrap' }, "Rows per page"),
         SelectRelative({ 
           name: 'product-limit', 
           onChange: (e) => {
             const newLimit = parseInt(e.target.value);
-            console.log('Limit changed:', newLimit);
             props.viewModel.setProductLimit(newLimit);
             props.viewModel.loadProducts();
           }, 
@@ -214,8 +219,8 @@ export function Products(props) {
     ]),
     
     // Products Table
-    Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
-      ProductTable(props)
+    Row({ class: 'flex flex-col' }, [
+      ProductTable(props, productList)
     ]),
     
     // Product Details Drawer
@@ -236,8 +241,17 @@ export function Products(props) {
   ])
 }
 
-function ProductTable(props) {
-  const productList = props.viewModel.getProductList();
+const LOW_STOCK_THRESHOLD_DEFAULT = 50; // Match API default; later: system_settings or per-product
+
+const statusBadgeClass = 'w-fit inline-flex px-2 py-1 rounded-full text-xs font-medium';
+function getProductStatusBadge(balance, lowThreshold = LOW_STOCK_THRESHOLD_DEFAULT) {
+  const qty = balance != null ? Number(balance) : 0;
+  if (qty === 0) return Row({ class: `${statusBadgeClass} bg-red-100 text-red-700` }, 'Out of Stock');
+  if (qty < lowThreshold) return Row({ class: `${statusBadgeClass} bg-orange-100 text-orange-700` }, 'Low Stock');
+  return Row({ class: `${statusBadgeClass} bg-green-100 text-green-700` }, 'In Stock');
+}
+
+function ProductTable(props, productList = []) {
   props.ensureLocalStateKey('actionId', null);
   props.ensureLocalStateKey('selectedRowId', null);
   const selectedRowId = props.getLocalState('selectedRowId')
@@ -253,35 +267,47 @@ function ProductTable(props) {
   };
   
   return Table({ 
-    class: 'flex-1 flex flex-col min-h-0', 
-    getOpenActionState: () => props.getLocalState('actionId'), 
-    setOpenActionState: () => props.setLocalState('actionId', null)  
+    class: 'flex flex-col',
+    tableClass: 'min-w-[980px]',
+    pageScrollable: true
   }, [
-    TableHeader({ class: 'sticky top-0 z-10' }, [ // 'sticky top-12 z-10 mb-10'
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('id') }, [
+    TableHeader({ class: 'bg-white' }, [
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('id') }, [
         'Code',
         sortIcon('id') // product_code and id are related
       ]),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('name') }, [
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('name') }, [
         'Description/Name',
         sortIcon('name')
       ]),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('category') }, [
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('category') }, [
         'Category',
         sortIcon('category')
       ]),
-      TableHCell({ class: 'text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer', onClick: () => props.viewModel.setProductSort('unit') }, [
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('unit') }, [
         'Unit',
         sortIcon('unit')
       ]),
-      TableHCell({ class: 'text-center text-xs font-semibold text-gray-500 uppercase tracking-wide' }, "Action"),      
+      TableHCell({ class: `text-right text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer`, onClick: () => props.viewModel.setProductSort('balance') }, [
+        'Balance',
+        sortIcon('balance')
+      ]),
+      TableHCell({ class: `text-left text-xs font-semibold text-gray-500 uppercase tracking-wide` }, 'Status'),
+      TableHCell({ class: `text-center text-xs font-semibold text-gray-500 uppercase tracking-wide` }, "Action"),      
     ]),
-    TableBody({ class: 'flex-1 overflow-y-auto'}, 
-      productList.map(row => TableRow({ class: `transition-colors duration-150 cursor-pointer ${selectedRowId === row.id ? 'bg-blue-50 border-l-2 border-indigo-500' : ''} hover:bg-blue-50` }, [
-        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.product_code),
-        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.description || row.name),
-        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.category),
+    TableBody({
+      class: '',
+      showEndMarker: productList.length > 0,
+      endMarkerLabel: 'End of table',
+      endMarkerColspan: 7
+    }, 
+      productList.map(row => TableRow({ key: row.id, class: `transition-colors duration-150 cursor-pointer ${selectedRowId === row.id ? 'bg-blue-50 border-l-2 border-indigo-500' : ''} hover:bg-blue-50` }, [
+        TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900' }, row.product_code),
+        TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[260px] lg:max-w-[380px] truncate', attributes: { title: row.description || row.name || '' } }, row.description || row.name),
+        TableDCell({ class: 'px-3 md:px-4 py-2 text-sm text-gray-900 max-w-[160px] truncate', attributes: { title: row.category || '' } }, row.category),
         TableDCell({ class: 'px-4 py-3 text-sm text-gray-900' }, row.unit),
+        TableDCell({ class: 'px-4 py-3 text-sm text-gray-900 text-right font-medium' }, (row.balance != null ? row.balance : 0).toLocaleString()),
+        TableDCell({ class: 'px-4 py-3 text-sm' }, getProductStatusBadge(row.balance, row.low_stock_threshold)),
         ActionDropdown({
           actionId: row.id,
           open: row.id === actionId,
@@ -290,11 +316,11 @@ function ProductTable(props) {
           class: 'px-4 py-3'
         }, [
           ActionItem({
-            label: 'Edit',
-            icon: 'create-outline',
+            label: 'View',
+            icon: 'eye-outline',
             onClick: async () => {
-              const hasPermission = await permissionChecker.checkPermission('CanEditProductDetails', {
-                actionName: 'edit products'
+              const hasPermission = await permissionChecker.checkPermission('CanSeeProductDetails', {
+                actionName: 'view product details'
               });
               if (hasPermission) {
                 props.setLocalState('selectedRowId', row.id);
@@ -367,17 +393,49 @@ function ProductTable(props) {
 
 function ProductDetails({ product, showSlide, onClose, ...props }) {
   // Get form state from viewModel
-  const productDetailsForm = props.viewModel.getState('product-details-form');
+  const productDetailsForm = props.viewModel.getState('product-details-form') || {};
   const editMode = props.viewModel.getState('product-details-edit-mode');
   const productCode = product?.product_code || '';
-  
-  const productName = productDetailsForm.name || '';
-  const productDescription = productDetailsForm.description || '';
+
+  // Edit text fields live in local draft so typing survives morph (same pattern as product search).
+  // Binding only to VM + Input `change` resets the value on Windows remorphs.
+  props.ensureLocalStateKey('product-details-draft', null);
+  props.ensureLocalStateKey('product-details-draft-active', false);
+  if (editMode) {
+    if (!props.getLocalState('product-details-draft-active')) {
+      props.setLocalState('product-details-draft', {
+        name: productDetailsForm.name || '',
+        description: productDetailsForm.description || '',
+        expiry_threshold:
+          productDetailsForm.expiry_threshold != null ? productDetailsForm.expiry_threshold : 30
+      });
+      props.setLocalState('product-details-draft-active', true);
+    }
+  } else if (props.getLocalState('product-details-draft-active')) {
+    props.setLocalState('product-details-draft', null);
+    props.setLocalState('product-details-draft-active', false);
+  }
+
+  const draft = props.getLocalState('product-details-draft') || {};
+  const productName = editMode ? (draft.name ?? '') : (productDetailsForm.name || '');
+  const productDescription = editMode
+    ? (draft.description ?? '')
+    : (productDetailsForm.description || '');
   const productCategory = productDetailsForm.category || '';
   const productCategoryId = productDetailsForm.category_id || null;
   const productUnit = productDetailsForm.unit || '';
   const productUnitId = productDetailsForm.unit_id || null;
-  const productExpiryThreshold = productDetailsForm.expiry_threshold || 30;
+  const productExpiryThreshold = editMode
+    ? (draft.expiry_threshold ?? 30)
+    : (productDetailsForm.expiry_threshold || 30);
+
+  const updateDetailsDraft = (fields) => {
+    const current = props.getLocalState('product-details-draft') || {};
+    const next = { ...current, ...fields };
+    props.setLocalState('product-details-draft', next);
+    // Keep VM in sync for selects / save helpers without relying on `change` alone.
+    props.viewModel.updateProductDetailsFormFields(fields);
+  };
   
   // Get categories and units from ViewModel
   const categories = props.viewModel.getCategoryList();
@@ -418,6 +476,8 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
   };
 
   const handleCancel = () => {
+    props.setLocalState('product-details-draft', null);
+    props.setLocalState('product-details-draft-active', false);
     props.viewModel.setProductDetailsEditMode(false);
     // Close inline forms
     props.setLocalState('show-new-category-form', false);
@@ -438,8 +498,10 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
         description: newCategoryDescription
       });
       // Add to category options and select it
-      props.viewModel.updateProductDetailsForm('category', category.name);
-      props.viewModel.updateProductDetailsForm('category_id', category.id);
+      props.viewModel.updateProductDetailsFormFields({
+        category: category.name,
+        category_id: category.id
+      });
       props.setLocalState('show-new-category-form', false);
       props.setLocalState('new-category-name', '');
       props.setLocalState('new-category-description', '');
@@ -469,8 +531,10 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
         abbreviation: newUnitAbbreviation
       });
       // Add to unit options and select it
-      props.viewModel.updateProductDetailsForm('unit', unit.name);
-      props.viewModel.updateProductDetailsForm('unit_id', unit.id);
+      props.viewModel.updateProductDetailsFormFields({
+        unit: unit.name,
+        unit_id: unit.id
+      });
       props.setLocalState('show-new-unit-form', false);
       props.setLocalState('new-unit-name', '');
       props.setLocalState('new-unit-abbreviation', '');
@@ -497,57 +561,78 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
     }
 
     try {
+      // Prefer local draft (onInput) so Save is not stuck on stale VM / blur-only change.
+      const draftNow = props.getLocalState('product-details-draft') || {};
+      const form = {
+        ...(props.viewModel.getState('product-details-form') || {}),
+        ...draftNow
+      };
+      const categoryName = form.category || '';
+      const categoryId = form.category_id || null;
+      const unitName = form.unit || '';
+      const unitId = form.unit_id || null;
+      const rawExpiry = form.expiry_threshold;
+      const expiryNum =
+        rawExpiry === '' || rawExpiry === undefined || rawExpiry === null
+          ? NaN
+          : parseInt(String(rawExpiry), 10);
+      const expiryThreshold = Number.isFinite(expiryNum) && expiryNum >= 1 ? expiryNum : 30;
+
+      if (!(form.name ?? '').trim()) {
+        throw new Error('Product name is required');
+      }
+
       // Prepare product data with category_id and unit_id
       const productPayload = {
-        name: productName,
-        description: productDescription || null,
-        remark: productDetailsForm.remark || null,
-        expiry_threshold: productExpiryThreshold || 30
+        name: (form.name ?? '').trim(),
+        description: form.description || null,
+        remark: form.remark || null,
+        expiry_threshold: expiryThreshold
       };
 
-      // Handle category_id - use existing ID or look up by name
-      if (productCategoryId) {
-        productPayload.category_id = parseInt(productCategoryId, 10);
-      } else if (productCategory && productCategory.trim() !== '') {
+      // Handle category_id - use existing ID, look up by name, or clear
+      if (categoryId) {
+        productPayload.category_id = parseInt(categoryId, 10);
+      } else if (categoryName && categoryName.trim() !== '') {
         // Category name provided - look it up by name
         try {
-          const result = await window.ipcRenderer.invoke('inventory:find-category-by-name', productCategory);
+          const result = await window.ipcRenderer.invoke('inventory:find-category-by-name', categoryName);
           if (result.success && result.category && result.category.id) {
             productPayload.category_id = parseInt(result.category.id, 10);
           } else {
-            throw new Error(`Category "${productCategory}" not found`);
+            throw new Error(`Category "${categoryName}" not found`);
           }
         } catch (error) {
-          throw new Error(`Failed to find category "${productCategory}": ${error.message || 'Unknown error'}`);
+          throw new Error(`Failed to find category "${categoryName}": ${error.message || 'Unknown error'}`);
         }
       } else {
-        throw new Error('Category is required');
+        productPayload.category_id = null;
       }
 
-      // Handle unit_id - use existing ID or look up by name
-      if (productUnitId) {
-        productPayload.unit_id = parseInt(productUnitId, 10);
-      } else if (productUnit && productUnit.trim() !== '') {
+      // Handle unit_id - use existing ID, look up by name, or clear
+      if (unitId) {
+        productPayload.unit_id = parseInt(unitId, 10);
+      } else if (unitName && unitName.trim() !== '') {
         // Unit name provided - look it up by name
         try {
-          const result = await window.ipcRenderer.invoke('inventory:find-unit-by-name', productUnit);
+          const result = await window.ipcRenderer.invoke('inventory:find-unit-by-name', unitName);
           if (result.success && result.unit && result.unit.id) {
             productPayload.unit_id = parseInt(result.unit.id, 10);
           } else {
-            throw new Error(`Unit "${productUnit}" not found`);
+            throw new Error(`Unit "${unitName}" not found`);
           }
         } catch (error) {
-          throw new Error(`Failed to find unit "${productUnit}": ${error.message || 'Unknown error'}`);
+          throw new Error(`Failed to find unit "${unitName}": ${error.message || 'Unknown error'}`);
         }
       } else {
-        throw new Error('Unit is required');
+        productPayload.unit_id = null;
       }
 
       await props.viewModel.updateProduct(product.id, productPayload);
+      props.setLocalState('product-details-draft', null);
+      props.setLocalState('product-details-draft-active', false);
       props.viewModel.setProductDetailsEditMode(false);
-      // Reload products list to show updated data
-      props.viewModel.updateState('loading', false);
-      await props.viewModel.loadProducts();
+      // List reload + selected-product sync happen inside updateProduct()
     } catch (error) {
       // Error is handled by viewModel and displayed via error state
       console.error('Error updating product:', error);
@@ -585,12 +670,12 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
             // Row 2: Product Name and Description (2 columns)
             Row({ class: 'grid grid-cols-2 gap-6' }, [
               DetailField({ 
-                label: 'Product Name', 
+                label: 'Product Name *', 
                 value: editMode ? null : (productName || '-'),
                 editMode: editMode,
                 inputProps: {
                   value: productName,
-                  onChange: (e) => props.viewModel.updateProductDetailsForm('name', e.target.value),
+                  onInput: (e) => updateDetailsDraft({ name: e.target.value }),
                   name: 'product-name',
                   placeholder: 'Enter product name'
                 }
@@ -601,7 +686,7 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                 editMode: editMode,
                 inputProps: {
                   value: productDescription,
-                  onChange: (e) => props.viewModel.updateProductDetailsForm('description', e.target.value),
+                  onInput: (e) => updateDetailsDraft({ description: e.target.value }),
                   name: 'product-description',
                   placeholder: 'Enter description'
                 }
@@ -624,12 +709,16 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                         if (categoryId !== '') {
                           const selectedCategory = categories.find(c => String(c.id) === categoryId);
                           if (selectedCategory) {
-                            props.viewModel.updateProductDetailsForm('category', selectedCategory.name);
-                            props.viewModel.updateProductDetailsForm('category_id', selectedCategory.id);
+                            props.viewModel.updateProductDetailsFormFields({
+                              category: selectedCategory.name,
+                              category_id: selectedCategory.id
+                            });
                           }
                         } else {
-                          props.viewModel.updateProductDetailsForm('category', '');
-                          props.viewModel.updateProductDetailsForm('category_id', null);
+                          props.viewModel.updateProductDetailsFormFields({
+                            category: '',
+                            category_id: null
+                          });
                         }
                       },
                       delegator: props.delegator
@@ -676,12 +765,16 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                         if (unitId !== '') {
                           const selectedUnit = units.find(u => String(u.id) === unitId);
                           if (selectedUnit) {
-                            props.viewModel.updateProductDetailsForm('unit', selectedUnit.name);
-                            props.viewModel.updateProductDetailsForm('unit_id', selectedUnit.id);
+                            props.viewModel.updateProductDetailsFormFields({
+                              unit: selectedUnit.name,
+                              unit_id: selectedUnit.id
+                            });
                           }
                         } else {
-                          props.viewModel.updateProductDetailsForm('unit', '');
-                          props.viewModel.updateProductDetailsForm('unit_id', null);
+                          props.viewModel.updateProductDetailsFormFields({
+                            unit: '',
+                            unit_id: null
+                          });
                         }
                       },
                       delegator: props.delegator
@@ -727,7 +820,17 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                     type: 'number',
                     min: 1,
                     value: productExpiryThreshold || 30,
-                    onChange: (e) => props.viewModel.updateProductDetailsForm('expiry_threshold', parseInt(e.target.value) || 30),
+                    onInput: (e) => {
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        updateDetailsDraft({ expiry_threshold: '' });
+                        return;
+                      }
+                      const n = parseInt(raw, 10);
+                      if (!Number.isNaN(n)) {
+                        updateDetailsDraft({ expiry_threshold: n });
+                      }
+                    },
                     name: 'expiry-threshold',
                     placeholder: 'Enter number of days'
                   }
@@ -751,7 +854,7 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
           delegator: props.delegator,
           class: 'flex items-center gap-2'
         }, [
-          IonIcon({ name: 'create-outline', class: 'text-lg' }),
+          IonIcon({ name: 'create-outline', class: 'text-lg text-white' }),
           'Edit'
         ])
       ]
@@ -786,7 +889,7 @@ function NewCategoryForm({ name, description, onNameChange, onDescriptionChange,
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Category Name:'),
         Input({
           value: name,
-          onChange: onNameChange,
+          onInput: onNameChange,
           name: 'new-category-name',
           placeholder: 'Enter category name',
           class: 'w-full'
@@ -796,7 +899,7 @@ function NewCategoryForm({ name, description, onNameChange, onDescriptionChange,
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Description:'),
         Input({
           value: description,
-          onChange: onDescriptionChange,
+          onInput: onDescriptionChange,
           name: 'new-category-description',
           placeholder: 'Enter category description',
           class: 'w-full'
@@ -828,7 +931,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Unit Name:'),
         Input({
           value: name,
-          onChange: onNameChange,
+          onInput: onNameChange,
           name: 'new-unit-name',
           placeholder: 'Enter unit name (e.g., Bottle)',
           class: 'w-full'
@@ -838,7 +941,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Abbreviation:'),
         Input({
           value: abbreviation,
-          onChange: onAbbreviationChange,
+          onInput: onAbbreviationChange,
           name: 'new-unit-abbreviation',
           placeholder: 'Enter abbreviation (e.g., BTL)',
           class: 'w-full'
@@ -848,7 +951,7 @@ function NewUnitForm({ name, abbreviation, description, onNameChange, onAbbrevia
         Row({ tagType: 'label', class: 'text-xs text-gray-700 font-medium' }, 'Description:'),
         Input({
           value: description,
-          onChange: onDescriptionChange,
+          onInput: onDescriptionChange,
           name: 'new-unit-description',
           placeholder: 'Enter unit description',
           class: 'w-full'
@@ -1006,7 +1109,6 @@ function BinCardDrawer({ product, showSlide, onClose, ...props }) {
   };
 
   const handleSortChange = (sortBy, orderBy) => {
-    console.log('handleSortChange', sortBy, orderBy);
     props.viewModel.updateBinCardSort(sortBy, orderBy);
     props.viewModel.loadBinCards(product.id);
     props.setLocalState('showSortMenu', false);
@@ -1396,10 +1498,11 @@ function BinCardDrawer({ product, showSlide, onClose, ...props }) {
   ])
 }
 
-function openAddProductModal(props) {
-  // Clear the form before opening the modal
+async function openAddProductModal(props) {
   props.viewModel.resetProductForm();
-  Modal({}, (delegator, closeHandler) => ModalContent(props.viewModel, delegator, closeHandler)) 
+  await props.viewModel.loadCategories();
+  await props.viewModel.loadUnits();
+  Modal({}, (delegator, closeHandler) => ModalContent(props.viewModel, delegator, closeHandler));
 }
 
 function openImportProductsModal(props) {

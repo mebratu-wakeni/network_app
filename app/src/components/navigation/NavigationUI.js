@@ -9,10 +9,12 @@ import UserProfile from "../users/profile/profile.js";
 import UsersTable from "../users/UsersUI.js";
 import { CustomersUI } from "../customers/CustomersUI.js";
 import { SettingsUI } from "../settings/SettingsUI.js";
+import { FinancialUI } from "../modules/financial/Financial.js";
 import { Card, CardHeader } from "../utils/Card.js";
 import ExampleCard from "../utils/example.js";
 import ProductsTable from "../utils/exampleTable.js";
 import NavigationVM from "./NavigationVM.js";
+import { DashboardUI } from "../dashboard/DashboardUI.js";
 
 // Route cleanup registry: maps route paths to their cleanup functions
 // Add routes here that need cleanup when navigating away
@@ -34,12 +36,17 @@ export default function  NavigationUI(props) {
   props.viewModel.menuOptions.forEach(option => {
     router.addRoute(option.route, () => {
       if (option.route === '/server') {
+        const setupConfig = props.viewModel.getState('setup-config') || {};
+        if (setupConfig?.mode === 'client') {
+          return Row({ class: 'p-6 text-sm text-gray-600' }, 'Server Manager is unavailable in client mode.')
+        }
         return ServerManagerUI();
       }
-      if (option.route === '/') return ExampleCard();
+      if (option.route === '/') return DashboardUI({ router, navigationVM: props.viewModel });
       if (option.route === '/inventory') return InventoryUI();
-      if (option.route === '/purchase') return PurchaseUI();
-      if (option.route === '/sales') return SalesUI();
+      if (option.route === '/purchase') return PurchaseUI({ router, navigationVM: props.viewModel });
+      if (option.route === '/sales') return SalesUI({ router, navigationVM: props.viewModel });
+      if (option.route === '/financial') return FinancialUI({ router, navigationVM: props.viewModel });
       if (option.route === '/customers') return CustomersUI();
       if (option.route === '/users') return UsersTable();
       if (option.route === '/settings') return SettingsUI();
@@ -54,10 +61,14 @@ export default function  NavigationUI(props) {
 
   const activeMenu = props.viewModel.getState('active-menu');
   const navCollapsed = props.getLocalState('navCollapsed');
+  const setupConfig = props.viewModel.getState('setup-config') || {};
+  const isClientMode = setupConfig?.mode === 'client';
   const auth = props.viewModel.getState('auth') || {};
   const userRules = (auth.user && auth.user.rules) ? auth.user.rules : [];
   const menuOptions = props.viewModel.menuOptions.filter(opt =>
-    !opt.requireRule || (Array.isArray(userRules) && userRules.includes(opt.requireRule))
+    !(isClientMode && opt.route === '/server') &&
+    opt.showInNav !== false &&
+    (!opt.requireRule || (Array.isArray(userRules) && userRules.includes(opt.requireRule)))
   );
 
   return Row({ tagType: 'ul', class: "space-y-2" }, [

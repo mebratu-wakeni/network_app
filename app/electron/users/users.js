@@ -1,9 +1,10 @@
 import { getApiUrl } from '../config/apiConfig.js';
+import { apiFetch } from '../config/apiFetch.js';
 import FormData from 'form-data';
 import fs from 'fs/promises';
 import path from 'path';
 import { stringify } from 'csv/sync';
-import { app } from 'electron';
+import { app, shell } from 'electron';
 
 /**
  * UsersManager - Handles all API communication for user management
@@ -48,11 +49,18 @@ class UsersManager {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(url, {
-      method: options.method || 'GET',
-      headers,
-      body: body
-    });
+    let response
+    try {
+      response = await apiFetch(url, {
+        method: options.method || 'GET',
+        headers,
+        body: body
+      });
+    } catch (networkErr) {
+      const cause = networkErr?.cause?.code || networkErr?.cause?.message || ''
+      console.error('[apiRequest] fetch failed', url, networkErr?.message || networkErr, cause)
+      throw networkErr
+    }
     const data = await response.json();
 
     if (!response.ok) {
@@ -69,7 +77,6 @@ class UsersManager {
 
   async updateAvatar(userId, formData, token) {
     try {
-      console.log('avatar formData: ', formData)
       if (!(formData instanceof FormData)) {
         throw new Error("updateAvatar expects FormData");
       }
@@ -168,45 +175,57 @@ class UsersManager {
         body: JSON.stringify({
           searchQuery: '',
           tableConfig: {
-            limit: 10000, // to get all the users
+            limit: 10000,
             offset: 0,
             sortBy: 'id',
             orderBy: 'desc'
           }
-        }),
+        })
       }, token);
 
       const userList = response.users || [];
-      // Explicit column definition (CRITICAL)
+
       const columns = [
         { key: 'id', header: 'ID' },
-        { key: 'username', header: 'Username'},
+        { key: 'username', header: 'Username' },
         { key: 'display_name', header: 'Name' },
-        { key: 'status', header: 'Status' },
+        { key: 'email', header: 'Email' },
+        { key: 'status', header: 'Status' }
       ];
 
-      const records = userList.map(user => ({
+      const records = userList.map((user) => ({
         id: user.id,
-        username: user.user,
-        display_name: user.display_name,
-        status: user.is_active ? 'Active' : 'Not Active',
+        username: user.username ?? '',
+        display_name: user.display_name ?? '',
+        email: user.email ?? '',
+        status: user.is_active ? 'Active' : 'Inactive'
       }));
-      const csv = stringify(records, {
-        header: true,
-        columns,
-      });
-      const outputDir = app.getPath('downloads');
 
+      const csv = stringify(records, { header: true, columns });
+      const outputDir = app.getPath('downloads');
       const fileName = `users_${Date.now()}.csv`;
       const filePath = path.join(outputDir, fileName);
 
       await fs.writeFile(filePath, csv, 'utf8');
 
+      const apiOk = response.ok === true || response.success === true;
+      if (!apiOk) {
+        return {
+          success: false,
+          error: 'Unexpected response from server when loading users for export'
+        };
+      }
+      try {
+        shell.showItemInFolder(filePath);
+      } catch (_) {
+        /* non-fatal — file was written */
+      }
+
       return {
-        success: response.ok,
+        success: true,
         filePath,
         fileName,
-        rowCount: records.length,
+        rowCount: records.length
       };
     } catch (error) {
       return {
@@ -228,8 +247,6 @@ class UsersManager {
         method: 'POST',
         body: JSON.stringify(cleanedForm)
       }, token);
-
-      console.log('user create response: ', response);
 
       return {
         success: response.ok === true,
@@ -267,8 +284,6 @@ class UsersManager {
 
       const permissionsRes = await this.getUserPermissions(userId, token);
 
-      console.log('permission result: ', permissionsRes)
-
       if(!permissionsRes.success) return permissionsRes;
 
       return {
@@ -305,8 +320,12 @@ class UsersManager {
         user: response.user || response.data
       };
     } catch (error) {
-      console.error('[Get Current User] Error:', error);
-      throw error;
+      console.error('[Get Current User] Error:', error?.message || error, error?.cause?.code || error?.cause?.message || '');
+      // Soft-fail so startup auth restore can stay on login instead of crashing IPC.
+      return {
+        success: false,
+        error: error?.message || 'Failed to get current user'
+      };
     }
   }
 
@@ -385,9 +404,6 @@ class UsersManager {
         method: 'PUT',
         body: JSON.stringify(userData)
       }, token);
-
-      console.log('profile res: ', profileRes)
-
 
       return {
         success: profileRes.ok,
@@ -528,8 +544,6 @@ class UsersManager {
       const response = await this.apiRequest(`/users/${userId}/avatar`, {
         method: 'DELETE'
       }, token);
-
-      console.log('remove avatar response: ', response)
 
       return {
         success: response.ok,

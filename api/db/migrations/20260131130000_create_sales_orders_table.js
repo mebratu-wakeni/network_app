@@ -4,7 +4,7 @@
  * - customer_id: was retailer_id; FK to customers.
  * - receipt_no: system-generated sales order identifier (required, unique).
  * - invoice_no: government/tax authority reference (optional).
- * - sales_invoice_no: used for withhold confirmation (optional, unique).
+ * - withhold_ref: customer withholding receipt reference (optional, unique).
  * - withhold_percentage: no default; value comes from settings when applicable.
  * - Withholding is inferred from withhold_percentage and withhold_amount (no separate boolean).
  * - Hold orders live in sales_hold_orders (snapshot of current-order state); no is_held/hold_until here.
@@ -13,8 +13,10 @@
  */
 
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('sales_orders', (t) => {
     t.bigIncrements('id').primary()
+    t.bigInteger('tenant_id').unsigned().notNullable()
 
     // Customer reference (was retailer_id)
     t.bigInteger('customer_id')
@@ -36,10 +38,10 @@ export const up = async (knex) => {
     t.decimal('received_amount', 15, 2)
     t.boolean('withhold_settled').defaultTo(false)
     t.boolean('withhold_confirmation').defaultTo(false) // Important for withhold workflow
-    t.string('sales_invoice_no', 255) // For withhold confirmation (optional, unique)
+    t.string('withhold_ref', 255) // Customer withholding receipt ref. (optional, unique)
 
     // System-generated receipt (sales order identifier)
-    t.string('receipt_no', 255).notNullable().unique()
+    t.string('receipt_no', 255).notNullable()
 
     // Status
     t.string('status', 50).defaultTo('pending') // 'pending' | 'completed' | 'archived'
@@ -55,10 +57,14 @@ export const up = async (knex) => {
     t.string('sync_status', 255).defaultTo('pending')
 
     // Foreign keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('customer_id').references('id').inTable('customers').onDelete('SET NULL')
     t.foreign('encoder_id').references('id').inTable('users').onDelete('SET NULL')
 
+    t.unique(['tenant_id', 'receipt_no'], 'sales_orders_tenant_id_receipt_no_unique')
+
     // Indexes
+    t.index('tenant_id', 'sales_orders_tenant_id_index')
     t.index('receipt_no', 'sales_orders_receipt_no_index')
     t.index('customer_id', 'sales_orders_customer_id_index')
     t.index('order_date', 'sales_orders_order_date_index')
@@ -67,29 +73,31 @@ export const up = async (knex) => {
     t.index('payment_status', 'sales_orders_payment_status_index')
   })
 
-  await knex.raw(`
-    ALTER TABLE sales_orders
-    ADD CONSTRAINT sales_orders_status_check
-    CHECK (status IN ('pending', 'completed', 'archived'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE sales_orders
+      ADD CONSTRAINT sales_orders_status_check
+      CHECK (status IN ('pending', 'completed', 'archived'))
+    `)
 
-  await knex.raw(`
-    ALTER TABLE sales_orders
-    ADD CONSTRAINT sales_orders_payment_status_check
-    CHECK (payment_status IN ('paid', 'partial', 'unpaid'))
-  `)
+    await knex.raw(`
+      ALTER TABLE sales_orders
+      ADD CONSTRAINT sales_orders_payment_status_check
+      CHECK (payment_status IN ('paid', 'partial', 'unpaid'))
+    `)
 
-  await knex.raw(`
-    ALTER TABLE sales_orders
-    ADD CONSTRAINT sales_orders_payment_type_check
-    CHECK (payment_type IN ('cash', 'credit', 'cheque'))
-  `)
+    await knex.raw(`
+      ALTER TABLE sales_orders
+      ADD CONSTRAINT sales_orders_payment_type_check
+      CHECK (payment_type IN ('cash', 'credit', 'cheque'))
+    `)
+  }
 
-  // Unique index for sales_invoice_no (nullable)
+  // Unique index for withhold_ref (nullable), scoped per tenant
   await knex.raw(`
-    CREATE UNIQUE INDEX sales_orders_sales_invoice_no_unique
-    ON sales_orders (sales_invoice_no)
-    WHERE sales_invoice_no IS NOT NULL
+    CREATE UNIQUE INDEX sales_orders_withhold_ref_unique
+    ON sales_orders (tenant_id, withhold_ref)
+    WHERE withhold_ref IS NOT NULL
   `)
 }
 

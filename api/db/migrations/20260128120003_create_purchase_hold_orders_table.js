@@ -1,7 +1,9 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
   await knex.schema.createTable('purchase_hold_orders', (t) => {
     t.bigIncrements('id').primary()
-    
+    t.bigInteger('tenant_id').unsigned().notNullable()
+
     // Supplier Reference
     t.bigInteger('supplier_id')
     
@@ -36,22 +38,25 @@ export const up = async (knex) => {
     t.timestamp('last_updated', { useTz: false }).defaultTo(knex.fn.now())
     
     // Foreign Keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('supplier_id').references('id').inTable('customers').onDelete('SET NULL')
     t.foreign('encoder_id').references('id').inTable('users').onDelete('SET NULL')
     
     // Indexes
+    t.index('tenant_id', 'purchase_hold_orders_tenant_id_index')
     t.index('supplier_id', 'purchase_hold_orders_supplier_id_index')
     t.index('order_date', 'purchase_hold_orders_order_date_index')
     t.index('is_archive', 'purchase_hold_orders_is_archive_index')
     t.index('payment_mode', 'purchase_hold_orders_payment_mode_index')
   })
   
-  // Add CHECK constraint using raw SQL
-  await knex.raw(`
-    ALTER TABLE purchase_hold_orders 
-    ADD CONSTRAINT purchase_hold_orders_payment_mode_check 
-    CHECK (payment_mode IN ('cash', 'credit', 'cheque'))
-  `)
+  if (client === 'pg' || client === 'postgres') {
+    await knex.raw(`
+      ALTER TABLE purchase_hold_orders 
+      ADD CONSTRAINT purchase_hold_orders_payment_mode_check 
+      CHECK (payment_mode IN ('cash', 'credit', 'cheque'))
+    `)
+  }
 }
 
 export const down = async (knex) => {

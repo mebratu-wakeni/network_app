@@ -7,13 +7,7 @@ export class BinCardsService {
     this.repository = repository
   }
 
-  /**
-   * Get bin card transactions for a product
-   * @param {number} productId - Product ID
-   * @param {Object} params - { limit, offset, sortBy, orderBy, search, filter }
-   * @returns {Object} - { transactions, total }
-   */
-  async getByProductId(productId, params = {}) {
+  async getByProductId(tenantId, productId, params = {}) {
     if (!productId || isNaN(parseInt(productId, 10))) {
       const error = new Error('Valid product ID is required')
       error.status = 400
@@ -22,8 +16,8 @@ export class BinCardsService {
 
     const { search = '', filter = {} } = params
 
-    const transactions = await this.repository.findByProductId(productId, params)
-    const total = await this.repository.countByProductId(productId, { search, filter })
+    const transactions = await this.repository.findByProductId(tenantId, productId, params)
+    const total = await this.repository.countByProductId(tenantId, productId, { search, filter })
 
     return {
       transactions,
@@ -31,29 +25,21 @@ export class BinCardsService {
     }
   }
 
-  /**
-   * Export bin card transactions to CSV
-   * @param {number} productId - Product ID
-   * @param {Object} params - { limit, offset, sortBy, orderBy, search, filter }
-   * @returns {string} CSV formatted string
-   */
-  async exportToCSV(productId, params = {}) {
+  async exportToCSV(tenantId, productId, params = {}) {
     if (!productId || isNaN(parseInt(productId, 10))) {
       const error = new Error('Valid product ID is required')
       error.status = 400
       throw error
     }
 
-    // For export, we typically want all matching records, not just one page
     const exportParams = {
       ...params,
-      limit: params.limit || 10000, // Large limit for export
+      limit: params.limit || 10000,
       offset: 0
     }
 
-    const transactions = await this.repository.findByProductId(productId, exportParams)
-    
-    // CSV Headers
+    const transactions = await this.repository.findByProductId(tenantId, productId, exportParams)
+
     const headers = [
       'Transaction Date',
       'Transaction Type',
@@ -70,8 +56,7 @@ export class BinCardsService {
       'Total Cost',
       'Notes'
     ]
-    
-    // Helper function to escape CSV fields
+
     const escapeCSV = (field) => {
       if (field === null || field === undefined) return ''
       const str = String(field)
@@ -80,8 +65,7 @@ export class BinCardsService {
       }
       return str
     }
-    
-    // Helper function to format date
+
     const formatDate = (dateStr) => {
       if (!dateStr) return ''
       try {
@@ -95,25 +79,23 @@ export class BinCardsService {
         return ''
       }
     }
-    
-    // Helper function to format transaction type
+
     const formatTransactionType = (type) => {
       const typeMap = {
-        'received': 'Received (IN)',
-        'issued': 'Issued (OUT)',
-        'voided': 'Voided',
-        'adjustment': 'Adjustment',
-        'opening': 'Opening',
-        'return': 'Return',
-        'transfer_in': 'Transfer In',
-        'transfer_out': 'Transfer Out',
-        'expired': 'Expired',
-        'damaged': 'Damaged'
+        received: 'Received (IN)',
+        issued: 'Issued (OUT)',
+        voided: 'Voided',
+        adjustment: 'Adjustment',
+        opening: 'Opening',
+        return: 'Return',
+        transfer_in: 'Transfer In',
+        transfer_out: 'Transfer Out',
+        expired: 'Expired',
+        damaged: 'Damaged'
       }
       return typeMap[type] || type || ''
     }
-    
-    // Convert transactions to CSV rows
+
     const rows = transactions.map(txn => {
       return [
         escapeCSV(formatDate(txn.transaction_date)),
@@ -132,13 +114,7 @@ export class BinCardsService {
         escapeCSV(txn.notes || '')
       ].join(',')
     })
-    
-    // Combine headers and rows
-    const csvContent = [
-      headers.join(','),
-      ...rows
-    ].join('\n')
-    
-    return csvContent
+
+    return [headers.join(','), ...rows].join('\n')
   }
 }

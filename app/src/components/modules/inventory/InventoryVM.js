@@ -1,9 +1,62 @@
 const { ViewModel, SharedStateManager } = Liteframe;
 import { permissionChecker } from '../../utils/PermissionChecker';
+import { toApiDdMmYyyyFromUiDate } from '../../utils/DateUtils';
+import { DROPDOWN_SEARCH_DEBOUNCE_MS, DROPDOWN_SEARCH_LIMIT } from '../../utils/dropdownSearchConfig';
+
+function mapStockDataDatesForApi(stockData) {
+  const out = { ...stockData };
+  if (out.expiryDate !== undefined) out.expiryDate = toApiDdMmYyyyFromUiDate(out.expiryDate);
+  if (out.expiry_date !== undefined) out.expiry_date = toApiDdMmYyyyFromUiDate(out.expiry_date);
+  return out;
+}
+
+function mapAdjustmentDatesForApi(adjustmentData) {
+  const out = { ...adjustmentData };
+  if (out.adjustmentDate !== undefined) out.adjustmentDate = toApiDdMmYyyyFromUiDate(out.adjustmentDate);
+  if (out.adjustment_date !== undefined) out.adjustment_date = toApiDdMmYyyyFromUiDate(out.adjustment_date);
+  return out;
+}
+
+function mapBorrowPayloadDatesForApi(borrowData) {
+  const out = { ...borrowData };
+  if (out.expiryDate !== undefined) out.expiryDate = toApiDdMmYyyyFromUiDate(out.expiryDate);
+  if (out.expiry_date !== undefined) out.expiry_date = toApiDdMmYyyyFromUiDate(out.expiry_date);
+  return out;
+}
+
+function mapReturnBorrowedToPayloadForApi(returnData) {
+  const out = { ...returnData };
+  if (out.returnedDate !== undefined) out.returnedDate = toApiDdMmYyyyFromUiDate(out.returnedDate);
+  if (out.returned_date !== undefined) out.returned_date = toApiDdMmYyyyFromUiDate(out.returned_date);
+  if (Array.isArray(out.returnItems)) {
+    out.returnItems = out.returnItems.map((item) => {
+      if (!item || typeof item !== 'object') return item;
+      const it = { ...item };
+      if (it.expiry_date !== undefined) it.expiry_date = toApiDdMmYyyyFromUiDate(it.expiry_date);
+      if (it.expiryDate !== undefined) it.expiryDate = toApiDdMmYyyyFromUiDate(it.expiryDate);
+      return it;
+    });
+  }
+  return out;
+}
+
+function mapReturnBorrowedFromPayloadForApi(returnData) {
+  const out = { ...returnData };
+  if (out.returnedOn !== undefined) out.returnedOn = toApiDdMmYyyyFromUiDate(out.returnedOn);
+  if (out.returned_on !== undefined) out.returned_on = toApiDdMmYyyyFromUiDate(out.returned_on);
+  return out;
+}
 
 export class InventoryVM extends ViewModel {
   constructor(sharedStateManager = new SharedStateManager()) {
     super(sharedStateManager);
+    this._productLoadSeq = 0;
+    this._borrowProductSearchSeq = 0;
+    this._borrowPartnerSearchSeq = 0;
+    this._adjustDrawerPartnerSearchSeq = 0;
+    this.borrowProductSearchTimeout = null;
+    this.borrowPartnerSearchTimeout = null;
+    this.adjustDrawerPartnerSearchTimeout = null;
     this.initializeState();
     // Load user permissions on initialization
     this.loadUserPermissions();
@@ -40,6 +93,8 @@ export class InventoryVM extends ViewModel {
       sortBy: 'id',
       orderBy: 'desc'
     });
+    this.setState('product-filter', 'all'); // 'all' | 'out-of-stock' | 'low-stock'
+    this.setState('product-stats', { outOfStock: 0, lowStock: 0 });
     this.setState('product-search-query', '');
     this.setState('product-form', {
       name: '',
@@ -54,6 +109,12 @@ export class InventoryVM extends ViewModel {
 
     // Partners State
     this.setState('partner-list', []);
+    this.setState('borrow-from-dropdown-products', []);
+    this.setState('borrow-from-dropdown-partners', []);
+    this.setState('borrow-from-product-dd-loading', false);
+    this.setState('borrow-from-partner-dd-loading', false);
+    this.setState('adjust-drawer-partner-options', []);
+    this.setState('adjust-drawer-partner-dd-loading', false);
 
     // Categories and Units State
     this.setState('category-list', []);
@@ -193,11 +254,112 @@ export class InventoryVM extends ViewModel {
     }
   }
 
+  async loadBorrowFromProductsForDropdown(query = '') {
+    const gen = ++this._borrowProductSearchSeq
+    this.updateState('borrow-from-product-dd-loading', true)
+    try {
+      const result = await window.ipcRenderer.invoke('inventory:get-products', {
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        search: (query || '').trim(),
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._borrowProductSearchSeq) return
+      if (result.success) {
+        this.updateState('borrow-from-dropdown-products', result.products || [])
+      } else {
+        throw new Error(result.error || 'Failed to load products')
+      }
+    } catch (e) {
+      if (gen === this._borrowProductSearchSeq) {
+        this.updateState('borrow-from-dropdown-products', [])
+      }
+    } finally {
+      if (gen === this._borrowProductSearchSeq) {
+        this.updateState('borrow-from-product-dd-loading', false)
+      }
+    }
+  }
+
+  updateBorrowFromProductSearch(query) {
+    clearTimeout(this.borrowProductSearchTimeout)
+    this.borrowProductSearchTimeout = setTimeout(() => this.loadBorrowFromProductsForDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
+  async loadBorrowFromPartnersForDropdown(query = '') {
+    const gen = ++this._borrowPartnerSearchSeq
+    this.updateState('borrow-from-partner-dd-loading', true)
+    try {
+      const result = await window.ipcRenderer.invoke('purchase:get-suppliers', {
+        search: (query || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+      })
+      if (gen !== this._borrowPartnerSearchSeq) return
+      if (result.success) {
+        this.updateState('borrow-from-dropdown-partners', result.suppliers || [])
+      } else {
+        throw new Error(result.error || 'Failed to load suppliers')
+      }
+    } catch (e) {
+      if (gen === this._borrowPartnerSearchSeq) {
+        this.updateState('borrow-from-dropdown-partners', [])
+      }
+    } finally {
+      if (gen === this._borrowPartnerSearchSeq) {
+        this.updateState('borrow-from-partner-dd-loading', false)
+      }
+    }
+  }
+
+  updateBorrowFromPartnerSearch(query) {
+    clearTimeout(this.borrowPartnerSearchTimeout)
+    this.borrowPartnerSearchTimeout = setTimeout(() => this.loadBorrowFromPartnersForDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
+  async loadAdjustDrawerPartnersForDropdown(search = '') {
+    const gen = ++this._adjustDrawerPartnerSearchSeq
+    this.updateState('adjust-drawer-partner-dd-loading', true)
+    try {
+      const res = await window.ipcRenderer.invoke('customers:get-customers', {
+        search: (search || '').trim(),
+        limit: DROPDOWN_SEARCH_LIMIT,
+        offset: 0,
+        sortBy: 'id',
+        orderBy: 'desc',
+      })
+      if (gen !== this._adjustDrawerPartnerSearchSeq) return
+      const raw = Array.isArray(res?.customers) ? res.customers : (res?.data?.customers || [])
+      const mapped = raw.map((c) => ({
+        id: c.id,
+        name: c.name || c.full_name || '',
+        code: c.code || `CUST${String(c.id).padStart(4, '0')}`,
+        type: 'partner',
+        customer_type: c.customer_type,
+        contact_person: c.contact_person || null,
+        phone: c.phone || null,
+      }))
+      this.updateState('adjust-drawer-partner-options', mapped)
+    } catch {
+      if (gen === this._adjustDrawerPartnerSearchSeq) {
+        this.updateState('adjust-drawer-partner-options', [])
+      }
+    } finally {
+      if (gen === this._adjustDrawerPartnerSearchSeq) {
+        this.updateState('adjust-drawer-partner-dd-loading', false)
+      }
+    }
+  }
+
+  scheduleAdjustDrawerPartnerSearch(query) {
+    clearTimeout(this.adjustDrawerPartnerSearchTimeout)
+    this.adjustDrawerPartnerSearchTimeout = setTimeout(() => this.loadAdjustDrawerPartnersForDropdown(query), DROPDOWN_SEARCH_DEBOUNCE_MS)
+  }
+
   // ==================== Products Methods ====================
 
   async loadProducts() {
-    if (this.getState('loading')) return;
-    
+    const requestSeq = ++this._productLoadSeq;
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -205,25 +367,79 @@ export class InventoryVM extends ViewModel {
     try {
       const tableConfig = this.getState('product-table-config');
       const searchQuery = this.getState('product-search-query');
-      
+      const requestedSearchQuery = String(searchQuery || '');
+      const productFilter = this.getState('product-filter') || 'all';
       const result = await window.ipcRenderer.invoke('inventory:get-products', {
         limit: tableConfig.limit,
         offset: tableConfig.offset,
         search: searchQuery,
         sortBy: tableConfig.sortBy,
-        orderBy: tableConfig.orderBy
+        orderBy: tableConfig.orderBy,
+        filter: productFilter
       });
+
+      // Ignore stale responses when newer search requests were issued.
+      if (requestSeq !== this._productLoadSeq) {
+        return [];
+      }
+      // Guard against out-of-order or unrelated refreshes overriding the active search result.
+      const currentSearchQuery = String(this.getState('product-search-query') || '');
+      if (requestedSearchQuery !== currentSearchQuery) {
+        return [];
+      }
 
       if (result.success) {
         this.updateState('product-list', result.products || []);
         this.updateState('product-total-count', result.total || 0);
+        if (result.stats) {
+          this.updateState('product-stats', result.stats);
+        }
         return result.products;
       }
 
       throw new Error(result.error || 'Failed to load products');
+    } catch (error) {
+      if (requestSeq !== this._productLoadSeq) return [];
+      this.updateState('error', { message: error.message || 'Failed to load products' });
+      throw error;
     } finally {
-      this.updateState('loading', false);
+      if (requestSeq === this._productLoadSeq) {
+        this.updateState('loading', false);
+      }
     }
+  }
+
+  /**
+   * Keep `selected-product` aligned with the products table row (joined category/unit names).
+   * Raw PUT/findById rows omit display names; without this, exiting edit mode reverts labels to stale data.
+   */
+  syncSelectedProductWithProductList(productId) {
+    const current = this.getState('selected-product');
+    if (!current || Number(current.id) !== Number(productId)) return;
+
+    const list = this.getState('product-list') || [];
+    const fromList = list.find((p) => Number(p.id) === Number(productId));
+    if (fromList) {
+      this.updateState('selected-product', fromList);
+      return;
+    }
+
+    const categories = this.getCategoryList();
+    const units = this.getUnitList();
+    const category =
+      current.category_id != null
+        ? categories.find((c) => Number(c.id) === Number(current.category_id))
+        : null;
+    const unit =
+      current.unit_id != null
+        ? units.find((u) => Number(u.id) === Number(current.unit_id))
+        : null;
+
+    this.updateState('selected-product', {
+      ...current,
+      category: current.category_id != null ? category?.name ?? '' : '',
+      unit: current.unit_id != null ? unit?.name ?? '' : '',
+    });
   }
 
   /**
@@ -231,7 +447,6 @@ export class InventoryVM extends ViewModel {
    */
   async loadAllProducts() {
     try {
-      console.log('[InventoryVM] loadAllProducts - Loading all products...');
       this.updateState('loading', true);
       
       const result = await window.ipcRenderer.invoke('inventory:get-products', {
@@ -242,11 +457,8 @@ export class InventoryVM extends ViewModel {
         orderBy: 'asc'
       });
 
-      console.log('[InventoryVM] loadAllProducts - Result:', result);
-
       if (result.success) {
         const products = result.products || [];
-        console.log('[InventoryVM] loadAllProducts - Loaded', products.length, 'products');
         this.updateState('product-list', products);
         this.updateState('product-total-count', result.total || 0);
         return products;
@@ -314,15 +526,12 @@ export class InventoryVM extends ViewModel {
     this.updateState('error', null);
     this.updateState('success', null);
 
-    console.log('[InventoryVM] createBorrowedFromStock - Payload:', JSON.stringify(borrowData, null, 2));
-
     try {
-      const result = await window.ipcRenderer.invoke('inventory:create-borrowed-from-stock', borrowData);
-
-      console.log('[InventoryVM] createBorrowedFromStock - Result:', JSON.stringify(result, null, 2));
+      const result = await window.ipcRenderer.invoke('inventory:create-borrowed-from-stock', mapBorrowPayloadDatesForApi(borrowData));
 
       if (result.success) {
         this.updateState('success', { message: 'Borrowed from stock created successfully' });
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -405,8 +614,6 @@ export class InventoryVM extends ViewModel {
   }
 
   async createCategory(categoryData) {
-    if (this.getState('loading')) return;
-    
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -415,10 +622,13 @@ export class InventoryVM extends ViewModel {
       const result = await window.ipcRenderer.invoke('inventory:create-category', categoryData);
 
       if (result.success) {
+        const category = result.category;
         this.updateState('success', { message: 'Category created successfully' });
-        // Reload categories list to include the new one
-        await this.loadCategories();
-        return result.category;
+        const list = this.getState('category-list') || [];
+        if (category && !list.some((c) => String(c.id) === String(category.id))) {
+          this.updateState('category-list', [...list, { id: category.id, name: category.name }]);
+        }
+        return category;
       }
 
       throw new Error(result.error || 'Failed to create category');
@@ -432,8 +642,6 @@ export class InventoryVM extends ViewModel {
   }
 
   async createUnit(unitData) {
-    if (this.getState('loading')) return;
-    
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
@@ -442,10 +650,13 @@ export class InventoryVM extends ViewModel {
       const result = await window.ipcRenderer.invoke('inventory:create-unit', unitData);
 
       if (result.success) {
+        const unit = result.unit;
         this.updateState('success', { message: 'Unit created successfully' });
-        // Reload units list to include the new one
-        await this.loadUnits();
-        return result.unit;
+        const list = this.getState('unit-list') || [];
+        if (unit && !list.some((u) => String(u.id) === String(unit.id))) {
+          this.updateState('unit-list', [...list, { id: unit.id, name: unit.name }]);
+        }
+        return unit;
       }
 
       throw new Error(result.error || 'Failed to create unit');
@@ -459,22 +670,24 @@ export class InventoryVM extends ViewModel {
   }
 
   async createProduct(productData) {
-    if (this.getState('loading')) return;
-    
     this.updateState('loading', true);
     this.updateState('error', null);
     this.updateState('success', null);
 
     try {
+      if (!productData.name || !String(productData.name).trim()) {
+        throw new Error('Product name is required');
+      }
+
       // Prepare product data with category_id and unit_id
       const productPayload = {
-        name: productData.name,
+        name: String(productData.name).trim(),
         description: productData.description || null,
         remark: productData.remark || null,
         expiry_threshold: productData.expiry_threshold || 30
       };
 
-      // Handle category_id - use existing ID or look up by name
+      // Handle category_id - use existing ID, look up by name, or leave unset
       if (productData.category_id) {
         // Ensure category_id is a number
         productPayload.category_id = parseInt(productData.category_id, 10);
@@ -500,10 +713,10 @@ export class InventoryVM extends ViewModel {
           throw new Error(`Failed to find category "${productData.category}": ${error.message || 'Unknown error'}`);
         }
       } else {
-        throw new Error('Category is required');
+        productPayload.category_id = null;
       }
 
-      // Handle unit_id - use existing ID or look up by name
+      // Handle unit_id - use existing ID, look up by name, or leave unset
       if (productData.unit_id) {
         // Ensure unit_id is a number
         productPayload.unit_id = parseInt(productData.unit_id, 10);
@@ -529,11 +742,8 @@ export class InventoryVM extends ViewModel {
           throw new Error(`Failed to find unit "${productData.unit}": ${error.message || 'Unknown error'}`);
         }
       } else {
-        throw new Error('Unit is required');
+        productPayload.unit_id = null;
       }
-
-      // Log the payload before sending to debug validation issues
-      console.log('[InventoryVM] Product payload before API call:', productPayload);
 
       const result = await window.ipcRenderer.invoke('inventory:create-product', productPayload);
 
@@ -579,10 +789,41 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Product updated successfully' });
+        // Update selected product and form with saved data so the drawer shows DB values (e.g. expiry_threshold)
+        const updated = result.product || result.data;
+        if (updated) {
+          const prev = this.getState('selected-product');
+          const expiryFromResponse = updated.expiry_threshold ?? updated.expiryThreshold;
+          const expiryFromPayload = productData.expiry_threshold ?? productData.expiryThreshold;
+          const resolvedExpiry =
+            expiryFromResponse != null ? expiryFromResponse : expiryFromPayload;
+          if (prev && Number(prev.id) === Number(productId)) {
+            this.updateState('selected-product', {
+              ...prev,
+              ...updated,
+              ...(resolvedExpiry != null ? { expiry_threshold: resolvedExpiry } : {})
+            });
+          }
+          const form = this.getState('product-details-form');
+          this.updateState('product-details-form', {
+            ...form,
+            name: updated.name ?? form.name,
+            description: updated.description ?? form.description,
+            category: updated.category ?? form.category,
+            category_id: Object.hasOwn(updated, 'category_id')
+              ? updated.category_id
+              : form.category_id,
+            unit: updated.unit ?? form.unit,
+            unit_id: Object.hasOwn(updated, 'unit_id') ? updated.unit_id : form.unit_id,
+            remark: updated.remark ?? form.remark,
+            expiry_threshold: resolvedExpiry != null ? resolvedExpiry : (form.expiry_threshold ?? 30)
+          });
+        }
         // Set loading to false so loadProducts() can run
         this.updateState('loading', false);
         // Reload products list
         await this.loadProducts();
+        this.syncSelectedProductWithProductList(productId);
         return result.product;
       }
 
@@ -626,7 +867,14 @@ export class InventoryVM extends ViewModel {
   }
 
   async bulkImportProducts(products) {
-    if (this.getState('loading')) return;
+    if (this.getState('loading')) {
+      return {
+        success: false,
+        error: 'Another inventory operation is already in progress',
+        summary: { total: 0, successful: 0, failed: 0 },
+        results: []
+      };
+    }
     
     this.updateState('loading', true);
     this.updateState('error', null);
@@ -654,6 +902,110 @@ export class InventoryVM extends ViewModel {
     }
   }
 
+  async bulkImportProductsFromFile(file) {
+    if (this.getState('loading')) {
+      return {
+        success: false,
+        error: 'Another inventory operation is already in progress',
+        summary: { total: 0, successful: 0, failed: 0 },
+        results: []
+      };
+    }
+    const maxBytes = 50 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error('File must be 50MB or smaller');
+    }
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    this.updateState('success', null);
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const result = await window.ipcRenderer.invoke('inventory:bulk-import-products-upload', {
+        fileBuffer: buf,
+        fileName: file.name
+      });
+      const s = result.summary || {};
+      const errCount =
+        typeof s.errors === 'number'
+          ? s.errors
+          : (result.results || []).filter((r) => r && r.success === false && r.issueKind !== 'warning')
+              .length;
+      const skippedCount =
+        typeof s.warnings === 'number'
+          ? s.warnings
+          : (result.results || []).filter((r) => r && r.success === false && r.issueKind === 'warning')
+              .length;
+
+      if (errCount > 0) {
+        if ((s.successful || 0) > 0) {
+          await this.loadProducts();
+        }
+        this.updateState('error', {
+          message:
+            (s.successful || 0) > 0
+              ? `Imported ${s.successful} product(s); ${errCount} row(s) with errors${
+                  skippedCount ? `, ${skippedCount} skipped` : ''
+                }.`
+              : result.error || 'No products were imported (see errors in the dialog).'
+        });
+      } else if ((s.successful || 0) > 0) {
+        await this.loadProducts();
+        this.updateState('success', {
+          message:
+            skippedCount > 0
+              ? `Imported ${s.successful} product(s). ${skippedCount} row(s) skipped.`
+              : `Successfully imported ${s.successful} product(s)`
+        });
+      } else if (skippedCount > 0 && (s.successful || 0) === 0) {
+        this.updateState('success', {
+          message: `No new products imported. ${skippedCount} row(s) skipped (e.g. already exists).`
+        });
+      } else {
+        this.updateState('error', { message: result.error || 'No products were imported' });
+      }
+      return result;
+    } catch (error) {
+      console.error('Error importing products from file:', error);
+      this.updateState('error', { message: error.message || 'Failed to import products' });
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
+  async bulkImportStockFromFile(file, reason = 'Initial Stock', purchase_date = null, acquisition_type = null) {
+    const maxBytes = 50 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error('File must be 50MB or smaller');
+    }
+    this.updateState('loading', true);
+    this.updateState('error', null);
+    this.updateState('success', null);
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const result = await window.ipcRenderer.invoke('inventory:bulk-import-stock-upload', {
+        fileBuffer: buf,
+        fileName: file.name,
+        reason,
+        purchase_date,
+        acquisition_type
+      });
+      if (result.success) {
+        this.updateState('success', {
+          message: `Imported ${result.summary?.successful || 0} stock row(s)`
+        });
+        await this.loadStock();
+      }
+      return result;
+    } catch (error) {
+      console.error('Error importing stock from file:', error);
+      this.updateState('error', { message: error.message || 'Failed to import stock' });
+      throw error;
+    } finally {
+      this.updateState('loading', false);
+    }
+  }
+
   async bulkImportStock(stockItems, reason = 'Initial Stock') {
     if (this.getState('loading')) return;
     
@@ -668,7 +1020,7 @@ export class InventoryVM extends ViewModel {
         this.updateState('success', { 
           message: `Successfully imported ${result.summary?.successful || 0} stock item(s)` 
         });
-        // Reload stock list
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -694,13 +1046,11 @@ export class InventoryVM extends ViewModel {
 
   setProductLimit(limit) {
     const tableConfig = this.getState('product-table-config');
-    console.log('setProductLimit called:', limit, 'current config:', tableConfig);
     this.updateState('product-table-config', {
       ...tableConfig,
       limit: parseInt(limit),
       offset: 0 // Reset to first page
     });
-    console.log('Updated config:', this.getState('product-table-config'));
   }
 
   nextProductPage() {
@@ -744,8 +1094,6 @@ export class InventoryVM extends ViewModel {
       const search = typeof stockList.search === 'string' ? stockList.search : '';
       const filter = typeof stockList.filter === 'string' ? stockList.filter : 'all';
 
-      console.log('[InventoryVM] loadStock - Filter:', filter, 'Full state:', stockList);
-
       const result = await window.ipcRenderer.invoke('inventory:get-stock', {
         limit: config.limit,
         offset: config.offset,
@@ -753,13 +1101,6 @@ export class InventoryVM extends ViewModel {
         filter: filter,
         sortBy: config.sortBy,
         orderBy: config.orderBy
-      });
-
-      console.log('[InventoryVM] loadStock - Result:', {
-        success: result.success,
-        stockCount: result.stock?.length || 0,
-        total: result.total,
-        filter: filter
       });
 
       if (result.success) {
@@ -787,7 +1128,8 @@ export class InventoryVM extends ViewModel {
           total: typeof result.total === 'number' ? result.total : 0,
           filter: filter,
           search: search,
-          stats: safeStats
+          stats: safeStats,
+          dataType: result.dataType || null
         });
         return result.stock;
       }
@@ -856,12 +1198,13 @@ export class InventoryVM extends ViewModel {
     try {
       const result = await window.ipcRenderer.invoke('inventory:adjust-stock', {
         stockId,
-        ...adjustmentData
+        ...mapAdjustmentDatesForApi(adjustmentData)
       });
 
       if (result.success) {
         this.updateState('success', { message: 'Stock adjusted successfully' });
-        // Reload stock list and stats
+        // Allow loadStock to run (it early-returns when loading is true)
+        this.updateState('loading', false);
         await this.loadStock();
         return result.stock;
       }
@@ -891,7 +1234,7 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Stock transferred successfully' });
-        // Reload stock list
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -916,12 +1259,12 @@ export class InventoryVM extends ViewModel {
     try {
       const result = await window.ipcRenderer.invoke('inventory:return-borrowed-stock', {
         stockId,
-        ...returnData
+        ...mapReturnBorrowedToPayloadForApi(returnData)
       });
 
       if (result.success) {
         this.updateState('success', { message: 'Borrowed stock returned successfully' });
-        // Reload stock list
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -1059,11 +1402,15 @@ export class InventoryVM extends ViewModel {
       ...form,
       [key]: value
     });
-    // Trigger re-render by updating loading state
-    this.updateState('loading', true);
-    setTimeout(() => {
-      this.updateState('loading', false);
-    }, 0);
+  }
+
+  /** Apply several product-form fields in one state update (avoids losing updates from back-to-back single-field writes). */
+  updateProductFormFields(fields) {
+    const form = this.getState('product-form');
+    this.updateState('product-form', {
+      ...form,
+      ...fields
+    });
   }
 
   resetProductForm() {
@@ -1172,12 +1519,19 @@ export class InventoryVM extends ViewModel {
     
     // Initialize form based on drawer type
     if (drawerType === 'view-details' && stockItem) {
+      let expiryForInput = null;
+      if (stockItem.expiryDate != null && stockItem.expiryDate !== '') {
+        try {
+          const d = new Date(stockItem.expiryDate);
+          if (!isNaN(d.getTime())) expiryForInput = d.toISOString().split('T')[0];
+        } catch (_) { /* leave null */ }
+      }
       this.updateState('stock-details-form', {
         inventoryCode: stockItem.inventoryCode || stockItem.id?.toString() || '',
         productCode: stockItem.productCode || '',
         quantity: stockItem.quantity || 0,
         batchNo: stockItem.batchNumber || stockItem.batchNo || '',
-        expiryDate: stockItem.expiryDate || null,
+        expiryDate: expiryForInput,
         unitCost: stockItem.unitCost || 0,
         sellingPrice: stockItem.sellingPrice || 0
       });
@@ -1196,7 +1550,7 @@ export class InventoryVM extends ViewModel {
       });
       // Load all customers for adjust stock drawer (needed for borrow-to operations)
       // This ensures customers with type 'both', 'retailer', 'other' are available
-      this.loadPartners('all');
+      this.loadAdjustDrawerPartnersForDropdown('');
     } else if (drawerType === 'transfer' && stockItem) {
       this.updateState('transfer-stock-form', {
         quantity: 0,
@@ -1256,18 +1610,32 @@ export class InventoryVM extends ViewModel {
     });
   }
 
+  /** Apply several detail fields at once (category+id etc.) so concurrent updates are not dropped. */
+  updateProductDetailsFormFields(fields) {
+    const form = this.getState('product-details-form');
+    this.updateState('product-details-form', {
+      ...form,
+      ...fields
+    });
+  }
+
   setProductDetailsEditMode(editMode) {
     this.updateState('product-details-edit-mode', editMode);
     this.updateState('loading', true); // Trigger re-render
     if (!editMode) {
-      // Reset form to original product values
+      // Reset form to current selected product (including expiry_threshold so it doesn't revert to 30)
       const product = this.getState('selected-product');
       if (product) {
+        const expiryThreshold = product.expiry_threshold ?? product.expiryThreshold;
         this.updateState('product-details-form', {
           name: product.name || '',
           description: product.description || '',
           category: product.category || '',
-          unit: product.unit || ''
+          category_id: product.category_id ?? null,
+          unit: product.unit || '',
+          unit_id: product.unit_id ?? null,
+          remark: product.remark || '',
+          expiry_threshold: expiryThreshold != null ? expiryThreshold : 30
         });
       }
     }
@@ -1387,7 +1755,7 @@ export class InventoryVM extends ViewModel {
     this.updateState('success', null);
 
     try {
-      const result = await window.ipcRenderer.invoke('inventory:process-borrow-to-return', returnData);
+      const result = await window.ipcRenderer.invoke('inventory:process-borrow-to-return', mapReturnBorrowedToPayloadForApi(returnData));
 
       if (result.success) {
         this.updateState('success', { message: 'Return processed successfully' });
@@ -1401,9 +1769,7 @@ export class InventoryVM extends ViewModel {
         this.updateState('loading', false);
         // Reload stock list to reflect updated inventory
         try {
-          console.log('[InventoryVM] processBorrowToReturn calling loadStock');
           await this.loadStock();
-          console.log('[InventoryVM] processBorrowToReturn loadStock done');
         } catch (loadError) {
           console.error('Error reloading stock after return:', loadError);
         }
@@ -1427,9 +1793,7 @@ export class InventoryVM extends ViewModel {
    */
   async getBorrowFromReturnStatus(opts = {}) {
     try {
-      console.log('[InventoryVM] getBorrowFromReturnStatus called with opts:', opts);
       const result = await window.ipcRenderer.invoke('inventory:get-borrow-from-return-status', opts);
-      console.log('[InventoryVM] getBorrowFromReturnStatus raw result:', JSON.stringify(result, null, 2));
       
       if (result && (result.success || result.ok)) {
         const returnStatus = {
@@ -1437,8 +1801,6 @@ export class InventoryVM extends ViewModel {
           totalReturned: Number(result.totalReturned) || 0,
           remaining: Number(result.remaining) || 0
         };
-        console.log('[InventoryVM] Parsed returnStatus:', returnStatus);
-        
         // Update viewModel state and trigger re-render
         const form = this.getState('return-borrowed-form') || {};
         this.updateState('loading', true);
@@ -1449,10 +1811,6 @@ export class InventoryVM extends ViewModel {
         
         // Verify state was updated
         const updatedForm = this.getState('return-borrowed-form');
-        console.log('[InventoryVM] State after update:', {
-          returnStatus: updatedForm?.returnStatus,
-          remaining: updatedForm?.returnStatus?.remaining
-        });
         
         // Complete re-render trigger
         setTimeout(() => {
@@ -1488,14 +1846,11 @@ export class InventoryVM extends ViewModel {
    */
   async loadInventoriesByProduct(productId) {
     try {
-      console.log('[InventoryVM] loadInventoriesByProduct called with productId:', productId);
       // Trigger re-render by updating loading state
       this.updateState('loading', true);
       
       const result = await window.ipcRenderer.invoke('inventory:get-inventories-by-product', productId);
-      console.log('[InventoryVM] loadInventoriesByProduct result:', result);
       const items = (result.success || result.ok) ? (result.items || []) : [];
-      console.log('[InventoryVM] loadInventoriesByProduct items:', items.length, items);
       
       // Update both the old state (for backward compatibility) and new form state
       this.updateState('inventory-by-product-list', items);
@@ -1543,8 +1898,7 @@ export class InventoryVM extends ViewModel {
       // Send data directly - backend handles both formats
       // Frontend sends: {inventory_id, quantity}
       // Backend accepts: {inventory_id, quantity} OR {returningInventoryId, quantityReturned}
-      const result = await window.ipcRenderer.invoke('inventory:process-borrow-from-return', returnData);
-      console.log('[InventoryVM] processBorrowFromReturn IPC result:', typeof result, Array.isArray(result), result && typeof result === 'object' ? Object.keys(result) : 'n/a');
+      const result = await window.ipcRenderer.invoke('inventory:process-borrow-from-return', mapReturnBorrowedFromPayloadForApi(returnData));
       const ok = result && (result.success === true || result.ok === true);
 
       if (ok) {
@@ -1560,9 +1914,7 @@ export class InventoryVM extends ViewModel {
         });
         this.updateState('loading', false);
         try {
-          console.log('[InventoryVM] processBorrowFromReturn calling loadStock');
           await this.loadStock();
-          console.log('[InventoryVM] processBorrowFromReturn loadStock done');
         } catch (loadError) {
           console.error('Error reloading stock after return:', loadError);
         }
@@ -1628,15 +1980,22 @@ export class InventoryVM extends ViewModel {
     this.updateState('stock-details-edit-mode', editMode);
     this.updateState('loading', true); // Trigger re-render
     if (!editMode) {
-      // Reset form to original stock item values
+      // Reset form to original stock item values (expiryDate as YYYY-MM-DD for date input)
       const stockItem = this.getState('selected-stock-item');
       if (stockItem) {
+        let expiryForInput = null;
+        if (stockItem.expiryDate != null && stockItem.expiryDate !== '') {
+          try {
+            const d = new Date(stockItem.expiryDate);
+            if (!isNaN(d.getTime())) expiryForInput = d.toISOString().split('T')[0];
+          } catch (_) { /* leave null */ }
+        }
         this.updateState('stock-details-form', {
           inventoryCode: stockItem.inventoryCode || stockItem.id?.toString() || '',
           productCode: stockItem.productCode || '',
           quantity: stockItem.quantity || 0,
           batchNo: stockItem.batchNumber || stockItem.batchNo || '',
-          expiryDate: stockItem.expiryDate || null,
+          expiryDate: expiryForInput,
           unitCost: stockItem.unitCost || 0,
           sellingPrice: stockItem.sellingPrice || 0
         });
@@ -1669,15 +2028,8 @@ export class InventoryVM extends ViewModel {
     this.updateState('error', null);
     this.updateState('success', null);
 
-    console.log('[InventoryVM] updateStock - Request payload:', {
-      stockId,
-      stockData: JSON.stringify(stockData, null, 2)
-    });
-
     try {
-      const result = await window.ipcRenderer.invoke('inventory:update-stock', { stockId, stockData });
-
-      console.log('[InventoryVM] updateStock - Response:', JSON.stringify(result, null, 2));
+      const result = await window.ipcRenderer.invoke('inventory:update-stock', { stockId, stockData: mapStockDataDatesForApi(stockData) });
 
       if (result.success) {
         this.updateState('success', { 
@@ -1690,16 +2042,24 @@ export class InventoryVM extends ViewModel {
             ...currentStockItem,
             ...result.stock
           });
-          // Also update the form with the new values
+          // Also update the form with the new values (expiryDate as YYYY-MM-DD for date input)
           const form = this.getState('stock-details-form');
+          let expiryForInput = form.expiryDate ?? null;
+          if (result.stock.expiryDate != null && result.stock.expiryDate !== '') {
+            try {
+              const d = new Date(result.stock.expiryDate);
+              if (!isNaN(d.getTime())) expiryForInput = d.toISOString().split('T')[0];
+            } catch (_) { /* keep form value */ }
+          }
           this.updateState('stock-details-form', {
             ...form,
             ...result.stock,
             batchNo: result.stock.batchNumber || result.stock.batchNo || form.batchNo,
-            expiryDate: result.stock.expiryDate !== undefined ? result.stock.expiryDate : form.expiryDate
+            expiryDate: result.stock.expiryDate !== undefined ? expiryForInput : form.expiryDate
           });
         }
-        // Reload stock list
+        // Allow loadStock to run (it early-returns when loading is true)
+        this.updateState('loading', false);
         await this.loadStock();
         return result;
       }
@@ -1714,7 +2074,6 @@ export class InventoryVM extends ViewModel {
     }
   }
   setProductSort(column) {
-    console.log('setProductSort called:', column);
     const tableConfig = this.getState('product-table-config');
     this.updateState('product-table-config', {
       ...tableConfig,
@@ -1723,6 +2082,14 @@ export class InventoryVM extends ViewModel {
     });
     this.loadProducts();
   }
+
+  setProductFilter(filter) {
+    this.updateState('product-filter', filter);
+    const tableConfig = this.getState('product-table-config');
+    this.updateState('product-table-config', { ...tableConfig, offset: 0 });
+    this.loadProducts();
+  }
+
   setStockSort(column) {
     const stockList = this.getState('stock-list');
     const currentOrderBy = stockList.config?.orderBy || 'desc';

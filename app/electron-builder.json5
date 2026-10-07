@@ -1,15 +1,31 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.masatech.pharmasuitlan",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "PharmaSuitLAN",
   "directories": {
-    "output": "release/${version}"
+    "output": "release/${version}",
+    "buildResources": "build"
   },
+  "icon": "build/icon.png",
   "files": [
     "dist",
     "dist-electron"
+  ],
+  "extraResources": [
+    {
+      "from": "../api",
+      "to": "api",
+      "filter": [
+        "package.json",
+        "package-lock.json",
+        ".env",
+        "src/**/*",
+        "db/**/*",
+        "node_modules/**/*"
+      ]
+    }
   ],
   "mac": {
     "target": [

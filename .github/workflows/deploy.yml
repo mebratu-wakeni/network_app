@@ -1,0 +1,22 @@
+# LEGACY stub on the Managed product line — does NOT deploy Managed Cloud.
+# Managed publish: tag desktop-cloud-v* from release/managed-cloud
+#   → workflow "Release Managed Cloud" (release-cloud-desktop.yml)
+#   → cPanel extract of the Release tarball (docs/DOWNLOADS_AND_UPDATES.md).
+# Dedicated cPanel FTPS lives on release/dedicated-cloud (deploy.yml there).
+#
+# Kept as workflow_dispatch-only so a stray push cannot SFTP the wrong host.
+name: Deploy to cPanel (legacy stub)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not used for Managed Cloud
+        run: |
+          echo "This workflow is a legacy stub on the Managed line."
+          echo "Ship Managed via desktop-cloud-v* tags on release/managed-cloud."
+          echo "See docs/PRODUCT_LINES.md and docs/DOWNLOADS_AND_UPDATES.md."
+          exit 1

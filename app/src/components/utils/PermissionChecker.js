@@ -17,20 +17,16 @@ class PermissionChecker {
   async loadPermissions() {
     try {
       const result = await window.ipcRenderer.invoke('users:get-current-user');
-      if (result.success && result.user) {
+      if (result && (result.success || result.ok) && result.user) {
         this.userRules = result.user.rules || [];
         this.isLoaded = true;
         return true;
       }
       return false;
     } catch (error) {
-      console.error('Error loading user permissions:', error);
-      // In development, allow all permissions if API fails
-      if (process.env.NODE_ENV !== 'production') {
-        this.userRules = ['admin']; // Grant all permissions in dev
-        this.isLoaded = true;
-        return true;
-      }
+      // Main-process fetch failures surface as "Error invoking remote method".
+      // Never throw — callers (startup restore) must stay on login, not crash.
+      console.error('Error loading user permissions:', error?.message || error);
       return false;
     }
   }

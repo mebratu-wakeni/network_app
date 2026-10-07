@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/apiConfig.js'
+import { apiFetch } from '../config/apiFetch.js'
 
 /**
  * SalesManager - API communication for sales module.
@@ -6,12 +7,11 @@ import { getApiUrl } from '../config/apiConfig.js'
  */
 class SalesManager {
   async apiRequest(endpoint, options = {}, token) {
-    console.log('[SalesManager] apiRequest:', endpoint, options)
     const url = getApiUrl(endpoint)
     const headers = { 'Content-Type': 'application/json', ...options.headers }
     if (token) headers['Authorization'] = `Bearer ${token}`
 
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method: options.method || 'GET',
       headers,
       body: options.body
@@ -65,7 +65,8 @@ class SalesManager {
       success: response.ok === true,
       orders: response.orders || [],
       total: response.total || 0,
-      stats: response.stats || {}
+      stats: response.stats || {},
+      period_summary: response.period_summary || null
     }
   }
 
@@ -101,6 +102,31 @@ class SalesManager {
       amount_paid: response.amount_paid,
       payment_status: response.payment_status,
       outstanding_balance: response.outstanding_balance
+    }
+  }
+
+  async getCustomerOutstandingForPayment(customerId, token) {
+    const response = await this.apiRequest(
+      `/sales/customers/${encodeURIComponent(customerId)}/outstanding-for-payment`,
+      { method: 'GET' },
+      token
+    )
+    return {
+      success: response.ok === true,
+      orders: response.orders || [],
+      total_outstanding: response.total_outstanding != null ? Number(response.total_outstanding) : 0
+    }
+  }
+
+  async bulkPayCustomerSales(body, token) {
+    const response = await this.apiRequest('/sales/orders/bulk-pay', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    }, token)
+    return {
+      success: response.ok === true,
+      total_applied: response.total_applied,
+      applied: response.applied || []
     }
   }
 
@@ -171,7 +197,7 @@ class SalesManager {
     try {
       const url = getApiUrl('/sales/orders/export')
       
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',

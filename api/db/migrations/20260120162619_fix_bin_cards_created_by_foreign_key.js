@@ -1,4 +1,6 @@
 export const up = async (knex) => {
+  const client = knex.client.config.client
+  if (client === 'sqlite3') return
   // Drop the existing foreign key constraint
   await knex.raw(`
     ALTER TABLE bin_cards 
@@ -16,6 +18,8 @@ export const up = async (knex) => {
 }
 
 export const down = async (knex) => {
+  const client = knex.client.config.client
+  if (client === 'sqlite3') return
   // Drop the new constraint
   await knex.raw(`
     ALTER TABLE bin_cards 

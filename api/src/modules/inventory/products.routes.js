@@ -4,21 +4,22 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate, requireRules } from '../../middleware/auth.js'
+import { authenticate, requireRules, requireTenant } from '../../middleware/auth.js'
 import { ProductsRepository } from './products.repository.js'
 import { ProductsService } from './products.service.js'
 import { ProductsController } from './products.controller.js'
 import { validate, bulkImportProductsSchema, createCategorySchema, createUnitSchema, createProductSchema } from './products.schema.js'
+import { uploadCsvFile } from '../../middleware/uploadCsv.js'
 import { z } from 'zod'
 
 // Schema for updating a product (all fields optional except validation structure)
 const updateProductSchema = z.object({
   name: z.string().min(1, 'Product name is required').trim().optional(),
   description: z.string().trim().optional().nullable(),
-  category_id: z.number().int().positive('Category ID is required').optional(),
-  unit_id: z.number().int().positive('Unit ID is required').optional(),
+  category_id: z.union([z.number().int().positive(), z.null()]).optional(),
+  unit_id: z.union([z.number().int().positive(), z.null()]).optional(),
   remark: z.string().trim().optional().nullable(),
-  expiry_threshold: z.number().int().positive('Expiry threshold must be a positive number').optional()
+  expiry_threshold: z.coerce.number().int().positive('Expiry threshold must be a positive number').optional()
 })
 
 // Initialize dependencies (Dependency Injection pattern)
@@ -28,11 +29,18 @@ const controller = new ProductsController(service)
 
 const router = Router()
 
-// All routes require authentication
-router.use(authenticate)
+// All routes require authentication and tenant context
+router.use(authenticate, requireTenant)
 
 // List products - requires CanSeeProductDetails rule (or can be adjusted based on your RBAC)
 router.post('/', controller.list)
+
+router.post(
+  '/bulk-import-upload',
+  requireRules(['CanImportProducts']),
+  uploadCsvFile,
+  controller.bulkImportUpload
+)
 
 // Bulk import products - requires CanImportProducts rule
 router.post(

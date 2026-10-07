@@ -226,7 +226,12 @@ function ImportPurchaseOrderModal(props, delegator, handleClose) {
           parseErrors.length > 0 && !importResults && Row({ class: 'flex flex-col gap-2' }, [
             Row({ class: 'text-sm font-semibold text-amber-700' }, `Validation: ${parseErrors.length} error(s)`),
             Row({ class: 'max-h-32 overflow-y-auto rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800' }, [
-              parseErrors.slice(0, 10).map((err, i) => Row({ key: i }, err)),
+              ...parseErrors.slice(0, 10).map((err, i) => {
+                const message = typeof err === 'string'
+                  ? err
+                  : (err?.message || JSON.stringify(err));
+                return Row({ key: i }, message);
+              }),
               parseErrors.length > 10 ? Row({}, `... and ${parseErrors.length - 10} more`) : null
             ].filter(Boolean))
           ]),

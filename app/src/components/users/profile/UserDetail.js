@@ -4,7 +4,7 @@ import { CardBody, CardHeader } from "../../utils/Card";
 import UserGeneralTab from "./tabs/General";
 import { Tabs } from "../../utils/Tabs";
 import { UserSecurity } from "./tabs/Security";
-import { TestPermissions, UserAccess } from "./tabs/access";
+import { TestPermissions, UserAccess } from "./tabs/Access.js";
 import { IonIcon } from "../../utils/Icon";
 import Badge from "../../utils/Badge";
 import { getInitials } from "../../utils/Avatar";
@@ -136,8 +136,6 @@ export function UserAvatar(props) {
   };
 
   const loading = props.viewModel.getState('loading');
-
-  console.log('[avatar] loading: ', loading);
 
   const UserInitials = () => {
     if(avatarPreview) return false;

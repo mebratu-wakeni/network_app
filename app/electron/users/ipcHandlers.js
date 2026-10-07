@@ -57,7 +57,15 @@ export function UserIpcHandlers() {
   })
 
   ipcMain.handle('users:get-current-user', async (event) => {
-    return await usersManager.getCurrentUser(getToken())
+    try {
+      return await usersManager.getCurrentUser(getToken())
+    } catch (error) {
+      console.error('[users:get-current-user]', error?.message || error)
+      return {
+        success: false,
+        error: error?.message || 'Failed to get current user'
+      }
+    }
   })
 
   ipcMain.handle("users:update-avatar", async (event, payload) => {
@@ -70,7 +78,6 @@ export function UserIpcHandlers() {
       }
 
       const buffer = Buffer.from(payload.buffer);
-      console.log('Created buffer, length:', buffer.length, 'filename:', payload.filename, 'userId:', payload.userId);
 
       const formData = new FormData();
       formData.append('avatar', buffer, {

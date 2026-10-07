@@ -41,12 +41,15 @@ function SaleItemsSection(props) {
   const selectAll = props.getLocalState('selectedItemIds').isAllSelected;
   const selectedItemIds = props.getLocalState('selectedItemIds').itemIds || [];
 
-  const handleSelectAll = () => { 
-    const itemIds = props.viewModel.getState('current-sale').items.map(
-      item => ({ id: item.product_id, selected: !props.getLocalState('selectedItemIds').isAllSelected })
+  const handleSelectAll = () => {
+    const existingState = props.getLocalState('selectedItemIds');
+    const isSelecting = !existingState.isAllSelected;
+    const itemIds = (props.viewModel.getState('current-sale').items || []).map(
+      item => ({ id: item.product_id, selected: isSelecting })
     );
+
     props.setLocalState('selectedItemIds', {
-      isAllSelected: !props.getLocalState('selectedItemIds').isAllSelected,
+      isAllSelected: isSelecting,
       itemIds,
     });
   }
@@ -55,15 +58,14 @@ function SaleItemsSection(props) {
     const existingState = props.getLocalState('selectedItemIds');
     const allItems = props.viewModel.getState('current-sale').items || [];
 
-    // If selectAll is true, we need to initialize all items first, then toggle the clicked one
     if (existingState.isAllSelected) {
       const allItemIds = allItems.map(item => ({
         id: item.product_id,
-        selected: item.product_id !== id // All selected except the one clicked
+        selected: item.product_id !== id,
       }));
       props.setLocalState('selectedItemIds', {
         isAllSelected: false,
-        itemIds: allItemIds
+        itemIds: allItemIds,
       });
       return;
     }
@@ -213,9 +215,11 @@ function PaymentSettings(props) {
   const currentSale = props.viewModel.getState('current-sale') || {};
   const paymentMode = (currentSale.payment_mode || 'cash').toString();
   const paymentModeDisplay = paymentMode.charAt(0).toUpperCase() + paymentMode.slice(1);
+
   const handlePaymentModeChange = (e) => {
     const val = e.target.value.trim().toLowerCase();
-    props.viewModel.updateCurrentSaleField('payment_mode', val);
+    props.viewModel.updateCurrentSaleField('payment_mode', val);  
+    props.viewModel.updateCurrentSaleField('payment_type', val);
     if (val !== 'cheque') {
       props.viewModel.updateCurrentSaleField('cheque_details', null);
     } else {
@@ -317,12 +321,18 @@ function SaleActionButtons(props) {
       disabled: loading,
       class: 'w-40',
       onClick: async () => {
-
-        const order = await props.viewModel.getLastOrder(); 
-        if (order && order.id) {
-          openReceiptModal({ orderId: order.id })
-        } else {
-          showAlert({ message: 'No sales orders yet.', variant: 'info' });
+        try {
+          const order = await props.viewModel.getLastOrder();
+          if (order && order.id) {
+            await openReceiptModal({ orderId: order.id });
+          } else {
+            showAlert({ message: 'No sales orders yet.', variant: 'info' });
+          }
+        } catch (e) {
+          showAlert({
+            message: e?.message || 'Failed to load last receipt.',
+            variant: 'error',
+          });
         }
       },
     }, 'View Last Receipt'),

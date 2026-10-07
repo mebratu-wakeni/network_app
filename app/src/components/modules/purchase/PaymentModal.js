@@ -39,6 +39,7 @@ export function PaymentModalContent(props) {
   const paymentForm = vm.getState('payment-form') || {};
 
   const handleSubmit = async () => {
+    if (vm.getState('loading')) return;
     try {
       if (!paymentForm.payment_amount || parseFloat(paymentForm.payment_amount) <= 0) {
         await showAlert({ message: 'Please enter a valid payment amount.', variant: 'error' });

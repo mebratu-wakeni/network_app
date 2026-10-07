@@ -1,7 +1,29 @@
 import { twMerge } from 'tailwind-merge';
 import { IonIcon } from './Icon';
+import { registerActionDropdownOutsideClickByTag } from './OutsideClick';
 
 const { Row } = Liteframe;
+
+/** Registry of open ActionDropdown controllers keyed by actionId. */
+const openDropdownControllers = new Map();
+
+function closeAllOpenDropdowns(exceptActionId = null) {
+  openDropdownControllers.forEach((controller, key) => {
+    if (exceptActionId != null && key === exceptActionId) return;
+    if (controller && controller.getOpenState && controller.getOpenState()) {
+      controller.setOpenState();
+    }
+  });
+}
+
+let actionDropdownOutsideClickRegistered = false;
+if (!actionDropdownOutsideClickRegistered) {
+  registerActionDropdownOutsideClickByTag(() => ({
+    getOpenState: () => openDropdownControllers.size > 0,
+    setOpenState: () => closeAllOpenDropdowns()
+  }));
+  actionDropdownOutsideClickRegistered = true;
+}
 
 function ActionDropdown(props, children) {
   const {
@@ -10,7 +32,8 @@ function ActionDropdown(props, children) {
     onToggle = () => { },
     class: className = '',
     buttonClass = '',
-    menuClass = ''
+    menuClass = '',
+    trigger = null
   } = props;
 
   const rootClass = twMerge(
@@ -30,17 +53,17 @@ function ActionDropdown(props, children) {
 
   const menuBaseClass = twMerge(
     `
-      absolute right-0 mt-2 min-w-40
+      
       rounded-md bg-gray-200
       border border-gray-300
-      shadow-lg z-50 cursor-pointer
+      shadow-lg cursor-pointer
     `,
     menuClass
   );
 
-  return Row({
+  const container = Row({
     class: rootClass,
-    attributes: { 'data-action-id': actionId }
+    attributes: { 'data-action-id': actionId, 'data-action-dropdown': '' }
   }, [
     Row({
       tagType: 'button',
@@ -48,15 +71,33 @@ function ActionDropdown(props, children) {
       events: {
         click: (e) => {
           e.stopPropagation(); // critical
+          if (!open) {
+            closeAllOpenDropdowns(actionId);
+          }
           onToggle();
         }
       }
     }, [
-      IonIcon({ name: 'ellipsis-vertical-outline', size: 'small' })
+      trigger || IonIcon({ name: 'ellipsis-vertical-outline', size: 'small' })
     ]),
 
-    open && Row({ class: menuBaseClass }, children)
+    open && Row({
+      class: `z-50 absolute right-0 mt-2 min-w-40` }, [
+      Row({ class: menuBaseClass }, children),
+      Row({ class: 'h-8' })
+    ])
   ]);
+
+  if (open) {
+    openDropdownControllers.set(actionId, {
+      getOpenState: () => true,
+      setOpenState: () => onToggle()
+    });
+  } else {
+    openDropdownControllers.delete(actionId);
+  }
+
+  return container;
 }
 
 

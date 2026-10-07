@@ -1,452 +1,321 @@
-import { Button, Spinner } from "../utils/Button";
-import { Card, CardHeader, CardBody, CardFooter } from "../utils/Card";
-import { IconButton, IonIcon } from "../utils/Icon";
-import { Input } from "../utils/Input";
-import { Table, TableBody, TableHeader, TableHCell, TableRow, TableDCell } from "../utils/Table";
-import { showAlert } from "../utils/ModalHelpers";
-import { permissionChecker } from "../utils/PermissionChecker";
+import { Button, Spinner } from '../utils/Button'
+import { Card, CardHeader, CardBody, CardFooter } from '../utils/Card'
+import { IconButton, IonIcon } from '../utils/Icon'
+import { Input } from '../utils/Input'
+import { Table, TableBody, TableHeader, TableHCell, TableRow, TableDCell } from '../utils/Table'
+import { permissionChecker } from '../utils/PermissionChecker'
 
-const { Row, StatefulRow } = Liteframe;
+const { Row, StatefulRow } = Liteframe
 
-// CSV Parser (handles quoted fields and commas within quotes)
-function parseCSV(text) {
-  // Split by newlines and filter out empty lines
-  const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-  if (lines.length === 0) return { headers: [], rows: [] };
-  
-  // Need at least header row
-  if (lines.length < 1) {
-    throw new Error('CSV file must have at least a header row');
-  }
-  
-  // Simple CSV parser that handles quoted fields
-  function parseCSVLine(line) {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      
-      if (char === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          // Escaped quote
-          current += '"';
-          i++;
-        } else {
-          // Toggle quote state
-          inQuotes = !inQuotes;
-        }
-      } else if (char === ',' && !inQuotes) {
-        // End of field
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    
-    // Add last field
-    result.push(current.trim());
-    return result;
-  }
-  
-  // Parse headers (first line)
-  const headers = parseCSVLine(lines[0]).map(h => h.replace(/^"|"$/g, '').trim());
-  
-  // Parse data rows
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseCSVLine(lines[i]).map(v => v.replace(/^"|"$/g, '').trim());
-    const row = {};
-    headers.forEach((header, index) => {
-      row[header.toLowerCase()] = values[index] || '';
-    });
-    rows.push(row);
-  }
-  
-  return { headers, rows };
+const MAX_FILE_BYTES = 50 * 1024 * 1024
+
+const CUSTOMER_TEMPLATE_CSV =
+  'Name,Contact Person,Phone,Email,Address,License No,TIN No,Website,Fax,Country,Customer Type\r\n' +
+  'Example Pharmacy PLC,Jane Buyer,+251911000000,buyer@example.com,"Bole, Addis Ababa",,,,,Ethiopia,supplier\r\n'
+
+function downloadCustomerImportTemplate () {
+  const blob = new Blob([CUSTOMER_TEMPLATE_CSV], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'customers_import_template.csv'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
-// Validation function
-function validateCustomerRow(row, rowIndex) {
-  const errors = [];
-  
-  // Normalize field names (handle variations)
-  const name = row.name || row['customer name'] || row['customer_name'] || row['customername'] || '';
-  const contact_person = row['contact person'] || row['contact_person'] || row['contactperson'] || '';
-  const phone = row.phone || '';
-  const email = row.email || '';
-  const address = row.address || '';
-  const license_no = row['license no'] || row['license_no'] || row['licenseno'] || '';
-  const tin_no = row['tin no'] || row['tin_no'] || row['tinno'] || '';
-  const website = row.website || '';
-  const fax = row.fax || '';
-  const country = row.country || '';
-  const customer_type = row['customer type'] || row['customer_type'] || row['customertype'] || 'supplier';
-  
-  if (!name || name.trim() === '') {
-    errors.push('Customer name is required');
-  }
-  
-  // Validate email format if provided
-  if (email && email.trim() !== '') {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
-      errors.push('Invalid email format');
-    }
-  }
-  
-  // Validate customer_type
-  const validTypes = ['supplier', 'retailer', 'both', 'other'];
-  if (customer_type && !validTypes.includes(customer_type.toLowerCase())) {
-    errors.push(`Invalid customer type. Must be one of: ${validTypes.join(', ')}`);
-  }
-  
-  // Ensure we always return a valid object structure
-  const normalizedRow = {
-    name: (name || '').trim(),
-    contact_person: (contact_person || '').trim() || null,
-    phone: (phone || '').trim() || null,
-    email: (email || '').trim() || null,
-    address: (address || '').trim() || null,
-    license_no: (license_no || '').trim() || null,
-    tin_no: (tin_no || '').trim() || null,
-    website: (website || '').trim() || null,
-    fax: (fax || '').trim() || null,
-    country: (country || '').trim() || null,
-    customer_type: (customer_type || 'supplier').toLowerCase()
-  };
-  
-  return {
-    isValid: errors.length === 0,
-    errors: errors.length > 0 ? errors : [],
-    normalizedRow: normalizedRow
-  };
-}
-
-// --- The Modal Content Component (Child) ---
 const ModalContent = (viewModel, delegator, handleClose) => {
   const render = (statefulProps) => {
-    // Create props object with viewModel from StatefulRow and add delegator/handleClose
     const props = {
       ...statefulProps,
-      delegator: delegator,
-      handleClose: handleClose
-    };
-    
-    // Use local state for import modal
-    props.ensureLocalStateKey('file', null);
-    props.ensureLocalStateKey('parsedData', []);
-    props.ensureLocalStateKey('validationResults', []);
-    props.ensureLocalStateKey('importing', false);
-    props.ensureLocalStateKey('importResults', null);
-    props.ensureLocalStateKey('fileInputId', `file-input-${Date.now()}`);
-    
-    const file = props.getLocalState('file');
-    const parsedData = props.getLocalState('parsedData');
-    const validationResults = props.getLocalState('validationResults');
-    const importing = props.getLocalState('importing');
-    const importResults = props.getLocalState('importResults');
-    const fileInputId = props.getLocalState('fileInputId');
+      delegator,
+      handleClose
+    }
 
-    const handleFileSelect = (e) => {
-      const selectedFile = e.target.files[0];
-      if (!selectedFile) return;
+    props.ensureLocalStateKey('phase', 'pick')
+    props.ensureLocalStateKey('selectedFile', null)
+    props.ensureLocalStateKey('uploadResponse', null)
+    props.ensureLocalStateKey('dragOver', false)
+    props.ensureLocalStateKey('fileInputId', `import-customers-${Date.now()}`)
 
-      // Validate file type
-      if (!selectedFile.name.endsWith('.csv')) {
-        showAlert({
-          title: 'Invalid File Type',
-          message: 'Please select a CSV file (.csv extension required)',
-          variant: 'error',
-          icon: 'alert-circle-outline'
-        });
-        e.target.value = '';
-        return;
+    const phase = props.getLocalState('phase')
+    const selectedFile = props.getLocalState('selectedFile')
+    const uploadResponse = props.getLocalState('uploadResponse')
+    const dragOver = props.getLocalState('dragOver')
+    const fileInputId = props.getLocalState('fileInputId')
+
+    const assignFile = (file) => {
+      if (!file) return
+      const name = (file.name || '').toLowerCase()
+      if (!name.endsWith('.csv')) {
+        props.setLocalState('selectedFile', null)
+        return
       }
-
-      // Validate file size (max 5MB)
-      if (selectedFile.size > 5 * 1024 * 1024) {
-        showAlert({
-          title: 'File Too Large',
-          message: 'File size must be less than 5MB',
-          variant: 'error',
-          icon: 'alert-circle-outline'
-        });
-        e.target.value = '';
-        return;
+      if (file.size > MAX_FILE_BYTES) {
+        props.setLocalState('selectedFile', null)
+        return
       }
+      if (file.size === 0) return
+      props.setLocalState('selectedFile', file)
+      props.setLocalState('uploadResponse', null)
+    }
 
-      // Validate file is not empty
-      if (selectedFile.size === 0) {
-        showAlert({
-          title: 'Empty File',
-          message: 'The selected file is empty',
-          variant: 'error',
-          icon: 'alert-circle-outline'
-        });
-        e.target.value = '';
-        return;
-      }
+    const onInputChange = (e) => {
+      assignFile(e.target?.files?.[0])
+    }
 
-      props.setLocalState('file', selectedFile);
-      props.setLocalState('importResults', null);
+    const onDrop = (e) => {
+      e.preventDefault()
+      e.stopPropagation?.()
+      props.setLocalState('dragOver', false)
+      assignFile(e.dataTransfer?.files?.[0])
+    }
 
-      // Read and parse file
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const text = event.target.result;
-          const { headers, rows } = parseCSV(text);
-          
-          // Check if we have headers
-          if (headers.length === 0) {
-            throw new Error('CSV file appears to be empty or has no headers');
-          }
-          
-          // Check if we have data rows
-          if (rows.length === 0) {
-            throw new Error('CSV file has headers but no data rows');
-          }
-          
-          // Validate each row
-          const validationResults = rows.map((row, index) => {
-            try {
-              return validateCustomerRow(row, index);
-            } catch (error) {
-              return {
-                isValid: false,
-                errors: [`Validation error: ${error.message}`],
-                normalizedRow: {
-                  name: row.name || '',
-                  contact_person: row['contact person'] || '',
-                  phone: row.phone || '',
-                  email: row.email || '',
-                  address: row.address || '',
-                  license_no: row['license no'] || '',
-                  tin_no: row['tin no'] || '',
-                  website: row.website || '',
-                  fax: row.fax || '',
-                  country: row.country || '',
-                  customer_type: row['customer type'] || 'supplier'
-                }
-              };
-            }
-          });
+    const removeFile = () => {
+      props.setLocalState('selectedFile', null)
+      props.setLocalState('uploadResponse', null)
+      const input = document.getElementById(fileInputId)
+      if (input) input.value = ''
+    }
 
-          props.setLocalState('validationResults', validationResults);
-          props.setLocalState('parsedData', rows);
-        } catch (error) {
-          console.error('Error parsing CSV:', error);
-          showAlert({
-            title: 'Error Parsing CSV',
-            message: `Error parsing CSV file: ${error.message}\n\nExpected format:\n- First row: Headers (Name, Contact Person, Phone, Email, Address, License No, TIN No, Website, Fax, Country, Customer Type)\n- Subsequent rows: Data values\n- Use commas to separate columns`,
-            variant: 'error',
-            icon: 'alert-circle-outline'
-          });
-          props.setLocalState('file', null);
-          props.setLocalState('parsedData', []);
-          props.setLocalState('validationResults', []);
-        }
-      };
-      reader.onerror = () => {
-        showAlert({
-          title: 'File Read Error',
-          message: 'Error reading file',
-          variant: 'error',
-          icon: 'alert-circle-outline'
-        });
-      };
-      reader.readAsText(selectedFile);
-    };
-
-    const handleImport = async () => {
+    const handleConfirm = async () => {
+      const f = props.getLocalState('selectedFile')
+      if (!f) return
       const hasPermission = await permissionChecker.checkPermission('CanImportCustomers', {
         actionName: 'import customers'
-      });
-      if (!hasPermission) {
-        return;
-      }
+      })
+      if (!hasPermission) return
 
-      // Filter valid rows
-      const validRows = validationResults
-        .map((result, index) => ({ result, index }))
-        .filter(({ result }) => result && result.isValid)
-        .map(({ result }) => result.normalizedRow)
-        .filter(row => row !== null);
-
-      if (validRows.length === 0) {
-        showAlert({
-          title: 'No Valid Rows',
-          message: 'No valid rows found to import. Please fix validation errors and try again.',
-          variant: 'error',
-          icon: 'alert-circle-outline'
-        });
-        return;
-      }
-
-      props.setLocalState('importing', true);
+      props.setLocalState('phase', 'uploading')
       try {
-        const result = await viewModel.bulkImportCustomers(validRows);
-        
-        props.setLocalState('importResults', result);
-        
-        if (result.summary.failed > 0) {
-          showAlert({
-            title: 'Import Completed with Errors',
-            message: `Successfully imported ${result.summary.successful} customer(s). ${result.summary.failed} customer(s) failed.`,
-            variant: 'warning',
-            icon: 'warning-outline'
-          });
-        } else {
-          showAlert({
-            title: 'Import Successful',
-            message: `Successfully imported ${result.summary.successful} customer(s).`,
-            variant: 'success',
-            icon: 'checkmark-circle-outline'
-          });
-          handleClose();
-        }
-      } catch (error) {
-        console.error('Error importing customers:', error);
-        showAlert({
-          title: 'Import Failed',
-          message: error.message || 'Failed to import customers',
-          variant: 'error',
-          icon: 'alert-circle-outline'
-        });
-      } finally {
-        props.setLocalState('importing', false);
+        const result = await props.viewModel.bulkImportCustomersFromFile(f)
+        props.setLocalState('uploadResponse', result ?? {
+          success: false,
+          error: 'Import did not return a result',
+          summary: null,
+          results: []
+        })
+        props.setLocalState('phase', 'done')
+      } catch (_err) {
+        const msg = _err?.message || 'Upload failed'
+        props.setLocalState('uploadResponse', {
+          success: false,
+          error: msg.includes('maxContentLength') || msg.includes('maxBodyLength')
+            ? 'Server response was too large for the client. Try again after updating the app, or split the CSV into smaller files.'
+            : msg,
+          summary: null,
+          results: []
+        })
+        props.setLocalState('phase', 'done')
       }
-    };
+    }
 
-    const validCount = validationResults.filter(r => r && r.isValid).length;
-    const invalidCount = validationResults.filter(r => r && !r.isValid).length;
+    const skippedRows =
+      uploadResponse?.results?.filter((r) => r && r.success === false && r.skipped) || []
+    const errorRowsHard =
+      uploadResponse?.results?.filter((r) => r && r.success === false && !r.skipped) || []
+    const allProblemRows =
+      uploadResponse?.results?.filter((r) => r && r.success === false) || []
 
-    return Card({
-      class: 'bg-white rounded-lg shadow-2xl w-full max-w-4xl transform transition-all max-h-[90vh] overflow-hidden flex flex-col'
-    }, [
-      CardHeader({ class: 'flex justify-between items-center px-6 h-12 border-b border-gray-200' }, [
-        Row({ class: 'flex items-center gap-3' }, [
-          IonIcon({ name: 'cloud-upload-outline', class: 'text-xl text-indigo-600' }),
-          Row({ tagType: 'h2', class: 'text-xl font-semibold text-gray-800' }, 'Import Customers'),
-        ]),
-        IconButton({ onClick: handleClose, size: 'medium', delegator }, [
-          IonIcon({ name: 'close-outline', class: 'text-xl' })
-        ])
-      ]),
+    const summary = uploadResponse?.summary || {}
+    const skippedCount =
+      typeof summary.skipped === 'number' ? summary.skipped : skippedRows.length
+    const validationFailed = summary.validationFailed ?? 0
+    const errorCount =
+      typeof summary.errors === 'number'
+        ? summary.errors
+        : errorRowsHard.length
 
-      CardBody({ class: 'flex-1 overflow-y-auto p-6' }, [
-        Row({ class: 'flex flex-col gap-6' }, [
-          // File Selection
-          Row({ class: 'flex flex-col gap-2' }, [
-            Row({ tagType: 'label', class: 'text-sm font-medium text-gray-700' }, 'Select CSV File'),
-            Row({ class: 'flex items-center gap-3' }, [
-              Input({
-                type: 'file',
-                accept: '.csv',
-                id: fileInputId,
-                onChange: handleFileSelect,
-                class: 'flex-1',
-                delegator
-              }),
-            ])
-          ]),
-
-          // File Info
-          file && Row({ class: 'bg-blue-50 border border-blue-200 rounded-lg p-4' }, [
-            Row({ class: 'flex items-center gap-2 text-sm text-blue-800' }, [
-              IonIcon({ name: 'document-outline', class: 'text-lg' }),
-              Row({}, `Selected: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`)
-            ])
-          ]),
-
-          // CSV Format Description
-          Row({ class: 'bg-gray-50 border border-gray-200 rounded-lg p-4' }, [
-            Row({ class: 'text-sm font-semibold text-gray-700 mb-2' }, 'CSV Format:'),
-            Row({ class: 'text-xs text-gray-600' }, [
-              'Required columns: Name\n',
-              'Optional columns: Contact Person, Phone, Email, Address, License No, TIN No, Website, Fax, Country, Customer Type (supplier/retailer/both/other)'
-            ])
-          ]),
-
-          // Validation Summary
-          validationResults.length > 0 && Row({ class: 'flex items-center gap-4 p-4 bg-gray-50 rounded-lg' }, [
-            Row({ class: `px-3 py-1 rounded text-sm font-semibold ${validCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}` }, 
-              `${validCount} valid`
-            ),
-            invalidCount > 0 && Row({ class: 'px-3 py-1 rounded text-sm font-semibold bg-red-100 text-red-700' }, 
-              `${invalidCount} invalid`
-            )
-          ]),
-
-          // Preview Table
-          parsedData.length > 0 && Row({ class: 'flex flex-col gap-2' }, [
-            Row({ tagType: 'h3', class: 'text-sm font-semibold text-gray-700' }, 'Preview (first 10 rows):'),
-            Table({ class: 'border border-gray-200 rounded-lg overflow-hidden' }, [
-              TableHeader({ class: 'bg-gray-50' }, [
-                TableHCell({ class: 'px-3 py-2 text-xs font-semibold text-gray-600' }, 'Row'),
-                TableHCell({ class: 'px-3 py-2 text-xs font-semibold text-gray-600' }, 'Name'),
-                TableHCell({ class: 'px-3 py-2 text-xs font-semibold text-gray-600' }, 'Contact Person'),
-                TableHCell({ class: 'px-3 py-2 text-xs font-semibold text-gray-600' }, 'Phone'),
-                TableHCell({ class: 'px-3 py-2 text-xs font-semibold text-gray-600' }, 'Email'),
-                TableHCell({ class: 'px-3 py-2 text-xs font-semibold text-gray-600' }, 'Type'),
-                TableHCell({ class: 'px-3 py-2 text-xs font-semibold text-gray-600' }, 'Status')
+    const doneBody =
+      uploadResponse &&
+      Row({ class: 'flex flex-col gap-4' }, [
+        Row({ class: 'text-sm font-semibold text-gray-800' }, 'Import result'),
+        Row(
+          { class: 'text-xs text-gray-600 bg-slate-50 border border-slate-200 rounded p-3' },
+          'Valid rows are saved; invalid or duplicate rows are skipped. Duplicate = same contact person as an existing customer or repeated in this file. Name and contact person are required; other columns optional. Re-export from the app is supported (Created At / Last Updated are ignored on import).'
+        ),
+        uploadResponse.error &&
+          Row({ class: 'text-sm text-red-600' }, uploadResponse.error),
+        uploadResponse.summary &&
+          Row({ class: 'bg-gray-50 rounded-lg p-4 border border-gray-200' }, [
+            Row({ class: 'grid grid-cols-2 sm:grid-cols-4 gap-4' }, [
+              Row({ class: 'flex flex-col' }, [
+                Row({ class: 'text-xs text-gray-500 mb-1' }, 'Total rows'),
+                Row({ class: 'text-2xl font-bold text-gray-800' }, String(uploadResponse.summary.total ?? 0))
               ]),
-              TableBody({}, [
-                ...parsedData.slice(0, 10).map((row, index) => {
-                  const validation = validationResults[index];
-                  const isValid = validation && validation.isValid;
-                  return TableRow({
-                    class: isValid ? '' : 'bg-red-50'
-                  }, [
-                    TableDCell({ class: 'px-3 py-2 text-xs text-gray-600' }, index + 1),
-                    TableDCell({ class: 'px-3 py-2 text-xs text-gray-900' }, row.name || row['customer name'] || '—'),
-                    TableDCell({ class: 'px-3 py-2 text-xs text-gray-600' }, row['contact person'] || '—'),
-                    TableDCell({ class: 'px-3 py-2 text-xs text-gray-600' }, row.phone || '—'),
-                    TableDCell({ class: 'px-3 py-2 text-xs text-gray-600' }, row.email || '—'),
-                    TableDCell({ class: 'px-3 py-2 text-xs text-gray-600' }, row['customer type'] || 'supplier'),
-                    TableDCell({ class: 'px-3 py-2 text-xs' }, [
-                      isValid ? 
-                        Row({ class: 'px-2 py-1 rounded bg-green-100 text-green-700 font-semibold' }, 'Valid') :
-                        Row({ class: 'px-2 py-1 rounded bg-red-100 text-red-700 font-semibold' }, 
-                          validation && validation.errors.length > 0 ? validation.errors[0] : 'Invalid'
-                        )
+              Row({ class: 'flex flex-col' }, [
+                Row({ class: 'text-xs text-gray-500 mb-1' }, 'Imported'),
+                Row({ class: 'text-2xl font-bold text-green-600' }, String(uploadResponse.summary.successful ?? 0))
+              ]),
+              Row({ class: 'flex flex-col' }, [
+                Row({ class: 'text-xs text-gray-500 mb-1' }, 'Validation / errors'),
+                Row({ class: 'text-2xl font-bold text-red-600' }, String(errorCount))
+              ]),
+              Row({ class: 'flex flex-col' }, [
+                Row({ class: 'text-xs text-gray-500 mb-1' }, 'Skipped (duplicate)'),
+                Row({ class: 'text-2xl font-bold text-amber-600' }, String(skippedCount))
+              ])
+            ]),
+            validationFailed > 0 &&
+              Row({ class: 'text-xs text-gray-500 mt-2' }, `${validationFailed} row(s) failed validation before insert.`)
+          ]),
+        allProblemRows.length > 0 &&
+          Row({ class: 'flex flex-col gap-2' }, [
+            Row({ class: 'text-sm font-medium text-red-800' }, 'Rows not imported (by CSV line)'),
+            Row({ class: 'border border-red-200 rounded-lg overflow-hidden max-h-72 flex flex-col' }, [
+              Table({ class: 'w-full text-sm' }, [
+                TableHeader({ class: 'bg-red-50 sticky top-0' }, [
+                  TableHCell({ class: 'px-3 py-2 text-left font-semibold text-gray-600' }, 'CSV line'),
+                  TableHCell({ class: 'px-3 py-2 text-left font-semibold text-gray-600' }, 'Detail')
+                ]),
+                TableBody({},
+                  allProblemRows.map((r) =>
+                    TableRow({ key: `c-imp-${r.csvRowNumber}-${r.index}`, class: 'border-t border-red-100' }, [
+                      TableDCell({ class: 'px-3 py-2' }, String(r.csvRowNumber ?? '—')),
+                      TableDCell({ class: 'px-3 py-2 text-red-800' },
+                        `${r.error || '—'}${r.skipped ? ' (duplicate / skipped)' : ''}`)
                     ])
-                  ])
-                })
+                  )
+                )
               ])
             ])
           ]),
-
-          // Import Results
-          importResults && Row({ class: 'bg-blue-50 border border-blue-200 rounded-lg p-4' }, [
-            Row({ class: 'text-sm font-semibold text-blue-800 mb-2' }, 'Import Results:'),
-            Row({ class: 'text-sm text-blue-700' }, 
-              `Total: ${importResults.summary.total}, Successful: ${importResults.summary.successful}, Failed: ${importResults.summary.failed}`
-            )
+        uploadResponse.summary &&
+          (uploadResponse.summary.failed ?? 0) === 0 &&
+          (uploadResponse.summary.successful ?? 0) > 0 &&
+          Row({ class: 'bg-green-50 border border-green-200 rounded p-3 text-sm text-green-800' }, [
+            'All rows imported successfully.'
           ])
-        ])
-      ]),
-
-      CardFooter({ class: 'flex justify-end gap-3 px-6 py-4 border-t border-gray-200' }, [
-        Button({ variant: 'secondary', onClick: handleClose, delegator }, 'Close'),
-        Button({ 
-          variant: 'primary', 
-          delegator, 
-          onClick: handleImport, 
-          disabled: importing || validCount === 0 || !file
-        }, importing ? [Spinner(), ' Importing...'] : 'Import Customers'),
       ])
-    ]);
-  }
-  
-  return StatefulRow({ 
-    class: 'fixed inset-0 bg-gray-800/0 flex items-center justify-center', 
-    viewModel, 
-    stateKeys: ['loading'] 
-  }, render) 
-};
 
-export default ModalContent;
+    const pickBody = Row({ class: 'flex flex-col gap-4' }, [
+      Row({ class: 'text-xs text-gray-500' }, 'CSV only. Maximum file size 50MB. Required: Name, Contact Person. Other columns match export (Phone, Email, Address, …). Import runs on the server; valid rows are inserted and the rest are reported below.'),
+      Row({ class: 'flex flex-wrap items-center gap-2' }, [
+        Button(
+          {
+            variant: 'secondary',
+            delegator,
+            onClick: () => downloadCustomerImportTemplate()
+          },
+          Row({ class: 'flex items-center gap-2' }, [
+            IonIcon({ name: 'download-outline', class: 'text-lg' }),
+            'Download CSV template'
+          ])
+        )
+      ]),
+      Input({
+        type: 'file',
+        name: fileInputId,
+        accept: '.csv',
+        onChange: onInputChange,
+        class: 'hidden',
+        delegator
+      }),
+      Row({
+        class: `rounded-xl border-2 min-h-[200px] w-full flex flex-col items-center justify-center px-6 py-12 transition-colors ${
+          selectedFile
+            ? 'border-gray-200 border-solid bg-white'
+            : `border-dashed cursor-pointer ${
+                dragOver ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300 bg-gray-50 hover:border-indigo-300'
+              }`
+        }`,
+        events: {
+          dragover: (ev) => {
+            ev.preventDefault()
+            props.setLocalState('dragOver', true)
+          },
+          dragleave: () => props.setLocalState('dragOver', false),
+          drop: onDrop
+        },
+        delegator
+      }, [
+        !selectedFile &&
+          Row({
+            tagType: 'label',
+            attributes: { for: fileInputId },
+            class: 'flex flex-col items-center justify-center gap-3 w-full cursor-pointer',
+            delegator
+          }, [
+            IonIcon({ name: 'cloud-upload-outline', class: 'text-5xl text-indigo-500' }),
+            Row({ class: 'text-center text-sm font-medium text-gray-700' }, 'Drop your CSV here, or click to browse'),
+            Row({ class: 'text-center text-xs text-gray-500' }, 'Max 50MB')
+          ]),
+        selectedFile &&
+          Row({ class: 'flex flex-col items-center justify-center gap-3 w-full max-w-md mx-auto text-center' }, [
+            IonIcon({ name: 'document-text-outline', class: 'text-5xl text-gray-400' }),
+            Row({ class: 'text-sm font-medium text-gray-900 break-all' }, selectedFile.name),
+            Row({ class: 'text-xs text-gray-500' }, `${(selectedFile.size / 1024).toFixed(1)} KB`),
+            Row({
+              tagType: 'button',
+              attributes: { type: 'button' },
+              class:
+                'text-sm text-red-600 hover:text-red-800 font-medium bg-transparent border-0 cursor-pointer p-0 mx-auto',
+              events: { click: removeFile },
+              delegator
+            }, 'Remove file')
+          ])
+      ].filter(Boolean))
+    ])
+
+    return Card(
+      { class: 'bg-white rounded-lg shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col shrink-0' },
+      [
+        CardHeader({ class: 'flex justify-between items-center px-6 h-12 border-b border-gray-200' }, [
+          Row({ class: 'flex items-center gap-3' }, [
+            IonIcon({ name: 'cloud-upload-outline', class: 'text-xl text-indigo-600' }),
+            Row({ tagType: 'h2', class: 'text-xl font-semibold text-gray-800' }, 'Import customers')
+          ]),
+          IconButton({ onClick: handleClose, size: 'medium', delegator }, [
+            IonIcon({ name: 'close-outline', class: 'text-xl' })
+          ])
+        ]),
+        CardBody({ class: 'flex-1 overflow-y-auto p-6' }, [
+          phase === 'pick' && pickBody,
+          phase === 'uploading' &&
+            Row({ class: 'flex flex-col items-center justify-center gap-4 py-16' }, [
+              Spinner({ class: 'w-8 h-8' }),
+              Row({ class: 'text-sm text-gray-600' }, 'Uploading and importing…')
+            ]),
+          phase === 'done' && doneBody
+        ]),
+        CardFooter({ class: 'flex justify-end gap-3 px-6 py-4 border-t border-gray-200' }, [
+          phase === 'pick' && Button({ variant: 'secondary', onClick: handleClose, delegator }, 'Cancel'),
+          phase === 'pick' &&
+            Button(
+              {
+                variant: 'primary',
+                delegator,
+                disabled: !selectedFile,
+                onClick: handleConfirm
+              },
+              'Confirm & Upload'
+            ),
+          phase === 'done' &&
+            Button(
+              {
+                variant: 'primary',
+                delegator,
+                onClick: () => {
+                  props.setLocalState('phase', 'pick')
+                  props.setLocalState('selectedFile', null)
+                  props.setLocalState('uploadResponse', null)
+                  handleClose()
+                }
+              },
+              'Done'
+            )
+        ])
+      ]
+    )
+  }
+
+  return StatefulRow({
+    class: 'fixed inset-0 flex w-full items-center justify-center p-4 box-border',
+    viewModel,
+    delegator,
+    stateKeys: ['loading']
+  }, render)
+}
+
+export default ModalContent

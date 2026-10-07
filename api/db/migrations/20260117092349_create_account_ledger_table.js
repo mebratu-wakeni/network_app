@@ -1,6 +1,7 @@
 export const up = async (knex) => {
   await knex.schema.createTable('account_ledger', (t) => {
     t.bigIncrements('id').primary()
+    t.bigInteger('tenant_id').unsigned().notNullable()
     t.date('transaction_date').notNullable()
     t.string('reference_number', 255)
     t.string('reference_type', 50)
@@ -26,12 +27,14 @@ export const up = async (knex) => {
     t.string('sync_status', 255).defaultTo('pending')
     
     // Foreign Keys
+    t.foreign('tenant_id').references('id').inTable('tenants').onDelete('CASCADE')
     t.foreign('debit_account_id').references('id').inTable('chart_of_accounts')
     t.foreign('credit_account_id').references('id').inTable('chart_of_accounts')
     t.foreign('inventory_id').references('id').inTable('inventories')
     t.foreign('created_by').references('id').inTable('users')
     
     // Indexes
+    t.index('tenant_id', 'account_ledger_tenant_id_index')
     t.index('transaction_date', 'account_ledger_transaction_date_index')
     t.index('debit_account_id', 'account_ledger_debit_account_id_index')
     t.index('credit_account_id', 'account_ledger_credit_account_id_index')

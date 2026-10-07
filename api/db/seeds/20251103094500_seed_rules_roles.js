@@ -1,4 +1,3 @@
-import bcrypt from 'bcrypt'
 export const seed = async (knex) => {
   // Clear existing
   await knex('role_rules').del()
@@ -138,43 +137,10 @@ export const seed = async (knex) => {
 
   await knex('role_rules').insert(roleRules);
 
-  
-
-  async function hashPassword(password) {
-    const saltRounds = 10
-    return bcrypt.hash(password, saltRounds)
-  }
-
-  // Check if admin user exists
-  const existingAdmin = await knex('users').where({username: 'admin'}).first();
-  
-  // If admin exists, set bin_cards.created_by to NULL for records referencing this user
-  // to avoid foreign key constraint violation when deleting/updating
-  if (existingAdmin) {
-    await knex('bin_cards').where({created_by: existingAdmin.id}).update({created_by: null});
-    // Also remove existing role assignments
-    await knex('user_roles').where({user_id: existingAdmin.id}).del();
-    // Delete the user
-    await knex('users').where({username: 'admin'}).del();
-  }
-
-  // create admin user 
-  const adminUser = {
-    username: 'admin',
-    display_name: 'Site Administrator',
-    password_hash: await hashPassword('adminuser'),
-    is_active: true
-  }
-
-  // Insert user
-  const [insertedAdmin] = await knex('users')
-    .insert(adminUser)
-    .returning(['id'])
-
-  // Assign the 'Admin' role
-  await knex('user_roles').insert({
-    user_id: insertedAdmin.id,
-    role_id: roleIdByName.get('Admin')
-  })
+  // NOTE: roles/rules are global (shared across all tenants) and are the only
+  // thing this seed provisions. The initial admin user is NOT created here --
+  // in the multi-tenant cloud deployment each tenant gets its own admin user
+  // (and its own chart of accounts / walk-in customer) at tenant-creation time.
+  // See TenantsService.createTenant() for that per-tenant provisioning step.
 }
 

@@ -1,0 +1,7 @@
+product name,unit,unit cost,quantity,category,location,expiry date,batch number,selling price,product code
+,Box,5.00,10,Fixture Category,Main Store,,,,
+Fixture Bad Expiry Format,Box,5.00,10,Fixture Category,Main Store,2026-04-30,,,
+Fixture Zero Selling Price,Box,5.00,10,Fixture Category,Main Store,31/12/2026,,0.00,
+Fixture Zero Quantity,Box,5.00,0,Fixture Category,Main Store,,,,
+Fixture Zero Unit Cost,Box,0.00,10,Fixture Category,Main Store,,,,
+Fixture Negative Quantity,Box,5.00,-5,Fixture Category,Main Store,,,,

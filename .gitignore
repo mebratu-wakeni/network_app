@@ -1,20 +1,22 @@
 node_modules
 .DS_Store
 dist
-.env
-.env.*
 .vscode
 .idea
 coverage
 postgres-data
+db-data/
 
-api/.env
-web/.env
-.env.local
-
+# App icon for electron-builder (exception)
 node_modules/
 dist/
 build/
+!app/build/
+
+# Electron build output
+app/dist-electron/
+app/release/
+app/release-cloud/
 
 # Logs
 logs
@@ -30,6 +32,25 @@ dist
 dist-ssr
 *.local
 
+# Environment files
+.env
+.env.*
+!.env.example
+api/.env
+api/.env.*
+!api/.env.example
+
+# Local databases and runtime uploads
+api/data/
+api/uploads/
+*.db
+*.db-shm
+*.db-wal
+
+# macOS resource fork / metadata files (created when zipping on macOS)
+._*
+__MACOSX/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -40,7 +61,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-db-data/
 
-
-
+# Local deployment artifacts (not for version control)
+masatech-deploy.tar.gz
+masatech-db-init*.sql
+api.tar.gz
+dist-release/
+api/admin-dist/
+masatech-admin/dist/

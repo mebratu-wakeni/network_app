@@ -1,0 +1,28 @@
+export class PlatformAdminsRepository {
+  constructor(knex) {
+    this.knex = knex
+  }
+
+  async findByUsername(username) {
+    return this.knex('platform_admins')
+      .where({ username: String(username || '').toLowerCase().trim() })
+      .andWhere('is_active', true)
+      .first()
+  }
+
+  async findById(id) {
+    return this.knex('platform_admins').where({ id, is_active: true }).first()
+  }
+
+  async updatePassword(id, password_hash) {
+    return this.knex('platform_admins')
+      .where({ id })
+      .update({ password_hash, last_updated: this.knex.fn.now() })
+  }
+
+  async updateLastSeen(id) {
+    return this.knex('platform_admins')
+      .where({ id })
+      .update({ last_updated: this.knex.fn.now() })
+  }
+}

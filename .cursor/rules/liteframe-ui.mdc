@@ -1,0 +1,29 @@
+---
+description: Liteframe UI, ViewModels, modals, and module layout for PharmaSuit front-end
+alwaysApply: true
+---
+
+# Liteframe and UI modules
+
+When working on **PharmaSuit front-end** UI (`app/src/components/**`, especially modules, navigation, modals), treat these as authoritative:
+
+- **`docs/liteframe.md`** — `Row`, `EventDelegator`, `StatefulRow`, `ViewModel` / state, `Router` behavior.
+- **`docs/UI-pattern.json`** — how to add a module, navigation hooks, modal pattern, checklist.
+
+## Non-negotiables
+
+1. **Delegated events:** `Row` handlers run through `EventDelegator`. **Modals:** `Modal.js` builds `new EventDelegator(modal)` — pass that **`delegator`** into **every** interactive `Row` inside the modal (`events`, and `StatefulRow` there). Missing `delegator` → clicks/`change` often do nothing.
+
+2. **StatefulRow `stateKeys`:** **Keep the list tiny** — this project’s pattern is usually **`['loading']` only** (one subscriber drives morph). In `render`, use **`props.viewModel.getState(...)`** for lists and other VM fields. **Do not** list every VM key in `stateKeys` (each key = extra rerenders). **Local state** (`getLocalState` / `setLocalState`): use **minimally** for trivial UI flags; many screens skip it.
+
+3. **ViewModel:** Implement **`initializeState()`**; **`setState(key, initial)`** once per key; **`updateState`** for changes. Prefer **`execute(asyncFn)`** for async IPC. See existing modules (e.g. `Inventory.js` + `InventoryVM.js`).
+
+4. **New feature module:** Add **`NavigationVM`** `menuOptions` entry + a branch in **`NavigationUI.js`** `router.addRoute` that returns your `*UI()` root (must return a **truthy** DOM node so the router swaps the view). Use **`ROUTE_CLEANUP_REGISTRY`** only if the route needs teardown cleanup.
+
+5. **Match repo style:** This codebase uses **`Row({ class: 'tailwind…' }, children)`** — follow neighbors in the same folder for `class`, imports from `components/utils/`, and IPC via `window.ipcRenderer.invoke`.
+
+## Do not
+
+- Put `events` on `Row` inside a modal without the **modal’s** `delegator`.
+- Rely on `document.getElementById(...).click()` for primary UX when delegated `Row` is the pattern; prefer label `for` + file input `id`, or delegated handlers.
+- Expect the UI to morph when only **non-`stateKeys`** VM fields change — **morph runs when a subscribed key updates**; tie visible refresh to **`loading`** (or another listed key), or add a **second `stateKey` on purpose**.

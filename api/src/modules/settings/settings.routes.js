@@ -7,7 +7,7 @@ import { SettingsRepository } from './settings.repository.js'
 import { SettingsService } from './settings.service.js'
 import { SettingsController } from './settings.controller.js'
 import { validate, updateSettingsSchema } from './settings.schema.js'
-import { authenticate, requireRules } from '../../middleware/auth.js'
+import { authenticate, requireRules, requireTenant } from '../../middleware/auth.js'
 
 const repository = new SettingsRepository(knex)
 const service = new SettingsService(repository)
@@ -15,7 +15,7 @@ const controller = new SettingsController(service)
 
 const router = Router()
 
-router.use(authenticate)
+router.use(authenticate, requireTenant)
 
 router.get('/', controller.getSettings)
 router.patch('/', requireRules(['CanEditSettings']), validate(updateSettingsSchema), controller.updateSettings)

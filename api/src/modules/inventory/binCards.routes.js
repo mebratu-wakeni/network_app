@@ -4,7 +4,7 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate, requireRules } from '../../middleware/auth.js'
+import { authenticate, requireRules, requireTenant } from '../../middleware/auth.js'
 import { BinCardsRepository } from './binCards.repository.js'
 import { BinCardsService } from './binCards.service.js'
 import { BinCardsController } from './binCards.controller.js'
@@ -16,8 +16,8 @@ const controller = new BinCardsController(service)
 
 const router = Router()
 
-// All routes require authentication
-router.use(authenticate)
+// All routes require authentication and tenant context
+router.use(authenticate, requireTenant)
 
 // Get bin card transactions for a product - requires CanSeeProductDetails rule
 router.get(

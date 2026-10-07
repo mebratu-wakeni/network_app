@@ -4,11 +4,12 @@
  */
 import { Router } from 'express'
 import knex from '../../db/knex.js'
-import { authenticate, requireRules } from '../../middleware/auth.js'
+import { authenticate, requireRules, requireTenant } from '../../middleware/auth.js'
 import { InventoriesRepository } from './inventories.repository.js'
 import { InventoriesService } from './inventories.service.js'
 import { InventoriesController } from './inventories.controller.js'
 import { validate, bulkImportStockSchema, updateStockItemSchema, adjustStockItemSchema, borrowFromStockSchema, returnBorrowedToStockSchema, returnBorrowedFromStockSchema } from './inventories.schema.js'
+import { uploadCsvFile } from '../../middleware/uploadCsv.js'
 
 // Initialize dependencies (Dependency Injection pattern)
 const repository = new InventoriesRepository(knex)
@@ -17,11 +18,18 @@ const controller = new InventoriesController(service)
 
 const router = Router()
 
-// All routes require authentication
-router.use(authenticate)
+// All routes require authentication and tenant context
+router.use(authenticate, requireTenant)
 
 // List stock/inventories - requires CanSeeStockItemDetails rule
 router.post('/', controller.list)
+
+router.post(
+  '/bulk-import-upload',
+  requireRules(['CanImportStock']),
+  uploadCsvFile,
+  controller.bulkImportUpload
+)
 
 // Bulk import stock - requires CanImportStock rule
 router.post(
