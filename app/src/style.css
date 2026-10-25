@@ -87,7 +87,7 @@
   top: 36%;
   left: 50%;
   transform: translate(-50%, -50%) rotate(-32deg);
-  font-size: clamp(2.4rem, 9vw, 4.25rem);
+  font-size: clamp(3.25rem, 11vw, 5.25rem);
   color: rgba(17, 17, 17, 0.12);
   font-weight: 800;
   user-select: none;
@@ -95,7 +95,7 @@
   z-index: 0;
   white-space: nowrap;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   line-height: 1;
 }
 
@@ -597,9 +597,9 @@
   }
   .receipt-print-area .watermark {
     top: 36% !important;
-    font-size: 36pt !important;
+    font-size: 48pt !important;
     font-weight: 800 !important;
-    letter-spacing: 0.08em !important;
+    letter-spacing: 0.06em !important;
     color: rgba(17, 17, 17, 0.12) !important;
     -webkit-text-fill-color: rgba(17, 17, 17, 0.12) !important;
     -webkit-print-color-adjust: exact !important;
