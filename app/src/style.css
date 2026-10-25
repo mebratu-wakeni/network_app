@@ -83,11 +83,11 @@
 
 .receipt-print-area .watermark {
   position: absolute;
-  /* Sit over header/items — not mid empty page when line count is low. */
-  top: 28%;
+  /* Below header, above page mid — avoids top crop in print and empty mid-page on short receipts. */
+  top: 36%;
   left: 50%;
   transform: translate(-50%, -50%) rotate(-32deg);
-  font-size: clamp(3.5rem, 14vw, 6.5rem);
+  font-size: clamp(2.4rem, 9vw, 4.25rem);
   color: rgba(17, 17, 17, 0.12);
   font-weight: 800;
   user-select: none;
@@ -95,7 +95,7 @@
   z-index: 0;
   white-space: nowrap;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   line-height: 1;
 }
 
@@ -596,9 +596,10 @@
     color: #111 !important;
   }
   .receipt-print-area .watermark {
-    font-size: 64pt !important;
+    top: 36% !important;
+    font-size: 36pt !important;
     font-weight: 800 !important;
-    letter-spacing: 0.12em !important;
+    letter-spacing: 0.08em !important;
     color: rgba(17, 17, 17, 0.12) !important;
     -webkit-text-fill-color: rgba(17, 17, 17, 0.12) !important;
     -webkit-print-color-adjust: exact !important;
