@@ -83,18 +83,23 @@
 
 .receipt-print-area .watermark {
   position: absolute;
-  top: 42%;
+  top: 48%;
   left: 50%;
-  transform: translate(-50%, -50%) rotate(-38deg);
-  font-size: 3.75rem;
-  color: rgba(17, 17, 17, 0.05);
-  font-weight: 700;
+  transform: translate(-50%, -50%) rotate(-32deg);
+  font-size: clamp(3.5rem, 14vw, 6.5rem);
+  color: rgba(17, 17, 17, 0.12);
+  font-weight: 800;
   user-select: none;
   pointer-events: none;
   z-index: 0;
   white-space: nowrap;
   text-transform: uppercase;
-  letter-spacing: 2px;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.receipt-print-area .watermark.attachment {
+  color: rgba(17, 17, 17, 0.12);
 }
 
 .receipt-print-area .watermark.reversed {
@@ -590,14 +595,21 @@
     color: #111 !important;
   }
   .receipt-print-area .watermark {
-    font-size: 3.5rem !important;
-    color: rgba(17, 17, 17, 0.04) !important;
+    font-size: 64pt !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.12em !important;
+    color: rgba(17, 17, 17, 0.12) !important;
+    -webkit-text-fill-color: rgba(17, 17, 17, 0.12) !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
+  .receipt-print-area .watermark.attachment {
+    color: rgba(17, 17, 17, 0.12) !important;
+    -webkit-text-fill-color: rgba(17, 17, 17, 0.12) !important;
+  }
   .receipt-print-area .watermark.reversed {
-    color: rgba(185, 28, 28, 0.28) !important;
-    -webkit-text-fill-color: rgba(185, 28, 28, 0.28) !important;
+    color: rgba(185, 28, 28, 0.22) !important;
+    -webkit-text-fill-color: rgba(185, 28, 28, 0.22) !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }

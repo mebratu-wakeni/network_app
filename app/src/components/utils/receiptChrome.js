@@ -16,10 +16,17 @@ function cellText(value) {
   return t || '—';
 }
 
-export function receiptWatermark(text, delegator) {
+/**
+ * Diagonal background watermark.
+ * @param {string} text
+ * @param {object} delegator
+ * @param {'attachment'|'reversed'} [variant='attachment']
+ */
+export function receiptWatermark(text, delegator, variant = 'attachment') {
+  const isReversed = variant === 'reversed';
   return Row({
-    classNames: ['watermark', 'reversed'],
-    children: [text || 'REVERSED'],
+    classNames: ['watermark', isReversed ? 'reversed' : 'attachment'],
+    children: [text || (isReversed ? 'REVERSED' : 'ATTACHEMENT')],
     delegator,
   });
 }
