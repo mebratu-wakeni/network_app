@@ -83,7 +83,8 @@
 
 .receipt-print-area .watermark {
   position: absolute;
-  top: 48%;
+  /* Sit over header/items — not mid empty page when line count is low. */
+  top: 28%;
   left: 50%;
   transform: translate(-50%, -50%) rotate(-32deg);
   font-size: clamp(3.5rem, 14vw, 6.5rem);

@@ -52,8 +52,8 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
     classNames: ['receipt-container'],
     children: [
       isReversed
-        ? receiptWatermark(receiptData.watermarkText || 'REVERSED', delegator, 'reversed')
-        : receiptWatermark(receiptData.watermarkText || 'ATTACHEMENT', delegator, 'attachment'),
+        ? receiptWatermark('REVERSED', delegator, 'reversed')
+        : receiptWatermark('ATTACHEMENT', delegator, 'attachment'),
       receiptLetterhead(fromCompany, delegator),
       receiptCopyBar('Company copy', delegator),
       receiptDocTitle('Purchase Receipt', delegator),

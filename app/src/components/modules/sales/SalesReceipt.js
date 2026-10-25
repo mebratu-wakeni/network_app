@@ -47,9 +47,10 @@ export function SalesReceipt(receiptData, delegator = Liteframe.mainDelegator, i
   return Row({
     classNames: ['receipt-container'],
     children: [
+      // Attachment mark is the default paper watermark; REVERSED only when the order is reversed.
       isReversed
-        ? receiptWatermark(receiptData.watermarkText || 'REVERSED', delegator, 'reversed')
-        : receiptWatermark(receiptData.watermarkText || 'ATTACHEMENT', delegator, 'attachment'),
+        ? receiptWatermark('REVERSED', delegator, 'reversed')
+        : receiptWatermark('ATTACHEMENT', delegator, 'attachment'),
       receiptLetterhead(fromCompany, delegator),
       receiptCopyBar('Customer copy', delegator),
       receiptDocTitle('Sales Receipt', delegator),

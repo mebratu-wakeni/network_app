@@ -110,7 +110,7 @@ export function buildReceiptData(receipt, settings) {
       emailLink: (settings.company_email || '').trim(),
       softwareCredit: 'PharmaSuit by MasaTech',
     },
-    watermarkText: 'REVERSED',
+    watermarkText: 'ATTACHEMENT',
   };
 }
 
