@@ -37,10 +37,11 @@
 
 /* ========== Receipt — dense A4 paper layout (screen preview + print) ========== */
 .receipt-print-area {
+  /* Single dark ink for all receipt text — printers wash out gray/muted colors. */
   --receipt-ink: #111111;
-  --receipt-text: #1a1a1a;
-  --receipt-muted: #3f3f3f;
-  --receipt-border: #222222;
+  --receipt-text: #111111;
+  --receipt-muted: #111111;
+  --receipt-border: #111111;
   --receipt-rule: #111111;
   --receipt-bg: #ffffff;
   --receipt-bg-head: #f0f0f0;
@@ -50,7 +51,7 @@
   font-family: var(--receipt-font);
   font-size: 12px;
   line-height: 1.25;
-  color: var(--receipt-text);
+  color: var(--receipt-ink);
   background: var(--receipt-bg);
 }
 
@@ -218,10 +219,13 @@
   word-break: break-word;
 }
 
-.receipt-print-area .receipt-meta-value.receipt-status-paid { color: #166534; }
+/* Status stays same ink as body text for print visibility (hierarchy via weight). */
+.receipt-print-area .receipt-meta-value.receipt-status-paid,
 .receipt-print-area .receipt-meta-value.receipt-status-partial,
-.receipt-print-area .receipt-meta-value.receipt-status-unpaid { color: #9a3412; }
-.receipt-print-area .receipt-meta-value.receipt-status-reversed { color: #991b1b; }
+.receipt-print-area .receipt-meta-value.receipt-status-unpaid,
+.receipt-print-area .receipt-meta-value.receipt-status-reversed {
+  color: var(--receipt-ink);
+}
 
 /* --- Party blocks --- */
 .receipt-print-area .receipt-party-box,
@@ -492,7 +496,7 @@
   font-style: normal;
   text-transform: none;
   letter-spacing: 0;
-  color: #6b7280;
+  color: var(--receipt-ink);
 }
 
 /* ========== Print / PDF ========== */
@@ -573,7 +577,17 @@
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
-    color: #6b7280 !important;
+    color: #111 !important;
+  }
+  .receipt-print-area .receipt-meta-value.receipt-status-paid,
+  .receipt-print-area .receipt-meta-value.receipt-status-partial,
+  .receipt-print-area .receipt-meta-value.receipt-status-unpaid,
+  .receipt-print-area .receipt-meta-value.receipt-status-reversed,
+  .receipt-print-area .receipt-meta-label,
+  .receipt-print-area .receipt-party-label,
+  .receipt-print-area .receipt-signature-label,
+  .receipt-print-area .receipt-software-credit {
+    color: #111 !important;
   }
   .receipt-print-area .watermark {
     font-size: 3.5rem !important;
