@@ -3,7 +3,7 @@
 # Website buttons still hit server.masatechplc.com/downloads/cloud-multi/1.0.6/*
 # Windows Setup.exe URLs. Large EXE FTPS often fails; this pushes the small API
 # redirect (api/src/app.js) + Passenger restart.txt so Node 302s those URLs to
-# the GitHub Release assets (desktop-cloud-v1.0.7).
+# the GitHub Release assets (desktop-cloud-v1.0.8).
 #
 # FTPS pattern matches Restore cloud-multi Windows installers:
 #   curl --ftp-ssl --insecure --user … -T file "ftp://host/path"
@@ -16,7 +16,7 @@ on:
       release_tag:
         description: 'GitHub Release tag that holds the Windows EXEs'
         required: true
-        default: 'desktop-cloud-v1.0.7'
+        default: 'desktop-cloud-v1.0.8'
 
 permissions:
   contents: read
