@@ -2,7 +2,8 @@
  * Link each borrow_from_returns row to the obligation (borrow_from_inventories.id).
  * Column stays nullable for safety; backfill assigns existing rows where possible.
  *
- * Managed Cloud (PostgreSQL on cPanel): run via `npm run migrate` on deploy / NPM Install.
+ * Managed Cloud (PostgreSQL on cPanel / phpPgAdmin only):
+ *   api/db/sql/20260716120000_add_borrow_from_inventory_id_to_borrow_from_returns.sql
  */
 
 export const up = async (knex) => {
