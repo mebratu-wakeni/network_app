@@ -18,9 +18,9 @@ describe('cloud-multi Windows download fallbacks', () => {
     downloadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ps-dl-'))
     fs.mkdirSync(path.join(downloadsRoot, 'cloud-multi', '1.0.6'), { recursive: true })
     process.env.DOWNLOADS_STATIC_DIR = downloadsRoot
-    process.env.CLOUD_MULTI_WINDOWS_RELEASE_TAG = 'desktop-cloud-v1.0.8'
+    process.env.CLOUD_MULTI_WINDOWS_RELEASE_TAG = 'desktop-cloud-v1.0.9'
     process.env.CLOUD_MULTI_WINDOWS_RELEASE_BASE =
-      'https://github.com/mebratu-wakeni/network_app/releases/download/desktop-cloud-v1.0.8'
+      'https://github.com/mebratu-wakeni/network_app/releases/download/desktop-cloud-v1.0.9'
   })
 
   afterEach(() => {
@@ -35,9 +35,9 @@ describe('cloud-multi Windows download fallbacks', () => {
 
   it('resolveCloudWindowsRelease derives versioned asset names from the tag', () => {
     const r = resolveCloudWindowsRelease()
-    expect(r.version).toBe('1.0.8')
-    expect(r.x64).toBe('PharmaSuit-Cloud-Windows-1.0.8-x64-Setup.exe')
-    expect(r.ia32).toBe('PharmaSuit-Cloud-Windows-1.0.8-ia32-Setup.exe')
+    expect(r.version).toBe('1.0.9')
+    expect(r.x64).toBe('PharmaSuit-Cloud-Windows-1.0.9-x64-Setup.exe')
+    expect(r.ia32).toBe('PharmaSuit-Cloud-Windows-1.0.9-ia32-Setup.exe')
   })
 
   it('redirects website 1.0.6 Windows Setup.exe URLs to the GitHub Release', async () => {
@@ -47,7 +47,7 @@ describe('cloud-multi Windows download fallbacks', () => {
     )
     expect(res.status).toBe(302)
     expect(res.headers.location).toBe(
-      'https://github.com/mebratu-wakeni/network_app/releases/download/desktop-cloud-v1.0.8/PharmaSuit-Cloud-Windows-1.0.8-x64-Setup.exe'
+      'https://github.com/mebratu-wakeni/network_app/releases/download/desktop-cloud-v1.0.9/PharmaSuit-Cloud-Windows-1.0.9-x64-Setup.exe'
     )
   })
 
@@ -57,7 +57,7 @@ describe('cloud-multi Windows download fallbacks', () => {
       '/downloads/cloud-multi/1.0.6/PharmaSuit-Cloud-Windows-1.0.6-ia32-Setup.exe'
     )
     expect(res.status).toBe(302)
-    expect(res.headers.location).toContain('PharmaSuit-Cloud-Windows-1.0.8-ia32-Setup.exe')
+    expect(res.headers.location).toContain('PharmaSuit-Cloud-Windows-1.0.9-ia32-Setup.exe')
   })
 
   it('serves a GitHub-backed latest.json when on-disk Windows installers are missing', async () => {
@@ -75,9 +75,9 @@ describe('cloud-multi Windows download fallbacks', () => {
     const app = createApp()
     const res = await request(app).get('/downloads/cloud-multi/latest.json')
     expect(res.status).toBe(200)
-    expect(res.body.version).toBe('1.0.8')
+    expect(res.body.version).toBe('1.0.9')
     expect(res.body.artifacts.win.url).toContain(
-      'releases/download/desktop-cloud-v1.0.8/PharmaSuit-Cloud-Windows-1.0.8-Setup.exe'
+      'releases/download/desktop-cloud-v1.0.9/PharmaSuit-Cloud-Windows-1.0.9-Setup.exe'
     )
   })
 })

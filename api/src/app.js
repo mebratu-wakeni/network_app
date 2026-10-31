@@ -53,8 +53,8 @@ function resolveDownloadsPath() {
  */
 export function resolveCloudWindowsRelease() {
   const tag =
-    process.env.CLOUD_MULTI_WINDOWS_RELEASE_TAG || 'desktop-cloud-v1.0.8'
-  const version = String(tag).replace(/^desktop-cloud-v/i, '') || '1.0.8'
+    process.env.CLOUD_MULTI_WINDOWS_RELEASE_TAG || 'desktop-cloud-v1.0.9'
+  const version = String(tag).replace(/^desktop-cloud-v/i, '') || '1.0.9'
   const base =
     process.env.CLOUD_MULTI_WINDOWS_RELEASE_BASE ||
     `https://github.com/mebratu-wakeni/network_app/releases/download/${tag}`

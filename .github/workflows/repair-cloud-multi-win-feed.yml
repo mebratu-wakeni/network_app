@@ -19,7 +19,7 @@ on:
       tag:
         description: 'GitHub Release tag holding the correct EXEs'
         required: true
-        default: 'desktop-cloud-v1.0.8'
+        default: 'desktop-cloud-v1.0.9'
   push:
     branches:
       - main
@@ -59,7 +59,7 @@ jobs:
           DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
           DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
           VERSION: ${{ github.event.inputs.version || '1.0.8' }}
-          TAG: ${{ github.event.inputs.tag || 'desktop-cloud-v1.0.8' }}
+          TAG: ${{ github.event.inputs.tag || 'desktop-cloud-v1.0.9' }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           chmod +x scripts/repair-cloud-multi-win-feed.sh
@@ -71,7 +71,7 @@ jobs:
           {
             echo "### Repair cloud-multi Windows update feed"
             echo "- Version: \`${{ github.event.inputs.version || '1.0.8' }}\`"
-            echo "- Tag: \`${{ github.event.inputs.tag || 'desktop-cloud-v1.0.8' }}\`"
+            echo "- Tag: \`${{ github.event.inputs.tag || 'desktop-cloud-v1.0.9' }}\`"
             echo "- Feed: https://server.masatechplc.com/downloads/cloud-multi/latest.yml"
             echo "- Retry in-app update after this job is green."
           } >> "$GITHUB_STEP_SUMMARY"
