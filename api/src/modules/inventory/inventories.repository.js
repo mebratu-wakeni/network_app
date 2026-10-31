@@ -889,26 +889,61 @@ export class InventoriesRepository {
     // Check if borrow_from_returns table exists for calculating return status
     const returnsTableExists = await this.knex.schema.hasTable('borrow_from_returns')
     
-    // Fetch all return data in one query for performance
-    let returnDataMap = new Map() // Map<inventoryId, totalReturned>
-    if (returnsTableExists && results.length > 0) {
+    const hasObligationCol = returnsTableExists
+      ? await this._borrowFromReturnsHasObligationColumn()
+      : false
+
+    /** @type {Map<number, number>} borrow_from_inventories.id → total returned */
+    let returnByBorrowId = new Map()
+    /** @type {Map<number, number>} legacy FIFO for NULL obligation rows per inventory_id */
+    const legacyByInventory = new Map()
+
+    if (returnsTableExists && results.length > 0 && hasObligationCol) {
+      const borrowIds = results.map((r) => Number(r.id))
+      const linkedRows = await this.knex('borrow_from_returns')
+        .where({ tenant_id: tenantId })
+        .whereIn('borrow_from_inventory_id', borrowIds)
+        .select('borrow_from_inventory_id', 'quantity_returned')
+
+      linkedRows.forEach((row) => {
+        const bId = Number(row.borrow_from_inventory_id)
+        const qty = parseInt(row.quantity_returned || 0, 10)
+        returnByBorrowId.set(bId, (returnByBorrowId.get(bId) || 0) + qty)
+      })
+
+      const inventoryIds = [...new Set(
+        results.map((r) => r.inventory_id).filter((id) => id != null).map(Number)
+      )]
+      for (const invId of inventoryIds) {
+        legacyByInventory.set(
+          invId,
+          await this._legacyNullReturnQtyByBorrowFromId(tenantId, invId)
+        )
+      }
+    } else if (returnsTableExists && results.length > 0) {
       const inventoryIds = results
-        .map(r => r.inventory_id)
-        .filter(id => id != null)
-        .map(id => Number(id))
-      
+        .map((r) => r.inventory_id)
+        .filter((id) => id != null)
+        .map(Number)
+
       if (inventoryIds.length > 0) {
         const returnRows = await this.knex('borrow_from_returns')
           .where({ tenant_id: tenantId })
           .whereIn('borrowed_inventory_id', inventoryIds)
           .select('borrowed_inventory_id', 'quantity_returned')
-        
-        // Aggregate returns by inventory_id
-        returnRows.forEach(row => {
+
+        const returnDataMap = new Map()
+        returnRows.forEach((row) => {
           const invId = Number(row.borrowed_inventory_id)
           const qty = parseInt(row.quantity_returned || 0, 10)
           returnDataMap.set(invId, (returnDataMap.get(invId) || 0) + qty)
         })
+        for (const item of results) {
+          const invId = item.inventory_id ? Number(item.inventory_id) : null
+          if (invId) {
+            returnByBorrowId.set(Number(item.id), returnDataMap.get(invId) || 0)
+          }
+        }
       }
     }
 
@@ -916,7 +951,14 @@ export class InventoriesRepository {
     const transformedStock = results.map((item) => {
       const inventoryId = item.inventory_id ? Number(item.inventory_id) : null
       const totalBorrowed = parseInt(item.quantity, 10) || 0
-      const totalReturned = inventoryId ? (returnDataMap.get(inventoryId) || 0) : 0
+      const borrowId = Number(item.id)
+      let totalReturned = returnByBorrowId.get(borrowId) || 0
+      if (hasObligationCol && inventoryId) {
+        const legacyMap = legacyByInventory.get(inventoryId)
+        if (legacyMap) {
+          totalReturned += legacyMap.get(borrowId) || 0
+        }
+      }
       const remaining = Math.max(0, totalBorrowed - totalReturned)
       const borrowStatus = item.status || 'active' // 'active', 'partially_returned', 'returned'
       
@@ -2177,6 +2219,118 @@ export class InventoriesRepository {
     })
   }
 
+  async _borrowFromReturnsHasObligationColumn(trx = this.knex) {
+    return trx.schema.hasColumn('borrow_from_returns', 'borrow_from_inventory_id')
+  }
+
+  /**
+   * Legacy rows (borrow_from_inventory_id IS NULL) on one inventory lot → FIFO qty per obligation id.
+   * @returns {Promise<Map<number, number>>}
+   */
+  async _legacyNullReturnQtyByBorrowFromId(tenantId, inventoryId, trx = this.knex) {
+    const result = new Map()
+    const hasObligationCol = await this._borrowFromReturnsHasObligationColumn(trx)
+    if (!hasObligationCol || !inventoryId) return result
+
+    const nullReturns = await trx('borrow_from_returns')
+      .where({ tenant_id: tenantId, borrowed_inventory_id: inventoryId })
+      .whereNull('borrow_from_inventory_id')
+      .select('quantity_returned')
+      .orderBy([
+        { column: 'returned_on', order: 'asc' },
+        { column: 'id', order: 'asc' }
+      ])
+
+    if (!nullReturns.length) return result
+
+    const obligations = await trx('borrow_from_inventories')
+      .where({ tenant_id: tenantId, inventory_id: inventoryId })
+      .select('id', 'quantity')
+      .orderBy([
+        { column: 'borrowed_date', order: 'asc' },
+        { column: 'id', order: 'asc' }
+      ])
+
+    if (!obligations.length) return result
+
+    const allocated = new Map(obligations.map((o) => [Number(o.id), 0]))
+
+    for (const ret of nullReturns) {
+      const qty = parseInt(ret.quantity_returned, 10) || 0
+      if (qty <= 0) continue
+
+      let assignedId = null
+      for (const ob of obligations) {
+        const obId = Number(ob.id)
+        const used = allocated.get(obId) || 0
+        const cap = parseInt(ob.quantity, 10) || 0
+        const remaining = cap - used
+        if (remaining > 0 && qty <= remaining) {
+          assignedId = obId
+          allocated.set(obId, used + qty)
+          break
+        }
+      }
+
+      if (!assignedId) {
+        for (const ob of obligations) {
+          const obId = Number(ob.id)
+          const used = allocated.get(obId) || 0
+          const cap = parseInt(ob.quantity, 10) || 0
+          if (used < cap) {
+            assignedId = obId
+            allocated.set(obId, used + qty)
+            break
+          }
+        }
+      }
+
+      if (assignedId) {
+        result.set(assignedId, (result.get(assignedId) || 0) + qty)
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * Total quantity returned against one borrow_from_inventories row (obligation-scoped + legacy FIFO).
+   */
+  async _sumReturnedQuantityForBorrowFrom(tenantId, borrowFromId, borrowRecord, trx = this.knex) {
+    const returnsTableExists = await trx.schema.hasTable('borrow_from_returns')
+    if (!returnsTableExists) return 0
+
+    const hasObligationCol = await this._borrowFromReturnsHasObligationColumn(trx)
+    const inventoryId = borrowRecord?.inventory_id ? Number(borrowRecord.inventory_id) : null
+
+    if (hasObligationCol) {
+      const linked = await trx('borrow_from_returns')
+        .where({ tenant_id: tenantId, borrow_from_inventory_id: borrowFromId })
+        .select('quantity_returned')
+
+      let total = linked.reduce(
+        (sum, r) => sum + (parseInt(r.quantity_returned, 10) || 0),
+        0
+      )
+
+      if (inventoryId) {
+        const legacyMap = await this._legacyNullReturnQtyByBorrowFromId(tenantId, inventoryId, trx)
+        total += legacyMap.get(Number(borrowFromId)) || 0
+      }
+      return total
+    }
+
+    if (!inventoryId) return 0
+    const returnRows = await trx('borrow_from_returns')
+      .where({ tenant_id: tenantId, borrowed_inventory_id: inventoryId })
+      .select('quantity_returned')
+
+    return returnRows.reduce(
+      (sum, r) => sum + (parseInt(r.quantity_returned, 10) || 0),
+      0
+    )
+  }
+
   /**
    * Get return status for a borrowed-from item (total borrowed, total returned, remaining).
    *
@@ -2215,32 +2369,11 @@ export class InventoriesRepository {
     // 1. Original borrowed quantity (snapshot from borrow_from_inventories)
     const totalBorrowed = borrowRecord ? parseInt(borrowRecord.quantity, 10) || 0 : 0
 
-    // 2. Sum of return quantities so far (borrow_from_returns history for this borrow)
-    //    Returns are keyed by borrowed_inventory_id; we use borrow.inventory_id to link.
-    //    If no return rows for this borrow → totalReturned = 0.
-    const returnsTableExists = await this.knex.schema.hasTable('borrow_from_returns')
-    let totalReturned = 0
-    
-    if (returnsTableExists) {
-      if (inventoryId) {
-        // Primary method: Query by inventory_id from borrow_from_inventories
-        const returnRows = await this.knex('borrow_from_returns')
-          .where({ tenant_id: tenantId, borrowed_inventory_id: inventoryId })
-        
-        totalReturned = returnRows.reduce((sum, r) => {
-          const qty = parseInt(r.quantity_returned || 0, 10)
-          return sum + qty
-        }, 0)
-      } else {
-        // If inventoryId is null, log a warning - this shouldn't happen if borrow was created correctly
-        console.warn('[getBorrowFromReturnStatus] inventoryId is null - cannot query returns', {
-          borrowFromId,
-          borrowedInventoryId,
-          borrowRecordInventoryId: borrowRecord?.inventory_id,
-          totalBorrowed
-        })
-      }
-    }
+    const totalReturned = await this._sumReturnedQuantityForBorrowFrom(
+      tenantId,
+      borrowFromId,
+      borrowRecord
+    )
 
     // 3. Remaining to return = original − sum(returns)
     const remaining = Math.max(0, totalBorrowed - totalReturned)
@@ -2252,7 +2385,7 @@ export class InventoriesRepository {
    * Process borrow-from returns: one `borrow_from_returns` row and GL per line (AP + BV + 1300).
    *
    * @param {Object} returnData
-   * @param {number} returnData.borrowedInventoryId - Borrowed lot `inventories.id`
+   * @param {number} returnData.borrowFromId - `borrow_from_inventories.id` (obligation)
    * @param {Array} returnData.returnItems - `{ inventory_id, quantity }` or `{ returningInventoryId, quantityReturned }`
    * @param {string} returnData.returnedOn - YYYY-MM-DD
    * @param {string} [returnData.note]
@@ -2260,6 +2393,8 @@ export class InventoriesRepository {
    */
   async processBorrowFromReturn(tenantId, returnData, userId = null) {
     const {
+      borrowFromId,
+      borrow_from_inventory_id,
       borrowedInventoryId,
       borrowed_inventory_id,
       returnItems,
@@ -2268,7 +2403,28 @@ export class InventoriesRepository {
       note
     } = returnData
 
-    const borrowed_inventory_id_value = borrowedInventoryId || borrowed_inventory_id
+    let borrow_from_inventory_id_value =
+      borrowFromId ?? borrow_from_inventory_id ?? null
+
+    if (!borrow_from_inventory_id_value && (borrowedInventoryId || borrowed_inventory_id)) {
+      const invId = borrowedInventoryId || borrowed_inventory_id
+      const match = await this.knex('borrow_from_inventories')
+        .where({ tenant_id: tenantId, inventory_id: invId })
+        .whereIn('status', ['active', 'partially_returned'])
+        .orderBy('id', 'desc')
+        .first()
+      if (match) {
+        borrow_from_inventory_id_value = match.id
+        console.warn(
+          '[processBorrowFromReturn] Deprecated: pass borrowFromId (obligation id). Resolved via inventory_id.'
+        )
+      }
+    }
+
+    if (!borrow_from_inventory_id_value) {
+      throw new Error('borrowFromId (borrow_from_inventories id) is required')
+    }
+
     const returned_on_value = returnedOn || returned_on || new Date().toISOString().split('T')[0]
 
     // Validate returnItems array
@@ -2287,18 +2443,18 @@ export class InventoriesRepository {
     }
 
     return await this.knex.transaction(async (trx) => {
-      const borrowedInventory = await trx('inventories')
-        .where({ id: borrowed_inventory_id_value, tenant_id: tenantId })
+      const obligation = await trx('borrow_from_inventories')
+        .where({ id: borrow_from_inventory_id_value, tenant_id: tenantId })
         .first()
 
-      if (!borrowedInventory) {
-        throw new Error('Borrowed inventory record not found')
+      if (!obligation) {
+        throw new Error('Borrow-from obligation record not found')
       }
 
       const processedReturns = []
       for (const returnItem of normalizedReturnItems) {
         const result = await this.processBorrowReturn(tenantId, trx, {
-          borrowed_inventory_id: borrowed_inventory_id_value,
+          borrow_from_inventory_id: borrow_from_inventory_id_value,
           returning_inventory_id: returnItem.returning_inventory_id,
           quantity_returned: returnItem.quantity_returned,
           returned_on: returned_on_value,
@@ -2309,8 +2465,7 @@ export class InventoriesRepository {
       }
 
       const finalBorrow = await trx('borrow_from_inventories')
-        .where({ inventory_id: borrowed_inventory_id_value, tenant_id: tenantId })
-        .orderBy('id', 'desc')
+        .where({ id: borrow_from_inventory_id_value, tenant_id: tenantId })
         .first()
 
       const totalQuantityReturned = normalizedReturnItems.reduce(
@@ -2336,7 +2491,8 @@ export class InventoriesRepository {
    */
   async processBorrowReturn(tenantId, trx, borrowReturnData) {
     const {
-      borrowed_inventory_id,
+      borrow_from_inventory_id,
+      borrowFromId,
       returning_inventory_id,
       quantity_returned,
       returned_on,
@@ -2344,8 +2500,12 @@ export class InventoriesRepository {
       userId
     } = borrowReturnData
 
-    if (!borrowed_inventory_id || !returning_inventory_id || !quantity_returned || !returned_on) {
-      throw new Error('Missing required fields: borrowed_inventory_id, returning_inventory_id, quantity_returned, returned_on')
+    const obligationId = borrow_from_inventory_id ?? borrowFromId
+
+    if (!obligationId || !returning_inventory_id || !quantity_returned || !returned_on) {
+      throw new Error(
+        'Missing required fields: borrow_from_inventory_id, returning_inventory_id, quantity_returned, returned_on'
+      )
     }
 
     if (quantity_returned <= 0) {
@@ -2355,13 +2515,17 @@ export class InventoriesRepository {
     const fm = (num) => Math.round((num + Number.EPSILON) * 100) / 100
 
     try {
-      const borrowedInventory = await trx('inventories')
-        .where({ id: borrowed_inventory_id, tenant_id: tenantId })
+      const originalBorrowRecord = await trx('borrow_from_inventories')
+        .where({ id: obligationId, tenant_id: tenantId })
         .first()
 
-      if (!borrowedInventory) {
-        throw new Error(`Borrowed inventory with ID ${borrowed_inventory_id} not found`)
+      if (!originalBorrowRecord) {
+        throw new Error(`Borrow-from obligation with ID ${obligationId} not found`)
       }
+
+      const borrowed_inventory_id = originalBorrowRecord.inventory_id
+        ? Number(originalBorrowRecord.inventory_id)
+        : null
 
       const returningInventory = await trx('inventories')
         .where({ id: returning_inventory_id, tenant_id: tenantId })
@@ -2377,53 +2541,15 @@ export class InventoriesRepository {
         )
       }
 
-      const borrowReturns = await trx('borrow_from_returns')
-        .where({ tenant_id: tenantId, borrowed_inventory_id })
-        .orderBy('id', 'desc')
-
-      let originalBorrowRecord = await trx('borrow_from_inventories')
-        .where({ inventory_id: borrowed_inventory_id, tenant_id: tenantId })
-        .whereIn('status', ['active', 'partially_returned'])
-        .orderBy('id', 'desc')
-        .first()
-
-      if (!originalBorrowRecord) {
-        originalBorrowRecord = await trx('borrow_from_inventories')
-          .where({ tenant_id: tenantId, product_id: borrowedInventory.product_id })
-          .where('unit_cost', borrowedInventory.purchase_price)
-          .where(function () {
-            if (borrowedInventory.batch_no) {
-              this.where('batch_no', borrowedInventory.batch_no)
-            } else {
-              this.whereNull('batch_no')
-            }
-          })
-          .where(function () {
-            if (borrowedInventory.expiry_date) {
-              this.where('expiry_date', borrowedInventory.expiry_date)
-            } else {
-              this.whereNull('expiry_date')
-            }
-          })
-          .whereIn('status', ['active', 'partially_returned'])
-          .orderBy('id', 'desc')
-          .first()
-      }
-
-      if (!originalBorrowRecord) {
-        throw new Error('Borrow from inventory record not found for this inventory item')
-      }
-
       const obligationUnitCost = parseFloat(originalBorrowRecord.unit_cost) || 0
       const totalBorrowedQuantity = parseInt(originalBorrowRecord.quantity, 10) || 0
 
-      let totalReturnedQuantityBeforeReturn = 0
-      if (borrowReturns?.length > 0) {
-        totalReturnedQuantityBeforeReturn = borrowReturns.reduce(
-          (acc, curr) => acc + (parseInt(curr.quantity_returned, 10) || 0),
-          0
-        )
-      }
+      const totalReturnedQuantityBeforeReturn = await this._sumReturnedQuantityForBorrowFrom(
+        tenantId,
+        Number(obligationId),
+        originalBorrowRecord,
+        trx
+      )
 
       const quantityToReturn = parseInt(quantity_returned, 10)
       const returningUnitCost = parseFloat(returningInventory.purchase_price) || 0
@@ -2435,20 +2561,33 @@ export class InventoriesRepository {
         )
       }
 
+      const insertPayload = {
+        tenant_id: tenantId,
+        returning_inventory_id,
+        estimated_price: returningUnitCost,
+        actual_price: returningUnitCost,
+        quantity_returned: quantityToReturn,
+        returned_on: returned_on,
+        note: note || null,
+        created_at: trx.fn.now(),
+        last_updated: trx.fn.now(),
+        sync_status: 'pending'
+      }
+
+      if (!borrowed_inventory_id) {
+        throw new Error(
+          `Borrow-from obligation ${obligationId} has no linked inventory_id; cannot record return`
+        )
+      }
+      insertPayload.borrowed_inventory_id = borrowed_inventory_id
+
+      const hasObligationCol = await this._borrowFromReturnsHasObligationColumn(trx)
+      if (hasObligationCol) {
+        insertPayload.borrow_from_inventory_id = Number(obligationId)
+      }
+
       const insertResult = await trx('borrow_from_returns')
-        .insert({
-          tenant_id: tenantId,
-          borrowed_inventory_id,
-          returning_inventory_id,
-          estimated_price: returningUnitCost,
-          actual_price: returningUnitCost,
-          quantity_returned: quantityToReturn,
-          returned_on: returned_on,
-          note: note || null,
-          created_at: trx.fn.now(),
-          last_updated: trx.fn.now(),
-          sync_status: 'pending'
-        })
+        .insert(insertPayload)
         .returning('id')
 
       if (!insertResult || !Array.isArray(insertResult) || insertResult.length === 0) {
