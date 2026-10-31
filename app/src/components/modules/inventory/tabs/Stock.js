@@ -1725,6 +1725,7 @@ function ReturnBorrowedDrawer({ stockItem, showSlide, onClose, ...props }) {
       }));
 
       await props.viewModel.processBorrowFromReturn({
+        borrowFromId: Number(borrowFromId),
         borrowedInventoryId: invId,
         returnItems: returnItems,
         returnedOn: returnDate,

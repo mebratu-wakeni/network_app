@@ -121,7 +121,7 @@ describe('borrow-from / borrow-return GL (full settlement)', () => {
     await repo.processBorrowFromReturn(
       TENANT_ID,
       {
-        borrowedInventoryId: invYId,
+        borrowFromId: borrowRow.id,
         returnItems: [
           { inventory_id: invYId, quantity: 2 },
           { inventory_id: invXId, quantity: 4 }
@@ -135,7 +135,7 @@ describe('borrow-from / borrow-return GL (full settlement)', () => {
     await repo.processBorrowFromReturn(
       TENANT_ID,
       {
-        borrowedInventoryId: invYId,
+        borrowFromId: borrowRow.id,
         returnItems: [{ inventory_id: invYId, quantity: 4 }],
         returnedOn: '2026-02-02'
       },
@@ -159,5 +159,65 @@ describe('borrow-from / borrow-return GL (full settlement)', () => {
 
     const xRow = await db('inventories').where({ id: invXId }).first()
     expect(Number(xRow.quantity)).toBe(20)
+  })
+
+  it('returns against one obligation do not reduce remaining on another sharing the same inventory_id', async () => {
+    const supplier = await db('customers').where({ name: 'Supplier Partner' }).first()
+    const repo = new InventoriesRepository(db)
+
+    const importResult = await repo.bulkImport(
+      TENANT_ID,
+      [
+        {
+          product_name: 'Product B',
+          quantity: 50,
+          unit_cost: 5,
+          batch_number: 'shared-lot',
+          category: 'TestCat',
+          unit: 'UnitT',
+          location: 'Main'
+        }
+      ],
+      { reason: 'initial stock', purchase_date: '2026-01-01' }
+    )
+    const productId = importResult.successful[0].product_id
+
+    const borrowA = await repo.createBorrowFromInventory(
+      TENANT_ID,
+      { partnerId: supplier.id, productId, quantity: 10, purchasePrice: 20, batchNo: 'shared-lot' },
+      null
+    )
+    const borrowB = await repo.createBorrowFromInventory(
+      TENANT_ID,
+      { partnerId: supplier.id, productId, quantity: 6, purchasePrice: 20, batchNo: 'shared-lot' },
+      null
+    )
+
+    expect(borrowA.inventory_id).toBe(borrowB.inventory_id)
+
+    await repo.processBorrowFromReturn(
+      TENANT_ID,
+      {
+        borrowFromId: borrowA.id,
+        returnItems: [{ inventory_id: borrowA.inventory_id, quantity: 4 }],
+        returnedOn: '2026-03-01'
+      },
+      null
+    )
+
+    const statusA = await repo.getBorrowFromReturnStatus(TENANT_ID, { borrowFromId: borrowA.id })
+    const statusB = await repo.getBorrowFromReturnStatus(TENANT_ID, { borrowFromId: borrowB.id })
+
+    expect(statusA.totalBorrowed).toBe(10)
+    expect(statusA.totalReturned).toBe(4)
+    expect(statusA.remaining).toBe(6)
+
+    expect(statusB.totalBorrowed).toBe(6)
+    expect(statusB.totalReturned).toBe(0)
+    expect(statusB.remaining).toBe(6)
+
+    const returnsForB = await db('borrow_from_returns')
+      .where({ tenant_id: TENANT_ID, borrow_from_inventory_id: borrowB.id })
+    expect(returnsForB.length).toBe(0)
   })
 })

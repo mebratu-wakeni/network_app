@@ -271,7 +271,10 @@ const returnItemSchema = z.object({
 )
 
 export const returnBorrowedFromStockSchema = z.object({
-  borrowedInventoryId: z.coerce.number().int().positive('Borrowed Inventory ID is required'),
+  borrowFromId: z.coerce.number().int().positive('Borrow From obligation ID is required').optional().nullable(),
+  borrow_from_inventory_id: z.coerce.number().int().positive('Borrow From obligation ID is required').optional().nullable(),
+  /** @deprecated Use borrowFromId (borrow_from_inventories.id). Kept for legacy clients until all UIs updated. */
+  borrowedInventoryId: z.coerce.number().int().positive('Borrowed Inventory ID is required').optional().nullable(),
   borrowed_inventory_id: z.coerce.number().int().positive('Borrowed Inventory ID is required').optional().nullable(),
   returnItems: z.array(returnItemSchema).min(1, 'At least one return item is required'),
   returnedOn: zDdMmYyyyRequiredIso.optional(),
@@ -279,10 +282,16 @@ export const returnBorrowedFromStockSchema = z.object({
   note: z.string().trim().optional().nullable()
 }).refine(
   (data) => {
-    const borrowedId = data.borrowedInventoryId || data.borrowed_inventory_id
-    return borrowedId !== undefined && borrowedId > 0
+    const obligationId = data.borrowFromId || data.borrow_from_inventory_id
+    const legacyInvId = data.borrowedInventoryId || data.borrowed_inventory_id
+    const hasObligation = obligationId !== undefined && obligationId !== null && obligationId > 0
+    const hasLegacy = legacyInvId !== undefined && legacyInvId !== null && legacyInvId > 0
+    return hasObligation || hasLegacy
   },
-  { message: 'Borrowed Inventory ID is required', path: ['borrowedInventoryId'] }
+  {
+    message: 'borrowFromId (borrow_from_inventories id) is required',
+    path: ['borrowFromId']
+  }
 ).refine(
   (data) => {
     const date = data.returnedOn || data.returned_on
