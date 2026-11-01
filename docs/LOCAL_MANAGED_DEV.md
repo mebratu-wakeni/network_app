@@ -4,10 +4,10 @@ Run the desktop UI on your machine while talking to **https://server.masatechplc
 
 ```bash
 cd app
-cp -n .env.cloud.example .env.cloud 2>/dev/null || true
+cp cloud-dev.env.sample .env.cloud
 ```
 
-Create **`app/.env.cloud`** with:
+Or create **`app/.env.cloud`** manually with:
 
 ```env
 VITE_CLOUD_MODE=true
