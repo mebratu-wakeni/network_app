@@ -1,4 +1,19 @@
 /**
+ * Must stay aligned with api/src/utils/salesWithhold.js (effectiveWithholdConfirmed).
+ */
+export function isWithholdEffectivelyConfirmed(order) {
+  const withhold = Number(order?.withhold_amount ?? 0);
+  if (withhold <= 0.009) return false;
+  if (order?.withhold_ref != null && String(order.withhold_ref).trim() !== '') return true;
+  return Boolean(order?.withhold_confirmation);
+}
+
+/** True when Reverse must not run (show disabled control). */
+export function isSalesReverseDisabled(order) {
+  return getSalesReverseBlockReason(order) != null;
+}
+
+/**
  * Must stay aligned with api/src/utils/salesWithhold.js getSalesReverseBlockReason.
  */
 export function getSalesReverseBlockReason(order) {
@@ -12,11 +27,7 @@ export function getSalesReverseBlockReason(order) {
     return 'Cannot reverse: withhold tax on this sale was already settled. Reverse or adjust the withhold settlement first.';
   }
 
-  const confirmed =
-    Boolean(order.withhold_confirmation) ||
-    (order.withhold_ref != null && String(order.withhold_ref).trim() !== '');
-
-  if (confirmed) {
+  if (isWithholdEffectivelyConfirmed(order)) {
     return 'Cannot reverse while withhold is confirmed. Roll back withhold confirmation on this order, then reverse the sale.';
   }
 

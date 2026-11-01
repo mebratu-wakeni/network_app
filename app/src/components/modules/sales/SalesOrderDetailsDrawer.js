@@ -6,7 +6,11 @@ import { Card, CardHeader, CardBody, CardFooter } from '../../utils/Card';
 import { SelectFluid, SelectOptions } from '../../utils/Select';
 import { formatDateDDMMYYYY } from '../../utils/DateUtils';
 import { showAlert, showConfirmation } from '../../utils/ModalHelpers';
-import { getSalesReverseBlockReason } from './salesReverseRules.js';
+import {
+  getSalesReverseBlockReason,
+  isSalesReverseDisabled,
+  isWithholdEffectivelyConfirmed
+} from './salesReverseRules.js';
 
 const { Row } = Liteframe;
 
@@ -44,7 +48,10 @@ export function SalesOrderDetailsDrawer(props) {
   };
   const handleConfirmWithhold = () => props.setDrawerContentType('confirm-withhold');
   const handleRollbackWithhold = () => props.setDrawerContentType('rollback-withhold');
-  const handleReverse = () => props.setDrawerContentType('reverse');
+  const handleReverse = () => {
+    if (isSalesReverseDisabled(order)) return;
+    props.setDrawerContentType('reverse');
+  };
   const handleBackToDetails = () => props.setDrawerContentType('details');
 
   return Drawer({ class: 'flex flex-col h-full', openSlide: drawerOpen }, [
@@ -63,19 +70,28 @@ export function SalesOrderDetailsDrawer(props) {
         contentType === 'reverse' && renderReverseConfirm(props, order, onClose),
       ].filter(Boolean)),
       contentType === 'details'
-        ? CardFooter({ class: 'flex flex-wrap justify-end gap-2 px-5 py-3 border-t border-gray-200 flex-shrink-0' }, [
-            Button({ variant: 'secondary', onClick: onClose, disabled: loading }, 'Close'),
-            outstanding > 0.01 ? Button({ variant: 'primary', onClick: handlePay, disabled: loading }, 'Record Payment') : null,
-            order.withhold_amount > 0.009 && !order.withhold_confirmation ? Button({ variant: 'outline', onClick: handleConfirmWithhold, disabled: loading }, 'Confirm Withhold') : null,
-            order.withhold_confirmation ? Button({ variant: 'outline', onClick: handleRollbackWithhold, disabled: loading }, 'Rollback Withhold') : null,
-            !order.is_reversed
-              ? Button({
-                  variant: 'danger',
-                  onClick: handleReverse,
-                  disabled: loading || !!reverseBlockReason,
-                  title: reverseBlockReason || undefined
-                }, 'Reverse Order')
+        ? CardFooter({ class: 'flex flex-col gap-2 px-5 py-3 border-t border-gray-200 flex-shrink-0' }, [
+            reverseBlockReason
+              ? Row({ class: 'text-xs text-amber-800 text-right w-full' }, reverseBlockReason)
               : null,
+            Row({ class: 'flex flex-wrap justify-end gap-2 w-full' }, [
+              Button({ variant: 'secondary', onClick: onClose, disabled: loading }, 'Close'),
+              outstanding > 0.01 ? Button({ variant: 'primary', onClick: handlePay, disabled: loading }, 'Record Payment') : null,
+              order.withhold_amount > 0.009 && !isWithholdEffectivelyConfirmed(order)
+                ? Button({ variant: 'outline', onClick: handleConfirmWithhold, disabled: loading }, 'Confirm Withhold')
+                : null,
+              isWithholdEffectivelyConfirmed(order)
+                ? Button({ variant: 'outline', onClick: handleRollbackWithhold, disabled: loading }, 'Rollback Withhold')
+                : null,
+              !order.is_reversed
+                ? Button({
+                    variant: 'danger',
+                    onClick: handleReverse,
+                    disabled: loading || isSalesReverseDisabled(order),
+                    title: reverseBlockReason || undefined
+                  }, 'Reverse Order')
+                : null,
+            ].filter(Boolean)),
           ].filter(Boolean))
         : CardFooter({ class: 'flex justify-end gap-2 px-5 py-3 border-t border-gray-200 flex-shrink-0' }, [
             Button({ variant: 'secondary', onClick: handleBackToDetails, disabled: loading }, 'Back'),
@@ -87,7 +103,7 @@ export function SalesOrderDetailsDrawer(props) {
 function renderDetails(props, order, items) {
   const netAmount = Number(order.total_amount ?? 0) - Number(order.withhold_amount ?? 0);
   const hasWithhold = order.withhold_amount > 0.009;
-  const withholdConfirmed = !!order.withhold_confirmation;
+  const withholdConfirmed = isWithholdEffectivelyConfirmed(order);
 
   return Row({ class: 'flex flex-col gap-5' }, [
     Row({ class: 'grid grid-cols-2 gap-x-6 gap-y-3' }, [

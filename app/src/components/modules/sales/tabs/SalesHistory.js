@@ -9,7 +9,7 @@ import { formatDateDDMMYYYY } from '../../../utils/DateUtils';
 import { openReceiptModal } from '../ReceiptModal';
 import { openBulkCustomerPaymentModal } from '../BulkCustomerPaymentModal';
 import { SalesOrderDetailsDrawer } from '../SalesOrderDetailsDrawer';
-import { getSalesReverseBlockReason } from '../salesReverseRules.js';
+import { getSalesReverseBlockReason, isSalesReverseDisabled } from '../salesReverseRules.js';
 
 const { Row } = Liteframe;
 
@@ -466,11 +466,13 @@ function SalesHistoryTableSection(props) {
                             },
                           })
                         : null,
-                      !order.is_reversed && !getSalesReverseBlockReason(order)
+                      !order.is_reversed
                         ? ActionItem({
                             label: 'Reverse order',
                             icon: 'close-circle-outline',
+                            disabled: isSalesReverseDisabled(order),
                             onClick: () => {
+                              if (isSalesReverseDisabled(order)) return;
                               props.setLocalState('actionId', null);
                               handleReverseOrder(order.id);
                             },
