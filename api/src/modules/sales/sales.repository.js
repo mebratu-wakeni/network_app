@@ -984,12 +984,21 @@ export class SalesRepository {
       // 3) Reverse ledger entries
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
+        const revRef = order.receipt_no ? `REV-${order.receipt_no}` : null
         await this.ledgerHelper.reverseSalesOrder({
           tenant_id: tenantId,
           salesOrderId: orderId,
           transactionDate: reversalDate,
           reason: 'Order reversal',
-          referenceNumber: order.receipt_no ? `REV-${order.receipt_no}` : null,
+          referenceNumber: revRef,
+          createdBy: userId
+        }, trx)
+        await this.ledgerHelper.reverseSalesPaymentsForOrder({
+          tenant_id: tenantId,
+          salesOrderId: orderId,
+          transactionDate: reversalDate,
+          reason: 'Order reversal',
+          referenceNumber: revRef,
           createdBy: userId
         }, trx)
       }
