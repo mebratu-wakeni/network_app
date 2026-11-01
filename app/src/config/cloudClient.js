@@ -9,6 +9,11 @@ export function isCloudClient() {
   return import.meta.env.VITE_CLOUD_MODE === 'true'
 }
 
+/** Packaged/production builds are `PROD`; `npm run dev:cloud` keeps `DEV` true. */
+export function isLocalDevSession() {
+  return import.meta.env.DEV === true
+}
+
 /** Default API origin (no trailing slash) for the connect screen. */
 export function getDefaultServerUrl() {
   if (import.meta.env.VITE_DEFAULT_SERVER_URL) {

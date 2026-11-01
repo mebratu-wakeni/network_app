@@ -6,6 +6,7 @@ import NavigationVM, { navigationVM } from "./components/navigation/NavigationVM
 import { Input } from './components/utils/Input.js';
 import { Button } from './components/utils/Button.js';
 import { getDefaultServerUrl } from './config/cloudClient.js';
+import { LocalDevBadge } from './components/utils/localDevBadge.js';
 import AppUpdateUI from './components/updates/AppUpdateUI.js';
 
 /** Shared indigo spinner for boot screens (gray/white backgrounds) */
@@ -140,7 +141,10 @@ function ClientConnectionLayout(props) {
   return Row({ class: 'h-[100dvh] w-full flex items-center justify-center bg-gray-50 p-2' }, [
     Row({ class: 'w-full max-w-xl bg-white rounded-2xl shadow-xl flex flex-col' }, [
       Row({ class: 'px-8 pt-6 pb-4 border-b border-gray-100' }, [
-        Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700 mb-2' }, 'Connect to PharmaSuit'),
+        Row({ class: 'flex flex-wrap items-center gap-2 mb-2' }, [
+          Row({ tagType: 'h1', class: 'text-2xl font-bold text-indigo-700' }, 'Connect to PharmaSuit'),
+          LocalDevBadge()
+        ]),
         Row({ class: 'text-sm text-gray-600' }, hint)
       ]),
       Row({ class: 'px-8 py-6 flex flex-col gap-3' }, [
@@ -267,7 +271,12 @@ function LoginLayout(props) {
 
       Row({ tagType: 'h2', class: 'text-2xl font-semibold mb-4' }, 'Sign in'),
       Row({ class: 'mb-4 text-sm text-gray-600 space-y-1' }, [
-        clientUrl ? Row({}, `Server: ${clientUrl}`) : null,
+        clientUrl
+          ? Row({ class: 'flex flex-wrap items-center gap-2' }, [
+              LocalDevBadge(),
+              Row({}, `Server: ${clientUrl}`)
+            ])
+          : LocalDevBadge(),
         tenantCode ? Row({}, `Tenant: ${tenantCode}`) : null
       ].filter(Boolean)),
 
