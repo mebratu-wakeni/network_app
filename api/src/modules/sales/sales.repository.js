@@ -1104,6 +1104,9 @@ export class SalesRepository {
           .leftJoin('inventories as inv', function () {
             this.on('i.inventory_id', 'inv.id').andOn('i.tenant_id', 'inv.tenant_id')
           })
+          .leftJoin('units as u', function () {
+            this.on('p.unit_id', 'u.id').andOn('p.tenant_id', 'u.tenant_id')
+          })
           .where({ 'i.sales_order_id': orderId, 'i.tenant_id': tenantId })
           .select(
             'i.product_id',
@@ -1112,6 +1115,8 @@ export class SalesRepository {
             'i.total_price',
             'p.product_code',
             'p.name as product_name',
+            'u.name as unit_name',
+            'u.abbreviation as unit_abbreviation',
             'inv.batch_no as batch_number',
             'inv.expiry_date'
           )
@@ -1153,16 +1158,21 @@ export class SalesRepository {
       withhold_confirmation: effectiveWithholdConfirmed(order),
     }
 
-    const order_items = items.map((it) => ({
-      product_id: it.product_id,
-      product_code: it.product_code || '',
-      product_name: it.product_name || `Product #${it.product_id}`,
-      quantity: it.quantity,
-      unit_price: Number(it.unit_price),
-      total_price: Number(it.total_price),
-      batch_number: it.batch_number || null,
-      expiry_date: it.expiry_date || null,
-    }))
+    const order_items = items.map((it) => {
+      const abbrev = it.unit_abbreviation != null ? String(it.unit_abbreviation).trim() : ''
+      const unitLabel = abbrev || (it.unit_name != null ? String(it.unit_name).trim() : '') || null
+      return {
+        product_id: it.product_id,
+        product_code: it.product_code || '',
+        product_name: it.product_name || `Product #${it.product_id}`,
+        unit_name: unitLabel,
+        quantity: it.quantity,
+        unit_price: Number(it.unit_price),
+        total_price: Number(it.total_price),
+        batch_number: it.batch_number || null,
+        expiry_date: it.expiry_date || null,
+      }
+    })
 
     const order_payment = {
       initial_payment_amount: amountPaid,

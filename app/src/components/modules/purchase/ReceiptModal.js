@@ -74,7 +74,9 @@ export function buildReceiptData(receipt, settings, options = {}) {
     },
     items: (receipt.order_items || []).map((it) => ({
       productCode: it.product_code ?? '',
+      productName: it.product_name || it.product_code || '—',
       description: it.product_name || it.product_code || '—',
+      unitName: it.unit_name ?? it.unit ?? '',
       batchNo: it.batch_number ?? '',
       expiryDate: formatDateDDMMYYYY(it.expiry_date),
       qty: it.quantity ?? 0,
