@@ -10,6 +10,13 @@ import { DEFAULT_EXPIRY_THRESHOLD_DAYS } from "./InventoryVM.js";
 
 const { Row, StatefulRow } = Liteframe;
 
+/** Controlled input value: allow empty while editing; default only when unset. */
+function expiryThresholdInputValue(threshold, defaultDays) {
+  if (threshold === '') return '';
+  if (threshold != null && threshold !== '') return String(threshold);
+  return String(defaultDays);
+}
+
 // --- The Modal Content Component (Child) ---
 const ModalContent = (viewModel, delegator, handleClose) => {
 
@@ -305,10 +312,10 @@ const ModalContent = (viewModel, delegator, handleClose) => {
             type: 'text',
             inputMode: 'numeric',
             pattern: '[0-9]*',
-            value:
-              productForm.expiry_threshold != null && productForm.expiry_threshold !== ''
-                ? String(productForm.expiry_threshold)
-                : String(DEFAULT_EXPIRY_THRESHOLD_DAYS),
+            value: expiryThresholdInputValue(
+              productForm.expiry_threshold,
+              DEFAULT_EXPIRY_THRESHOLD_DAYS
+            ),
             onInput: (e) => {
               const digits = String(e.target.value || '').replace(/\D/g, '');
               if (digits === '') {
