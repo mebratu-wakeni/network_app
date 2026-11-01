@@ -1308,9 +1308,11 @@ export class PurchaseRepository {
   }
 
   async getReceiptByReceiptNo(tenantId, receiptNo) {
-    return this.knex('purchase_receipts')
+    const row = await this.knex('purchase_receipts')
       .where({ tenant_id: tenantId, receipt_no: receiptNo })
       .first()
+    if (!row) return null
+    return this._enrichReceipt(tenantId, row)
   }
 
   async listReceipts(tenantId, { limit = 20, offset = 0, search, voided, date_from, date_to, sort_by, order_by }) {
