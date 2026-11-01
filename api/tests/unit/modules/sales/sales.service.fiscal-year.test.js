@@ -18,6 +18,17 @@ function makeRepository(db, overrides = {}) {
     recordPayment: vi.fn().mockResolvedValue({ amount_paid: 50, payment_status: 'partial' }),
     recordBulkCustomerPayment: vi.fn().mockResolvedValue({ total_applied: 100, applied: [] }),
     reverseOrder: vi.fn().mockResolvedValue({ order_id: 1, status: 'reversed' }),
+    getOrderById: vi.fn().mockResolvedValue({
+      order: {
+        id: 1,
+        is_reversed: false,
+        withhold_amount: 0,
+        withhold_settled: false,
+        withhold_confirmation: false,
+        withhold_ref: null
+      },
+      items: []
+    }),
     ...overrides
   }
 }

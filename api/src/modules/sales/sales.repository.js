@@ -6,6 +6,7 @@
 import { LedgerHelper } from '../../services/ledger.helper.js'
 import {
   effectiveWithholdConfirmed,
+  isActiveSalesOrderForStats,
   rawWithholdEffectivelyConfirmed
 } from '../../utils/salesWithhold.js'
 
@@ -305,23 +306,29 @@ export class SalesRepository {
 
     // Stat filter: apply to list query when user clicks a stat
     if (stat_filter === 'outstanding' || has_outstanding_balance === true || has_outstanding_balance === 'true') {
+      base.andWhere('so.is_reversed', false)
       base.andWhereRaw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0) - coalesce(so.amount_paid,0)) > 0.009')
     } else if (has_outstanding_balance === false || has_outstanding_balance === 'false') {
+      base.andWhere('so.is_reversed', false)
       base.andWhereRaw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0) - coalesce(so.amount_paid,0)) <= 0.009')
     }
     if (stat_filter === 'withhold_unconfirmed') {
+      base.andWhere('so.is_reversed', false)
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere('so.withhold_settled', false)
       base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
     } else if (stat_filter === 'withhold_confirmed') {
+      base.andWhere('so.is_reversed', false)
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
       base.andWhere('so.withhold_settled', false)
     } else if (stat_filter === 'settled') {
+      base.andWhere('so.is_reversed', false)
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
       base.andWhere('so.withhold_settled', true)
     } else if (stat_filter === 'unsettled') {
+      base.andWhere('so.is_reversed', false)
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere('so.withhold_settled', false)
     }
@@ -409,19 +416,17 @@ export class SalesRepository {
       const paid = Number(row.amount_paid || 0)
       const withhold = Number(row.withhold_amount || 0)
       const outstanding = net - paid
-      const isReversed = !!row.is_reversed
-      const isArchived = row.status === 'archived'
-      const isCompleted = row.status === 'completed'
       const confirmed = effectiveWithholdConfirmed(row)
       const settled = !!row.withhold_settled
+      const activeForStats = isActiveSalesOrderForStats(row)
 
       // All: completed, non-reversed (exclude reversed and archived)
-      if (isCompleted && !isReversed) {
+      if (activeForStats) {
         stats.all.count += 1
         stats.all.value += net
       }
 
-      if (withhold > 0.009) {
+      if (activeForStats && withhold > 0.009) {
         if (!confirmed && !settled) {
           stats.withhold_unconfirmed.count += 1
           stats.withhold_unconfirmed.value += withhold
@@ -440,7 +445,7 @@ export class SalesRepository {
         }
       }
 
-      if (outstanding > 0.009) {
+      if (activeForStats && outstanding > 0.009) {
         stats.outstanding.count += 1
         stats.outstanding.value += outstanding
       }

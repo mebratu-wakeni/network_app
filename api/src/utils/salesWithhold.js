@@ -33,3 +33,31 @@ export function rawWithholdEffectivelyConfirmed(knex, tableRef = 'so') {
       OR (TRIM(COALESCE(${t}.withhold_ref, '')) != ''))`
   )
 }
+
+/**
+ * When non-null, the order must not be reversed (business rules for withhold).
+ * @param {object} order sales_orders row (or list row with withhold fields)
+ * @returns {string|null}
+ */
+export function getSalesReverseBlockReason(order) {
+  if (!order) return 'Sales order not found'
+  if (order.is_reversed) return 'Order is already reversed'
+
+  const withhold = Number(order.withhold_amount ?? 0)
+  if (withhold <= 0.009) return null
+
+  if (order.withhold_settled) {
+    return 'Cannot reverse: withhold tax on this sale was already settled. Reverse or adjust the withhold settlement first.'
+  }
+
+  if (effectiveWithholdConfirmed(order)) {
+    return 'Cannot reverse while withhold is confirmed. Roll back withhold confirmation on this order, then reverse the sale.'
+  }
+
+  return null
+}
+
+/** Active sales / withhold KPIs: completed, not reversed (reversal sets archived + is_reversed). */
+export function isActiveSalesOrderForStats(row) {
+  return row.status === 'completed' && !row.is_reversed
+}
