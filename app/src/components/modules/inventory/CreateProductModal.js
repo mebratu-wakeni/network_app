@@ -6,6 +6,7 @@ import Label from "../../utils/Label";
 import { SelectFluid, SelectOptions } from "../../utils/Select";
 import { permissionChecker } from "../../utils/PermissionChecker";
 import { displayErrorText } from "../../utils/userErrorMessage.js";
+import { DEFAULT_EXPIRY_THRESHOLD_DAYS } from "./InventoryVM.js";
 
 const { Row, StatefulRow } = Liteframe;
 
@@ -21,9 +22,14 @@ const ModalContent = (viewModel, delegator, handleClose) => {
     props.ensureLocalStateKey('new-unit-name', '');
     props.ensureLocalStateKey('new-unit-abbreviation', '');
     props.ensureLocalStateKey('new-unit-description', '');
+
+    props.ensureStateKey('product-creating');
+    props.ensureStateKey('product-form');
+    props.ensureStateKey('category-list');
+    props.ensureStateKey('unit-list');
+    props.ensureStateKey('error');
     
-    // Get form data from viewModel state
-    const loading = props.viewModel.getState('loading');
+    const productCreating = props.viewModel.getState('product-creating');
     const productForm = props.viewModel.getState('product-form') || {};
     const errorMessage = displayErrorText(props.viewModel.getState('error'));
     
@@ -296,15 +302,23 @@ const ModalContent = (viewModel, delegator, handleClose) => {
         Row({ class: 'flex flex-col gap-2' }, [
           Label({ for: 'expiry-threshold' }, 'Expiry Threshold (Days)'),
           Input({
-            type: 'number',
-            min: 1,
-            value: productForm.expiry_threshold || 30,
-            onInput: (e) =>
-              props.viewModel.updateProductForm('expiry_threshold', parseInt(e.target.value, 10) || 30),
-            onChange: (e) =>
-              props.viewModel.updateProductForm('expiry_threshold', parseInt(e.target.value, 10) || 30),
+            type: 'text',
+            inputMode: 'numeric',
+            pattern: '[0-9]*',
+            value:
+              productForm.expiry_threshold != null && productForm.expiry_threshold !== ''
+                ? String(productForm.expiry_threshold)
+                : String(DEFAULT_EXPIRY_THRESHOLD_DAYS),
+            onInput: (e) => {
+              const digits = String(e.target.value || '').replace(/\D/g, '');
+              if (digits === '') {
+                props.viewModel.updateProductForm('expiry_threshold', '');
+                return;
+              }
+              props.viewModel.updateProductForm('expiry_threshold', parseInt(digits, 10));
+            },
             name: 'expiry-threshold',
-            placeholder: 'Enter number of days (default: 30)',
+            placeholder: `Enter days (default: ${DEFAULT_EXPIRY_THRESHOLD_DAYS})`,
             class: 'w-full',
             delegator
           }),
@@ -318,17 +332,17 @@ const ModalContent = (viewModel, delegator, handleClose) => {
           variant: 'primary', 
           delegator, 
           onClick: handleSave, 
-          disabled: loading || !canSave 
-        }, loading ? [Spinner(), ' Creating...'] : 'Create Product'),
+          disabled: productCreating || !canSave 
+        }, productCreating ? [Spinner(), ' Creating...'] : 'Create Product'),
       ])
     ]);
   }
   
-  return StatefulRow({ 
-    class: 'fixed inset-0 bg-gray-800/0 flex items-center justify-center', 
-    viewModel, 
-    stateKeys: ['loading', 'product-form', 'category-list', 'unit-list', 'error'] 
-  }, render) 
+  return StatefulRow({
+    class: 'fixed inset-0 bg-gray-800/0 flex items-center justify-center',
+    viewModel,
+    delegator
+  }, render);
 };
 
 // New Category Inline Form (for modal)

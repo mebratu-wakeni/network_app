@@ -1500,8 +1500,10 @@ function BinCardDrawer({ product, showSlide, onClose, ...props }) {
 
 async function openAddProductModal(props) {
   props.viewModel.resetProductForm();
-  await props.viewModel.loadCategories();
-  await props.viewModel.loadUnits();
+  await Promise.all([
+    props.viewModel.loadCategories(),
+    props.viewModel.loadUnits()
+  ]);
   Modal({}, (delegator, closeHandler) => ModalContent(props.viewModel, delegator, closeHandler));
 }
 
