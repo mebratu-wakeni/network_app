@@ -77,14 +77,14 @@ export function App() {
     }
 
     // Managed Cloud is always a cloud client build — mount updater chrome on every screen.
-    // AppUpdateUI is a plain Row (not StatefulRow): App already remorphs on app-update-* keys.
+    // AppUpdateUI is a plain Row (not StatefulRow): App remorphs on app-update-state.
     return Row({ class: 'relative h-[100dvh] min-h-0 overflow-hidden' }, [
       AppUpdateUI({ viewModel: props.viewModel }),
       Row({ class: 'h-full min-h-0' }, [content])
     ])
   };
 
-  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'auth', 'app-update-state', 'app-update-dev-panel'], viewModel: navigationVM }, render);
+  return StatefulRow({id: 'App', class: 'h-[100dvh] min-h-0 overflow-hidden', stateKeys: ['loading', 'active-menu', 'pending-sales-open', 'pending-purchase-open', 'setup-loading', 'setup-config', 'auth', 'app-update-state'], viewModel: navigationVM }, render);
 }
 
 function ClientConnectionLayout(props) {

@@ -2,9 +2,7 @@ const { Row } = Liteframe
 import { Button } from '../utils/Button.js'
 
 const UPDATE_STATE_KEY = 'app-update-state'
-const UPDATE_DEV_PANEL_KEY = 'app-update-dev-panel'
 let updateListenerBound = false
-let devPanelProbeStarted = false
 
 function defaultUpdateState() {
   return {
@@ -32,7 +30,7 @@ function HiddenUpdateHost() {
  * In-app update notification + wizard for cloud builds (Dedicated / Managed).
  *
  * Not a StatefulRow — must stay a plain Row under App's StatefulRow.
- * App already remorphs on `app-update-state` / `app-update-dev-panel`.
+ * App already remorphs on `app-update-state`.
  *
  * Shared-state lifecycle (Liteframe):
  * - NavigationVM.setState('app-update-state', defaults) once at boot
@@ -54,32 +52,13 @@ export default function AppUpdateUI(props) {
     }).catch(() => {})
   }
 
-  if (!devPanelProbeStarted && typeof window !== 'undefined' && window.ipcRenderer?.isPackaged) {
-    devPanelProbeStarted = true
-    window.ipcRenderer.isPackaged().then((packaged) => {
-      const prev = vm.getState(UPDATE_DEV_PANEL_KEY) || { show: false, note: '' }
-      vm.updateState(UPDATE_DEV_PANEL_KEY, {
-        ...prev,
-        show: packaged !== true
-      })
-    }).catch(() => {
-      const prev = vm.getState(UPDATE_DEV_PANEL_KEY) || { show: false, note: '' }
-      vm.updateState(UPDATE_DEV_PANEL_KEY, { ...prev, show: true })
-    })
-  }
-
   return renderUpdateChrome({ viewModel: vm })
 }
 
 function renderUpdateChrome(props) {
   const state = props.viewModel.getState(UPDATE_STATE_KEY) || defaultUpdateState()
-  const devPanel = props.viewModel.getState(UPDATE_DEV_PANEL_KEY) || { show: false, note: '' }
   const status = state.status
   const parts = []
-
-  if (devPanel.show) {
-    parts.push(DevUpdateTester(props, devPanel))
-  }
 
   if (status === 'available') {
     parts.push(UpdateAvailableBanner(props, state))
@@ -89,37 +68,6 @@ function renderUpdateChrome(props) {
 
   if (parts.length === 0) return HiddenUpdateHost()
   return Row({ class: 'contents' }, parts)
-}
-
-function DevUpdateTester(props, devPanel) {
-  const onOptional = async () => {
-    props.viewModel.updateState(UPDATE_DEV_PANEL_KEY, { ...devPanel, note: '' })
-    await window.ipcRenderer.simulateUpdate({ mandatory: false })
-  }
-  const onRequired = async () => {
-    props.viewModel.updateState(UPDATE_DEV_PANEL_KEY, { ...devPanel, note: '' })
-    await window.ipcRenderer.simulateUpdate({ mandatory: true })
-  }
-  const onReset = async () => {
-    await window.ipcRenderer.dismissUpdate()
-    props.viewModel.updateState(UPDATE_DEV_PANEL_KEY, { ...devPanel, note: '' })
-  }
-
-  return Row({
-    class: 'fixed bottom-3 right-3 z-[95] w-64 rounded-lg border border-amber-300 bg-amber-50 shadow-lg p-3 flex flex-col gap-2',
-    attributes: { 'data-update-dev-panel': 'true' }
-  }, [
-    Row({ class: 'text-xs font-semibold text-amber-900' }, 'Updater test (dev only)'),
-    Row({ class: 'text-[11px] text-amber-800 leading-snug' },
-      'Walk the same UI users will see. No real installer is downloaded.'
-    ),
-    Button({ variant: 'primary', class: 'text-xs w-full', onClick: onOptional }, 'Simulate optional update'),
-    Button({ variant: 'secondary', class: 'text-xs w-full', onClick: onRequired }, 'Simulate required update'),
-    Button({ variant: 'outline', class: 'text-xs w-full', onClick: onReset }, 'Reset'),
-    devPanel.note
-      ? Row({ class: 'text-[11px] text-green-800 bg-green-50 border border-green-200 rounded px-2 py-1' }, devPanel.note)
-      : Row({ class: 'hidden', attributes: { 'aria-hidden': 'true' } })
-  ])
 }
 
 function UpdateAvailableBanner(props, state) {
@@ -210,14 +158,7 @@ function UpdateWizardModal(props, state) {
 
   const onInstall = async () => {
     try {
-      const res = await window.ipcRenderer.installUpdate()
-      if (res?.simulated) {
-        const panel = props.viewModel.getState(UPDATE_DEV_PANEL_KEY) || { show: true, note: '' }
-        props.viewModel.updateState(UPDATE_DEV_PANEL_KEY, {
-          ...panel,
-          note: res.message || 'Simulated install finished (dev only).'
-        })
-      }
+      await window.ipcRenderer.installUpdate()
     } catch (_) {}
   }
 
