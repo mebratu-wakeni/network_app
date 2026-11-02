@@ -6,12 +6,7 @@
 import { LedgerHelper } from '../../services/ledger.helper.js'
 import {
   effectiveWithholdConfirmed,
-  isActiveSalesOrderForStats,
-  rawSalesOrderNotReversed,
-  rawSalesOrderReversed,
-  rawWithholdEffectivelyConfirmed,
-  rawWithholdNotSettled,
-  rawWithholdSettled
+  rawWithholdEffectivelyConfirmed
 } from '../../utils/salesWithhold.js'
 
 export class SalesRepository {
@@ -279,9 +274,9 @@ export class SalesRepository {
 
     // Status filter: reversed = is_reversed; completed = status completed and not reversed; archived = status archived
     if (status === 'reversed') {
-      base.andWhere(rawSalesOrderReversed(this.knex, 'so'))
+      base.andWhere('so.is_reversed', true)
     } else if (status === 'completed') {
-      base.andWhere('so.status', 'completed').andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed').andWhere('so.is_reversed', false)
     } else if (status === 'archived') {
       base.andWhere('so.status', 'archived')
     } else if (status) {
@@ -293,45 +288,33 @@ export class SalesRepository {
     if (date_from) base.andWhere('so.order_date', '>=', date_from)
     if (date_to) base.andWhere('so.order_date', '<=', date_to)
     if (search) {
-      const term = `%${String(search).toLowerCase()}%`
+      const term = `%${search}%`
       base.andWhere(builder => {
-        builder
-          .whereRaw('LOWER(so.receipt_no) LIKE ?', [term])
-          .orWhereRaw('LOWER(c.name) LIKE ?', [term])
+        builder.whereILike('so.receipt_no', term).orWhereILike('c.name', term)
       })
     }
 
     // Stat filter: apply to list query when user clicks a stat
     if (stat_filter === 'outstanding' || has_outstanding_balance === true || has_outstanding_balance === 'true') {
-      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
       base.andWhereRaw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0) - coalesce(so.amount_paid,0)) > 0.009')
     } else if (has_outstanding_balance === false || has_outstanding_balance === 'false') {
-      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
       base.andWhereRaw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0) - coalesce(so.amount_paid,0)) <= 0.009')
     }
     if (stat_filter === 'withhold_unconfirmed') {
-      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
-      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
+      base.andWhere('so.withhold_settled', false)
       base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
     } else if (stat_filter === 'withhold_confirmed') {
-      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
-      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
-      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
+      base.andWhere('so.withhold_settled', false)
     } else if (stat_filter === 'settled') {
-      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
-      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
-      base.andWhere(rawWithholdSettled(this.knex, 'so'))
+      base.andWhere('so.withhold_settled', true)
     } else if (stat_filter === 'unsettled') {
-      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
-      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
+      base.andWhere('so.withhold_settled', false)
     }
 
     const netRaw = this.knex.raw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0)) as net_amount')
@@ -415,16 +398,19 @@ export class SalesRepository {
       const paid = Number(row.amount_paid || 0)
       const withhold = Number(row.withhold_amount || 0)
       const outstanding = net - paid
+      const isReversed = !!row.is_reversed
+      const isArchived = row.status === 'archived'
+      const isCompleted = row.status === 'completed'
       const confirmed = effectiveWithholdConfirmed(row)
       const settled = !!row.withhold_settled
-      const activeForStats = isActiveSalesOrderForStats(row)
 
-      if (activeForStats) {
+      // All: completed, non-reversed (exclude reversed and archived)
+      if (isCompleted && !isReversed) {
         stats.all.count += 1
         stats.all.value += net
       }
 
-      if (activeForStats && withhold > 0.009) {
+      if (withhold > 0.009) {
         if (!confirmed && !settled) {
           stats.withhold_unconfirmed.count += 1
           stats.withhold_unconfirmed.value += withhold
@@ -443,7 +429,7 @@ export class SalesRepository {
         }
       }
 
-      if (activeForStats && outstanding > 0.009) {
+      if (outstanding > 0.009) {
         stats.outstanding.count += 1
         stats.outstanding.value += outstanding
       }
@@ -499,9 +485,9 @@ export class SalesRepository {
     // Then apply search if provided
     const searchTrimmed = typeof search === 'string' ? search.trim() : ''
     if (searchTrimmed) {
-      const term = `%${searchTrimmed.toLowerCase()}%`
+      const term = `%${searchTrimmed}%`
       q.andWhere(builder => {
-        builder.whereRaw('LOWER(c.name) LIKE ?', [term])
+        builder.whereILike('c.name', term)
       })
     }
 
