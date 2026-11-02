@@ -1,6 +1,7 @@
 /**
  * A4 purchase receipt: same paper chrome as sales, with supplier (FROM) and company (TO).
  */
+const { Row } = Liteframe;
 import { joinNonEmpty, receiptStatusClass } from '../../utils/receiptHelpers.js';
 import {
   receiptAmountWords,

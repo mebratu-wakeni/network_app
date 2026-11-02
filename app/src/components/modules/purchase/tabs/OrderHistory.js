@@ -403,8 +403,9 @@ function OrderHistoryTableSection(props) {
                           label: 'View receipt',
                           icon: 'receipt-outline',
                           onClick: () => {
+                            const id = order.id;
+                            handleShowReceipt(id);
                             props.setLocalState('actionId', null);
-                            handleShowReceipt(order.id);
                           },
                         }),
                       ].filter(Boolean)),
