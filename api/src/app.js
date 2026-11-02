@@ -140,7 +140,11 @@ export function createApp() {
 
   // Live health indicators
   app.get('/health', (_req, res) =>
-    res.json({ ok: true, sales_withhold_sql: 'pg-boolean-v2' })
+    res.json({
+      ok: true,
+      sales_withhold_sql: 'pg-boolean-v2',
+      sales_receipt_meta: 'v2-is-reversed'
+    })
   )
   app.get('/api/db-health', async (_req, res, next) => {
     try {

@@ -32,14 +32,24 @@ export function formatPaymentMode(mode) {
   return String(mode).replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Postgres/SQLite boolean normalization (matches api/src/utils/salesWithhold.js). */
+export function toBooleanFlag(v) {
+  if (v === true || v === 1 || v === '1') return true;
+  if (v === false || v === 0 || v === '0' || v == null) return false;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true' || s === 't' || s === 'yes') return true;
+    if (s === 'false' || s === 'f' || s === '') return false;
+  }
+  return Boolean(v);
+}
+
 /** True when live order or receipt snapshot marks the sale/purchase as reversed. */
 export function isReceiptOrderReversed(receipt) {
+  if (receipt?.reversed === true) return true;
   const meta = receipt?.order_meta || {};
   if (String(meta.status || '').toLowerCase() === 'reversed') return true;
-  const flag = meta.is_reversed;
-  if (flag === true || flag === 1) return true;
-  if (typeof flag === 'string' && ['1', 'true', 'yes'].includes(flag.trim().toLowerCase())) return true;
-  return false;
+  return toBooleanFlag(meta.is_reversed);
 }
 
 export function paymentStatusLabel(paymentStatus, { isReversed = false, remainingBalance = 0 } = {}) {

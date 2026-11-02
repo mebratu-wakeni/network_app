@@ -23,7 +23,9 @@ router.get('/health', (_req, res) =>
   res.json({
     ok: true,
     /** Bump when sales withhold SQL changes — desktop can log if stat filters fail. */
-    sales_withhold_sql: 'pg-boolean-v2'
+    sales_withhold_sql: 'pg-boolean-v2',
+    /** Receipt payload includes order_meta.is_reversed + top-level reversed (SO watermark). */
+    sales_receipt_meta: 'v2-is-reversed'
   })
 )
 router.get('/db-health', async (_req, res, next) => {

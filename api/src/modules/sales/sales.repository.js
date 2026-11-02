@@ -12,7 +12,8 @@ import {
   rawSalesOrderReversed,
   rawWithholdEffectivelyConfirmed,
   rawWithholdNotSettled,
-  rawWithholdSettled
+  rawWithholdSettled,
+  toBooleanFlag
 } from '../../utils/salesWithhold.js'
 
 export class SalesRepository {
@@ -1171,12 +1172,14 @@ export class SalesRepository {
       }
     }
 
+    const reversed = toBooleanFlag(order.is_reversed)
+
     const order_meta = {
       order_date: order.order_date,
       payment_type: order.payment_type,
       payment_status: order.payment_status,
       status: order.status ?? 'completed',
-      is_reversed: !!order.is_reversed,
+      is_reversed: reversed,
       customer_id: order.customer_id,
       customer_name: order.customer_name || 'Walk-in',
       customer_address: order.customer_address || null,
@@ -1217,6 +1220,7 @@ export class SalesRepository {
 
     return {
       receipt_no: order.receipt_no,
+      reversed,
       order_meta,
       order_items,
       order_payment,

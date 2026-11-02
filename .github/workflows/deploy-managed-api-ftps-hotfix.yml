@@ -54,7 +54,9 @@ jobs:
           grep -q 'IS TRUE' api/src/utils/salesWithhold.js
           grep -q 'pg-boolean-v2' api/src/app.js
           grep -q 'pg-boolean-v2' api/src/routes/index.js
-          echo "OK: Postgres withhold SQL + health marker found in checkout"
+          grep -q 'v2-is-reversed' api/src/routes/index.js
+          grep -q 'reversed,' api/src/modules/sales/sales.repository.js
+          echo "OK: Postgres withhold SQL + sales receipt reversed meta found in checkout"
 
       - name: Stage restart.txt
         shell: bash
@@ -122,5 +124,9 @@ jobs:
           echo "$body"
           echo "$body" | grep -q 'pg-boolean-v2' || {
             echo "::warning::Health check did not yet show sales_withhold_sql=pg-boolean-v2 (Passenger may still be restarting)"
+            exit 0
+          }
+          echo "$body" | grep -q 'v2-is-reversed' || {
+            echo "::warning::Health check missing sales_receipt_meta=v2-is-reversed (API may still be old build)"
             exit 0
           }

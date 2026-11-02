@@ -8,6 +8,7 @@ import {
   formatPaymentMode,
   isReceiptOrderReversed,
   paymentStatusLabel,
+  toBooleanFlag,
 } from '../../utils/receiptHelpers.js';
 import { SalesReceipt } from './SalesReceipt';
 
@@ -144,6 +145,22 @@ export async function openReceiptModal(options) {
   if (!receipt) {
     if (typeof window !== 'undefined' && window.alert) window.alert('Receipt not found.');
     return;
+  }
+
+  if (!isReceiptOrderReversed(receipt)) {
+    try {
+      const detail = await window.ipcRenderer.invoke('sales:get-order-by-id', orderId);
+      const order = detail?.order;
+      if (order && toBooleanFlag(order.is_reversed)) {
+        receipt = {
+          ...receipt,
+          reversed: true,
+          order_meta: { ...(receipt.order_meta || {}), is_reversed: true },
+        };
+      }
+    } catch (e) {
+      console.warn('[Sales ReceiptModal] could not load order for reversed flag:', e);
+    }
   }
 
   Modal({}, (delegator, handleClose) => {
