@@ -31,9 +31,22 @@ export function effectiveWithholdConfirmed(row) {
   return toBooleanFlag(row.withhold_confirmation)
 }
 
+/** True only for in-memory / file SQLite tests — cloud API is always Postgres. */
 function knexUsesSqliteBooleans(knex) {
-  const client = knex?.client?.config?.client ?? ''
-  return client === 'sqlite3' || client === 'better-sqlite3' || String(client).includes('sqlite')
+  const dbUrl = String(process.env.DATABASE_URL || '')
+  if (dbUrl.includes('postgres')) return false
+
+  const client = String(knex?.client?.config?.client ?? '')
+  if (client === 'pg' || client === 'postgresql' || client === 'postgres') return false
+
+  const conn = knex?.client?.config?.connection
+  const connHint =
+    typeof conn === 'string'
+      ? conn
+      : [conn?.host, conn?.database, conn?.filename].filter(Boolean).join(' ')
+  if (String(connHint).includes('postgres')) return false
+
+  return client === 'sqlite3' || client === 'better-sqlite3' || client.includes('sqlite')
 }
 
 /** SQL: boolean column is true (PG boolean vs SQLite 0/1). */
