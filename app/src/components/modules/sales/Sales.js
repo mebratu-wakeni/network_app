@@ -74,6 +74,8 @@ export function SalesUI(props = {}) {
     stateKeys: [
       'loading',
       'sales-tab',
+      'sales-order-list',
+      'sales-order-table-config',
       'customer-list',
       'customer-search-query',
       'customer-dropdown-loading',

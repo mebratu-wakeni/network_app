@@ -61,6 +61,7 @@ export class SalesVM extends ViewModel {
     this.productSearchTimeout = null
     this._bulkPaymentCustomerSearchSeq = 0
     this.bulkPaymentCustomerSearchTimeout = null
+    this._salesOrdersLoadSeq = 0
     this.initializeState();
     this.loadUserPermissions();
     this.loadWithholdPercentage();
@@ -690,8 +691,9 @@ export class SalesVM extends ViewModel {
 
   updateSalesOrderTableConfig(updates) {
     const config = this.getState('sales-order-table-config') || {};
-    this.updateState('sales-order-table-config', { ...config, ...updates });
-    this.loadSalesOrders();
+    const newConfig = { ...config, ...updates };
+    this.updateState('sales-order-table-config', newConfig);
+    this.loadSalesOrders(newConfig);
   }
 
   updateOrderStatFilter(statKey) {
@@ -711,14 +713,13 @@ export class SalesVM extends ViewModel {
     await this.loadHoldOrders();
   }
 
-  async loadSalesOrders() {
-    // Remove loading guard - allow filters/search/pagination to always trigger reload
-    // Multiple concurrent requests are fine - the last one will set the final state
+  async loadSalesOrders(configOverride = null) {
+    const loadSeq = ++this._salesOrdersLoadSeq;
     this.updateState('loading', true);
     const previousList = this.getSalesOrderList();
+    const config = configOverride || this.getState('sales-order-table-config') || {};
+    const statFilter = config.stat_filter;
     try {
-      const config = this.getState('sales-order-table-config') || {};
-      const statFilter = config.stat_filter;
       const result = await window.ipcRenderer.invoke('sales:get-orders', {
         limit: config.limit,
         offset: config.offset,
@@ -733,6 +734,7 @@ export class SalesVM extends ViewModel {
         sort_by: config.sort_by,
         order_by: config.order_by,
       });
+      if (loadSeq !== this._salesOrdersLoadSeq) return;
       if (result && result.success) {
         this.updateState('sales-order-list', {
           orders: result.orders || [],
@@ -747,6 +749,7 @@ export class SalesVM extends ViewModel {
         });
       }
     } catch (error) {
+      if (loadSeq !== this._salesOrdersLoadSeq) return;
       console.error('[SalesVM] loadSalesOrders error:', error);
       this.updateState('sales-order-list', {
         orders: previousList.orders || [],
@@ -754,7 +757,9 @@ export class SalesVM extends ViewModel {
         stats: previousList.stats || {},
       });
     } finally {
-      this.updateState('loading', false);
+      if (loadSeq === this._salesOrdersLoadSeq) {
+        this.updateState('loading', false);
+      }
     }
   }
 

@@ -110,6 +110,57 @@ describe('SalesVM', () => {
     expect(window.ipcRenderer.invoke).toHaveBeenCalledWith('sales:get-customer-outstanding', 9)
   })
 
+  it('loadSalesOrders passes stat_filter and ignores stale responses', async () => {
+    let resolveFirst
+    const firstHang = new Promise((resolve) => { resolveFirst = resolve })
+
+    window.ipcRenderer.invoke.mockImplementation(async (channel, params) => {
+      if (channel === 'sales:get-withhold-percentage') return { success: true, withhold_percentage: 2 }
+      if (channel === 'sales:get-orders') {
+        if (params?.stat_filter === 'withhold_confirmed') {
+          return {
+            success: true,
+            orders: [{ id: 2, receipt_no: 'CONF' }],
+            total: 1,
+            stats: { all: { count: 1, value: 1 } },
+          }
+        }
+        await firstHang
+        return {
+          success: true,
+          orders: [{ id: 1, receipt_no: 'ALL' }, { id: 2, receipt_no: 'CONF' }],
+          total: 2,
+          stats: { all: { count: 2, value: 2 } },
+        }
+      }
+      return { success: true }
+    })
+
+    const vm = new SalesVM()
+    vm.updateState('sales-order-table-config', {
+      limit: 20,
+      offset: 0,
+      status: 'completed',
+      stat_filter: 'all',
+    })
+
+    const slowAll = vm.loadSalesOrders()
+    vm.updateOrderStatFilter('withhold_confirmed')
+    await new Promise((r) => setTimeout(r, 0))
+    resolveFirst()
+    await slowAll
+    await new Promise((r) => setTimeout(r, 0))
+
+    const list = vm.getSalesOrderList()
+    expect(list.total).toBe(1)
+    expect(list.orders[0].receipt_no).toBe('CONF')
+
+    const filteredCall = window.ipcRenderer.invoke.mock.calls.find(
+      ([channel, params]) => channel === 'sales:get-orders' && params?.stat_filter === 'withhold_confirmed'
+    )
+    expect(filteredCall).toBeTruthy()
+  })
+
   it('bulkPayCustomerSales calls IPC and reloads sales list', async () => {
     const channels = []
     window.ipcRenderer.invoke.mockImplementation(async (channel) => {
