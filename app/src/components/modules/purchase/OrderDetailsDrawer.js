@@ -54,7 +54,11 @@ export function OrderDetailsDrawer(props) {
   };
 
   const handleViewReceipt = () => {
-    onClose();
+    if (typeof props.onDismissBeforeReceipt === 'function') {
+      props.onDismissBeforeReceipt();
+    } else {
+      onClose();
+    }
     openReceiptModal({ orderId: selectedOrder.id });
   };
 

@@ -82,7 +82,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
       }
       const order = await viewModel.processOrder();
       handleClose();
-      showAlert({ message: 'Purchase order completed successfully.', variant: 'success' });
+      await showAlert({ message: 'Purchase order completed successfully.', variant: 'success' });
       if (order && order.id) {
         openReceiptModal({ orderId: order.id });
       }

@@ -20,7 +20,24 @@ const Modal = (props, childComponent) => {
     modal.remove();
   };
 
-  const childContent = childComponent(delegator, handleClose);
+  let childContent;
+  try {
+    childContent = childComponent(delegator, handleClose);
+  } catch (err) {
+    console.error('[Modal] Failed to render dialog content:', err);
+    modal.remove();
+    if (typeof props.onRenderError === 'function') {
+      props.onRenderError(err);
+    }
+    return;
+  }
+
+  if (!childContent) {
+    console.warn('[Modal] Dialog content was empty; closing backdrop.');
+    modal.remove();
+    return;
+  }
+
   // Lift dialog above backdrop fills in nested fixed/flex layouts (Electron/WebKit).
   const panelWrap = Row(
     { class: 'relative z-10 w-full flex justify-center items-center max-h-[90vh] min-h-0 overflow-visible' },

@@ -427,7 +427,16 @@ function orderDetailsDrawer(props) {
     setTimeout(() => {
       props.setLocalState('drawerOrderId', null);
       props.setLocalState('drawerContentType', 'details');
+      props.viewModel.closeOrderDrawer();
     }, DRAWER_CLOSE_MS);
+  };
+
+  /** Tear down drawer immediately so receipt modal is not stacked on a click-blocking shell. */
+  const onDismissBeforeReceipt = () => {
+    props.setLocalState('showOrderDrawer', false);
+    props.setLocalState('drawerOrderId', null);
+    props.setLocalState('drawerContentType', 'details');
+    props.viewModel.closeOrderDrawer();
   };
 
   const onSwitchToPayment = () => {
@@ -438,6 +447,7 @@ function orderDetailsDrawer(props) {
     ...props,
     showSlide: showOrderDrawer,
     onClose,
+    onDismissBeforeReceipt,
     contentType: drawerContentType,
     onSwitchToPayment,
   });
