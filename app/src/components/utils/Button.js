@@ -18,6 +18,7 @@ const Button = (props, children) => {
     variant = 'primary',
     type = 'button',
     disabled = false,
+    title,
     class: className = '',
     delegator,
   } = props;
@@ -60,10 +61,11 @@ const Button = (props, children) => {
     class: lastClasses,
     attributes: {
       type: type,
-      disabled: disabled ? 'disabled' : null, // Set the HTML disabled attribute
+      ...(disabled ? { disabled: true } : {}),
+      ...(title ? { title } : {}),
     },
     delegator,
-    events: { 'click': onClick }
+    events: disabled ? undefined : { click: onClick },
   }, children);
 };
 

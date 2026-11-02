@@ -24,6 +24,9 @@ function mapBorrowPayloadDatesForApi(borrowData) {
   return out;
 }
 
+/** Default “expiring soon” window for new products (Add Product modal). */
+export const DEFAULT_EXPIRY_THRESHOLD_DAYS = 365;
+
 function mapReturnBorrowedToPayloadForApi(returnData) {
   const out = { ...returnData };
   if (out.returnedDate !== undefined) out.returnedDate = toApiDdMmYyyyFromUiDate(out.returnedDate);
@@ -104,8 +107,9 @@ export class InventoryVM extends ViewModel {
       category_id: null,
       unit_id: null,
       remark: '',
-      expiry_threshold: 30
+      expiry_threshold: DEFAULT_EXPIRY_THRESHOLD_DAYS
     });
+    this.setState('product-creating', false);
 
     // Partners State
     this.setState('partner-list', []);
@@ -556,11 +560,6 @@ export class InventoryVM extends ViewModel {
   }
 
   async loadCategories() {
-    if (this.getState('loading')) return;
-    
-    this.updateState('loading', true);
-    this.updateState('error', null);
-
     try {
       const result = await window.ipcRenderer.invoke('inventory:get-all-categories');
 
@@ -573,19 +572,11 @@ export class InventoryVM extends ViewModel {
     } catch (error) {
       console.error('Error loading categories:', error);
       this.updateState('error', { message: error.message || 'Failed to load categories' });
-      // Don't throw, just log - we can continue with empty list
       return [];
-    } finally {
-      this.updateState('loading', false);
     }
   }
 
   async loadUnits() {
-    if (this.getState('loading')) return;
-    
-    this.updateState('loading', true);
-    this.updateState('error', null);
-
     try {
       const result = await window.ipcRenderer.invoke('inventory:get-all-units');
 
@@ -598,10 +589,7 @@ export class InventoryVM extends ViewModel {
     } catch (error) {
       console.error('Error loading units:', error);
       this.updateState('error', { message: error.message || 'Failed to load units' });
-      // Don't throw, just log - we can continue with empty list
       return [];
-    } finally {
-      this.updateState('loading', false);
     }
   }
 
@@ -670,7 +658,7 @@ export class InventoryVM extends ViewModel {
   }
 
   async createProduct(productData) {
-    this.updateState('loading', true);
+    this.updateState('product-creating', true);
     this.updateState('error', null);
     this.updateState('success', null);
 
@@ -679,12 +667,21 @@ export class InventoryVM extends ViewModel {
         throw new Error('Product name is required');
       }
 
+      const thresholdRaw = productData.expiry_threshold;
+      let expiryThreshold = DEFAULT_EXPIRY_THRESHOLD_DAYS;
+      if (thresholdRaw !== undefined && thresholdRaw !== null && String(thresholdRaw).trim() !== '') {
+        const parsed = parseInt(String(thresholdRaw), 10);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          expiryThreshold = parsed;
+        }
+      }
+
       // Prepare product data with category_id and unit_id
       const productPayload = {
         name: String(productData.name).trim(),
         description: productData.description || null,
         remark: productData.remark || null,
-        expiry_threshold: productData.expiry_threshold || 30
+        expiry_threshold: expiryThreshold
       };
 
       // Handle category_id - use existing ID, look up by name, or leave unset
@@ -749,9 +746,6 @@ export class InventoryVM extends ViewModel {
 
       if (result.success) {
         this.updateState('success', { message: 'Product created successfully' });
-        // Set loading to false so loadProducts() can run
-        this.updateState('loading', false);
-        // Reload products list
         await this.loadProducts();
         return result.product;
       }
@@ -770,7 +764,7 @@ export class InventoryVM extends ViewModel {
       this.updateState('error', { message: errorMessage });
       throw error;
     } finally {
-      this.updateState('loading', false);
+      this.updateState('product-creating', false);
     }
   }
 
@@ -1422,13 +1416,9 @@ export class InventoryVM extends ViewModel {
       category_id: null,
       unit_id: null,
       remark: '',
-      expiry_threshold: 30
+      expiry_threshold: DEFAULT_EXPIRY_THRESHOLD_DAYS
     });
-    // Trigger re-render
-    this.updateState('loading', true);
-    setTimeout(() => {
-    this.updateState('loading', false);
-    }, 0);
+    this.updateState('error', null);
   }
 
   // ==================== Drawer Management Methods ====================

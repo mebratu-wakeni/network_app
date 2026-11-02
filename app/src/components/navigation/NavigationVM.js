@@ -72,8 +72,6 @@ class NavigationVM extends ViewModel {
       simulated: false,
       manualDownloadUrl: null
     });
-    this.setState('app-update-dev-panel', { show: false, note: '' });
-
     this._devAutoLoginDone = false
 
     // Auth state

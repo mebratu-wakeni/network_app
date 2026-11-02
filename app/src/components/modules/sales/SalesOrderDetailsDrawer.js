@@ -6,6 +6,11 @@ import { Card, CardHeader, CardBody, CardFooter } from '../../utils/Card';
 import { SelectFluid, SelectOptions } from '../../utils/Select';
 import { formatDateDDMMYYYY } from '../../utils/DateUtils';
 import { showAlert, showConfirmation } from '../../utils/ModalHelpers';
+import {
+  getSalesReverseBlockReason,
+  isSalesReverseDisabled,
+  isWithholdEffectivelyConfirmed
+} from './salesReverseRules.js';
 
 const { Row } = Liteframe;
 
@@ -26,6 +31,7 @@ export function SalesOrderDetailsDrawer(props) {
   const items = selectedPayload.items || [];
   const orderRef = order.receipt_no || '—';
   const outstanding = Number(order.outstanding_balance ?? (order.received_amount != null ? (Number(order.received_amount) - Number(order.amount_paid ?? 0)) : 0));
+  const reverseBlockReason = getSalesReverseBlockReason(order);
 
   const headerTitles = {
     details: 'Order Details',
@@ -42,7 +48,10 @@ export function SalesOrderDetailsDrawer(props) {
   };
   const handleConfirmWithhold = () => props.setDrawerContentType('confirm-withhold');
   const handleRollbackWithhold = () => props.setDrawerContentType('rollback-withhold');
-  const handleReverse = () => props.setDrawerContentType('reverse');
+  const handleReverse = () => {
+    if (isSalesReverseDisabled(order)) return;
+    props.setDrawerContentType('reverse');
+  };
   const handleBackToDetails = () => props.setDrawerContentType('details');
 
   return Drawer({ class: 'flex flex-col h-full', openSlide: drawerOpen }, [
@@ -61,12 +70,28 @@ export function SalesOrderDetailsDrawer(props) {
         contentType === 'reverse' && renderReverseConfirm(props, order, onClose),
       ].filter(Boolean)),
       contentType === 'details'
-        ? CardFooter({ class: 'flex flex-wrap justify-end gap-2 px-5 py-3 border-t border-gray-200 flex-shrink-0' }, [
-            Button({ variant: 'secondary', onClick: onClose, disabled: loading }, 'Close'),
-            outstanding > 0.01 ? Button({ variant: 'primary', onClick: handlePay, disabled: loading }, 'Record Payment') : null,
-            order.withhold_amount > 0.009 && !order.withhold_confirmation ? Button({ variant: 'outline', onClick: handleConfirmWithhold, disabled: loading }, 'Confirm Withhold') : null,
-            order.withhold_confirmation ? Button({ variant: 'outline', onClick: handleRollbackWithhold, disabled: loading }, 'Rollback Withhold') : null,
-            !order.is_reversed ? Button({ variant: 'danger', onClick: handleReverse, disabled: loading }, 'Reverse Order') : null,
+        ? CardFooter({ class: 'flex flex-col gap-2 px-5 py-3 border-t border-gray-200 flex-shrink-0' }, [
+            reverseBlockReason
+              ? Row({ class: 'text-xs text-amber-800 text-right w-full' }, reverseBlockReason)
+              : null,
+            Row({ class: 'flex flex-wrap justify-end gap-2 w-full' }, [
+              Button({ variant: 'secondary', onClick: onClose, disabled: loading }, 'Close'),
+              outstanding > 0.01 ? Button({ variant: 'primary', onClick: handlePay, disabled: loading }, 'Record Payment') : null,
+              order.withhold_amount > 0.009 && !isWithholdEffectivelyConfirmed(order)
+                ? Button({ variant: 'outline', onClick: handleConfirmWithhold, disabled: loading }, 'Confirm Withhold')
+                : null,
+              isWithholdEffectivelyConfirmed(order)
+                ? Button({ variant: 'outline', onClick: handleRollbackWithhold, disabled: loading }, 'Rollback Withhold')
+                : null,
+              !order.is_reversed
+                ? Button({
+                    variant: 'danger',
+                    onClick: handleReverse,
+                    disabled: loading || isSalesReverseDisabled(order),
+                    title: reverseBlockReason || undefined
+                  }, 'Reverse Order')
+                : null,
+            ].filter(Boolean)),
           ].filter(Boolean))
         : CardFooter({ class: 'flex justify-end gap-2 px-5 py-3 border-t border-gray-200 flex-shrink-0' }, [
             Button({ variant: 'secondary', onClick: handleBackToDetails, disabled: loading }, 'Back'),
@@ -78,7 +103,7 @@ export function SalesOrderDetailsDrawer(props) {
 function renderDetails(props, order, items) {
   const netAmount = Number(order.total_amount ?? 0) - Number(order.withhold_amount ?? 0);
   const hasWithhold = order.withhold_amount > 0.009;
-  const withholdConfirmed = !!order.withhold_confirmation;
+  const withholdConfirmed = isWithholdEffectivelyConfirmed(order);
 
   return Row({ class: 'flex flex-col gap-5' }, [
     Row({ class: 'grid grid-cols-2 gap-x-6 gap-y-3' }, [
@@ -348,7 +373,13 @@ function renderRollbackConfirm(props, order, onClose) {
 }
 
 function renderReverseConfirm(props, order, onClose) {
+  const blockReason = getSalesReverseBlockReason(order);
+
   const handleSubmit = async () => {
+    if (blockReason) {
+      await showAlert({ message: blockReason, variant: 'warning' });
+      return;
+    }
     const ok = await showConfirmation({ title: 'Reverse Sale', message: 'Reverse this sale? Inventory will be restored. This cannot be undone.', variant: 'danger' });
     if (!ok) return;
     try {
@@ -361,9 +392,15 @@ function renderReverseConfirm(props, order, onClose) {
   };
 
   return Row({ class: 'flex flex-col gap-4' }, [
-    Row({ class: 'text-sm text-gray-600' }, 'This will restore inventory and mark the order as reversed.'),
+    blockReason
+      ? Row({ class: 'text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2' }, blockReason)
+      : Row({ class: 'text-sm text-gray-600' }, 'This will restore inventory and mark the order as reversed.'),
     Row({ class: 'flex justify-end' }, [
-      Button({ variant: 'danger', onClick: handleSubmit, disabled: props.viewModel.getState('loading') }, 'Reverse Order'),
+      Button({
+        variant: 'danger',
+        onClick: handleSubmit,
+        disabled: props.viewModel.getState('loading') || !!blockReason
+      }, 'Reverse Order'),
     ]),
   ]);
 }

@@ -16,6 +16,7 @@ import {
   getOverallHealthStatus
 } from './headerFormatters.js';
 import { Button } from '../utils/Button.js';
+import { LocalDevBadge } from '../utils/localDevBadge.js';
 
 /** Resolve HeaderVM for the document-level outside-click closer. */
 let headerMenuVmRef = null;
@@ -100,6 +101,7 @@ function renderClientConnectionIndicator(props) {
       }`,
       attributes: { 'aria-label': connected ? 'Online' : 'Offline' }
     }),
+    LocalDevBadge(),
     serverUrl
       ? Row({ tagType: 'span', class: 'text-xs text-gray-600 font-mono max-w-[280px] truncate' }, serverUrl)
       : Row({ tagType: 'span', class: 'text-xs text-gray-500' }, connected ? 'Online' : 'Offline'),

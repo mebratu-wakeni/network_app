@@ -25,6 +25,8 @@ const Input = (props) => {
     placeholder = '',
     required = false,
     isError = false,
+    inputMode,
+    pattern,
     class: className = '',
     delegator,
   } = props;
@@ -57,6 +59,8 @@ const Input = (props) => {
       id: name, // ID links to the Label's 'for' attribute
       ...(type === 'file' ? {} : { value: value }),
       ...(accept ? { accept } : {}),
+      ...(inputMode ? { inputMode } : {}),
+      ...(pattern ? { pattern } : {}),
       placeholder: placeholder,
       'aria-invalid': isError ? "true" : "false",
       required,

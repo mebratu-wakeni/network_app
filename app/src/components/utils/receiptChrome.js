@@ -180,11 +180,14 @@ export function receiptItemsTable(items, delegator) {
               Row({
                 tagType: 'tr',
                 children: [
-                  Row({ tagType: 'th', classNames: ['col-item'], children: ['Item'], delegator }),
+                  Row({ tagType: 'th', classNames: ['col-num', 'text-center'], children: ['#'], delegator }),
+                  Row({ tagType: 'th', classNames: ['col-code'], children: ['Code'], delegator }),
+                  Row({ tagType: 'th', classNames: ['col-name'], children: ['Product name'], delegator }),
                   Row({ tagType: 'th', classNames: ['col-batch'], children: ['Batch'], delegator }),
                   Row({ tagType: 'th', classNames: ['col-expiry'], children: ['Expiry'], delegator }),
                   Row({ tagType: 'th', classNames: ['col-qty', 'text-center'], children: ['Qty'], delegator }),
-                  Row({ tagType: 'th', classNames: ['col-price', 'text-right'], children: ['Unit Price'], delegator }),
+                  Row({ tagType: 'th', classNames: ['col-unit', 'text-center'], children: ['Unit'], delegator }),
+                  Row({ tagType: 'th', classNames: ['col-price', 'text-right'], children: ['Unit price'], delegator }),
                   Row({ tagType: 'th', classNames: ['col-total', 'text-right'], children: ['Total'], delegator }),
                 ],
                 delegator,
@@ -194,33 +197,44 @@ export function receiptItemsTable(items, delegator) {
           }),
           Row({
             tagType: 'tbody',
-            children: rows.map((item) => {
+            children: rows.map((item, index) => {
               const code = String(item.productCode || '').trim();
-              const desc = String(item.description || '').trim();
-              const showCode = code && code !== desc;
+              const name =
+                String(item.productName || item.description || '').trim() ||
+                code ||
+                '—';
+              const unit = String(item.unitName || item.unit || '').trim();
               return Row({
                 tagType: 'tr',
                 classNames: ['items-row'],
                 children: [
                   Row({
                     tagType: 'td',
-                    classNames: ['col-item'],
-                    children: [
-                      showCode
-                        ? Row({ tagType: 'span', classNames: ['receipt-item-code'], children: [code], delegator })
-                        : null,
-                      Row({
-                        tagType: 'span',
-                        classNames: ['receipt-item-desc'],
-                        children: [cellText(desc || code)],
-                        delegator,
-                      }),
-                    ].filter(Boolean),
+                    classNames: ['col-num', 'text-center'],
+                    children: [String(index + 1)],
+                    delegator,
+                  }),
+                  Row({
+                    tagType: 'td',
+                    classNames: ['col-code'],
+                    children: [cellText(code)],
+                    delegator,
+                  }),
+                  Row({
+                    tagType: 'td',
+                    classNames: ['col-name'],
+                    children: [cellText(name)],
                     delegator,
                   }),
                   Row({ tagType: 'td', classNames: ['col-batch'], children: [cellText(item.batchNo)], delegator }),
                   Row({ tagType: 'td', classNames: ['col-expiry'], children: [cellText(item.expiryDate)], delegator }),
                   Row({ tagType: 'td', classNames: ['col-qty', 'text-center'], children: [item.qty ?? '—'], delegator }),
+                  Row({
+                    tagType: 'td',
+                    classNames: ['col-unit', 'text-center'],
+                    children: [cellText(unit)],
+                    delegator,
+                  }),
                   Row({
                     tagType: 'td',
                     classNames: ['col-price', 'text-right'],

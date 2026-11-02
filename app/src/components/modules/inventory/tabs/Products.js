@@ -426,7 +426,9 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
   const productUnit = productDetailsForm.unit || '';
   const productUnitId = productDetailsForm.unit_id || null;
   const productExpiryThreshold = editMode
-    ? (draft.expiry_threshold ?? 30)
+    ? (draft.expiry_threshold !== undefined
+        ? draft.expiry_threshold
+        : (productDetailsForm.expiry_threshold != null ? productDetailsForm.expiry_threshold : 30))
     : (productDetailsForm.expiry_threshold || 30);
 
   const updateDetailsDraft = (fields) => {
@@ -817,19 +819,20 @@ function ProductDetails({ product, showSlide, onClose, ...props }) {
                   value: editMode ? null : `${productExpiryThreshold || 30} days`,
                   editMode: editMode,
                   inputProps: {
-                    type: 'number',
-                    min: 1,
-                    value: productExpiryThreshold || 30,
+                    type: 'text',
+                    inputMode: 'numeric',
+                    pattern: '[0-9]*',
+                    value:
+                      productExpiryThreshold === ''
+                        ? ''
+                        : String(productExpiryThreshold ?? 30),
                     onInput: (e) => {
-                      const raw = e.target.value;
-                      if (raw === '') {
+                      const digits = String(e.target.value || '').replace(/\D/g, '');
+                      if (digits === '') {
                         updateDetailsDraft({ expiry_threshold: '' });
                         return;
                       }
-                      const n = parseInt(raw, 10);
-                      if (!Number.isNaN(n)) {
-                        updateDetailsDraft({ expiry_threshold: n });
-                      }
+                      updateDetailsDraft({ expiry_threshold: parseInt(digits, 10) });
                     },
                     name: 'expiry-threshold',
                     placeholder: 'Enter number of days'
@@ -1500,8 +1503,10 @@ function BinCardDrawer({ product, showSlide, onClose, ...props }) {
 
 async function openAddProductModal(props) {
   props.viewModel.resetProductForm();
-  await props.viewModel.loadCategories();
-  await props.viewModel.loadUnits();
+  await Promise.all([
+    props.viewModel.loadCategories(),
+    props.viewModel.loadUnits()
+  ]);
   Modal({}, (delegator, closeHandler) => ModalContent(props.viewModel, delegator, closeHandler));
 }
 
