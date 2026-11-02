@@ -14,6 +14,16 @@ describe('salesWithhold reverse rules', () => {
       withhold_confirmation: true,
       withhold_ref: 'WH-1'
     })
+    expect(reason).toMatch(/cannot be reversed/i)
+    expect(reason).toMatch(/settled/i)
+  })
+
+  it('blocks reverse when withhold_settled even if withhold_amount is zero', () => {
+    const reason = getSalesReverseBlockReason({
+      is_reversed: false,
+      withhold_amount: 0,
+      withhold_settled: true
+    })
     expect(reason).toMatch(/settled/i)
   })
 
@@ -24,7 +34,7 @@ describe('salesWithhold reverse rules', () => {
       withhold_settled: false,
       withhold_ref: 'WH-2'
     })
-    expect(reason).toMatch(/rollback/i)
+    expect(reason).toMatch(/roll back/i)
     expect(effectiveWithholdConfirmed({ withhold_amount: 50, withhold_ref: 'WH-2' })).toBe(true)
   })
 

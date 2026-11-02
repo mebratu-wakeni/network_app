@@ -20,12 +20,16 @@ export function getSalesReverseBlockReason(order) {
   if (!order) return 'Sales order not found';
   if (order.is_reversed) return 'Order is already reversed';
 
+  const settled =
+    order.withhold_settled === true ||
+    order.withhold_settled === 1 ||
+    order.withhold_settled === '1';
+  if (settled) {
+    return 'This sale cannot be reversed because withhold tax was already settled.';
+  }
+
   const withhold = Number(order.withhold_amount ?? 0);
   if (withhold <= 0.009) return null;
-
-  if (order.withhold_settled) {
-    return 'Cannot reverse: withhold tax on this sale was already settled. Reverse or adjust the withhold settlement first.';
-  }
 
   if (isWithholdEffectivelyConfirmed(order)) {
     return 'Cannot reverse while withhold is confirmed. Roll back withhold confirmation on this order, then reverse the sale.';
