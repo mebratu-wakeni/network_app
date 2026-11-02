@@ -96,7 +96,9 @@ function ActionDropdown(props, children) {
     ]),
 
     open && Row({
-      class: `z-50 absolute right-0 mt-2 min-w-40` }, [
+      class: `z-50 absolute right-0 mt-2 min-w-40`,
+      attributes: { 'data-action-dropdown-menu': '' },
+    }, [
       Row({ class: menuBaseClass }, children),
       Row({ class: 'h-8' })
     ])

@@ -45,14 +45,17 @@ function eventPathContainsSelector(e, selector) {
 
 export function registerActionDropdownOutsideClickByTag(getCurrentOpen) {
   function handleClick(e) {
+    // Bubble phase so menu item handlers run before we tear down the dropdown (capture
+    // phase could morph the menu away before ActionItem click runs, e.g. ion-icon targets).
     if (eventPathContainsSelector(e, '[data-action-dropdown]')) return;
+    if (eventPathContainsSelector(e, '[data-action-dropdown-menu]')) return;
     const current = getCurrentOpen();
     if (current && current.getOpenState && current.getOpenState()) {
       current.setOpenState();
     }
   }
-  document.addEventListener('click', handleClick, true);
-  return () => document.removeEventListener('click', handleClick, true);
+  document.addEventListener('click', handleClick, false);
+  return () => document.removeEventListener('click', handleClick, false);
 }
 
 export function ManageDSOutsideClick({containerEl, getOpenState, setOpenState}) {

@@ -115,19 +115,36 @@ export function buildReceiptData(receipt, settings, options = {}) {
  */
 export async function openReceiptModal(options) {
   const { orderId } = options || {};
-  if (!orderId) return;
+  if (!orderId) {
+    await showAlert({ message: 'No order selected for receipt.', variant: 'error' });
+    return;
+  }
+
+  const invoke = window.ipcRenderer?.invoke?.bind(window.ipcRenderer);
+  if (!invoke) {
+    await showAlert({
+      message: 'Receipt is only available in the desktop app (IPC unavailable).',
+      variant: 'error',
+    });
+    return;
+  }
 
   let receipt = null;
   let settings = {};
   try {
     const [receiptResult, settingsResult] = await Promise.all([
-      window.ipcRenderer.invoke('purchase:get-order-receipt', orderId),
-      window.ipcRenderer.invoke('settings:get').catch(() => ({ success: false, settings: {} })),
+      invoke('purchase:get-order-receipt', orderId),
+      invoke('settings:get').catch(() => ({ success: false, settings: {} })),
     ]);
     if (receiptResult && receiptResult.success && receiptResult.receipt) receipt = receiptResult.receipt;
     if (settingsResult && settingsResult.success && settingsResult.settings) settings = settingsResult.settings;
   } catch (e) {
     console.error('ReceiptModal fetch error:', e);
+    await showAlert({
+      message: e?.message || 'Could not load purchase receipt.',
+      variant: 'error',
+    });
+    return;
   }
 
   if (!receipt) {
@@ -137,9 +154,19 @@ export async function openReceiptModal(options) {
 
   const orderStatus = receipt.order_meta?.status || null;
 
-  Modal({}, (delegator, handleClose) => {
-    return ReceiptModalContent({ receipt, settings, orderStatus, handleClose, delegator });
-  });
+  Modal(
+    {
+      onRenderError: async (err) => {
+        await showAlert({
+          message: err?.message || 'Could not display purchase receipt.',
+          variant: 'error',
+        });
+      },
+    },
+    (delegator, handleClose) => {
+      return ReceiptModalContent({ receipt, settings, orderStatus, handleClose, delegator });
+    }
+  );
 }
 
 function ReceiptModalContent({ receipt, settings, orderStatus, handleClose, delegator }) {

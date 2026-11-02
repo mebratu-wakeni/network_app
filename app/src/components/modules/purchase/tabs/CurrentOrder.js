@@ -14,7 +14,7 @@ const { Row } = Liteframe;
 
 export function CurrentOrder(props) {
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-hidden' }, [
+  return Row({ class: 'relative flex-1 flex flex-col min-h-0 overflow-hidden' }, [
     Row({ class: 'overflow-y-auto flex-1 min-h-0 p-6 space-y-4' }, [
       props.viewModel.getState('current-order').error && Row({ class: 'bg-red-50 border border-red-200 rounded-lg p-2 text-red-500 text-sm' }, [
         Row({ class: 'text-sm text-red-500' }, props.viewModel.getState('current-order').error)
@@ -224,14 +224,20 @@ function OrderActionButtons(props) {
     }, 'Reset'),
     Button({
       variant: 'outline',
-      disabled: loading,
       class: 'w-40',
       onClick: async () => {
-        const order = await props.viewModel.getLastOrder();
-        if (order && order.id) {
-          openReceiptModal({ orderId: order.id });
-        } else {
-          showAlert({ message: 'No purchase orders yet.', variant: 'info' });
+        try {
+          const order = await props.viewModel.getLastOrder();
+          if (order && order.id) {
+            await openReceiptModal({ orderId: order.id });
+          } else {
+            await showAlert({ message: 'No purchase orders yet.', variant: 'info' });
+          }
+        } catch (e) {
+          await showAlert({
+            message: e?.message || 'Failed to open purchase receipt.',
+            variant: 'error',
+          });
         }
       },
     }, 'View Last Receipt'),

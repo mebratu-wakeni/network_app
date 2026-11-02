@@ -48,7 +48,7 @@ export function OrderHistory(props) {
     props.setLocalState('pendingPurchaseOpenProcessed', false);
   }
 
-  return Row({ class: 'flex-1 flex flex-col min-h-0 overflow-auto' }, [
+  return Row({ class: 'relative flex-1 flex flex-col min-h-0 overflow-auto' }, [
     OrderHistoryStatsAndFilters(props),
     OrderHistoryTableSection(props),
     props.getLocalState('drawerOrderId') && orderDetailsDrawer(props),
@@ -236,7 +236,11 @@ function OrderHistoryTableSection(props) {
   };
 
   const handleShowReceipt = (orderId) => {
-    openReceiptModal({ orderId });
+    if (!orderId) return;
+    openReceiptModal({ orderId }).catch((e) => {
+      console.error('[OrderHistory] openReceiptModal:', e);
+      showAlert({ message: e?.message || 'Failed to open purchase receipt.', variant: 'error' });
+    });
   };
 
   const getStatusBadge = (status) => {

@@ -19,7 +19,7 @@ const Drawer = (props = {}, children = []) => {
         bg-white w-150
         box-shadow
         transition-transform duration-300 ease-out border border-gray-200
-        pointer-events-auto
+        ${pointerClass}
         ${openSlide ? 'translate-x-0' : 'translate-x-full'}
         ${className}
       `,
