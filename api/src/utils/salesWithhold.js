@@ -1,5 +1,5 @@
 /**
- * Sales withhold confirmation helpers (SQLite-friendly booleans, remark/ref parity).
+ * Sales withhold confirmation helpers (Postgres boolean SQL in production; SQLite only in vitest).
  */
 
 export function toBooleanFlag(v) {

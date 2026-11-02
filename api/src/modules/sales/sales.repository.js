@@ -374,7 +374,7 @@ export class SalesRepository {
       const periodRow = await this.knex('sales_orders as so')
         .where('so.tenant_id', tenantId)
         .where('so.status', 'completed')
-        .where('so.is_reversed', false)
+        .where(rawSalesOrderNotReversed(this.knex, 'so'))
         .where('so.order_date', '>=', date_from)
         .where('so.order_date', '<=', date_to)
         .select(this.knex.raw('COUNT(*) as count, COALESCE(SUM(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0)), 0) as value'))
@@ -610,7 +610,7 @@ export class SalesRepository {
       .where('so.tenant_id', tenantId)
       .where('so.customer_id', cid)
       .where('so.status', 'completed')
-      .where('so.is_reversed', false)
+      .where(rawSalesOrderNotReversed(knexOrTrx, 'so'))
       .select(
         'so.id',
         'so.receipt_no',
@@ -889,7 +889,7 @@ export class SalesRepository {
   async confirmWithhold(tenantId, orderId, withholdRef) {
     const n = await this.knex('sales_orders')
       .where({ id: orderId, tenant_id: tenantId })
-      .whereNot({ is_reversed: true })
+      .where(rawSalesOrderNotReversed(this.knex, 'sales_orders'))
       .update({
         withhold_ref: withholdRef || null,
         withhold_confirmation: true,
@@ -913,7 +913,7 @@ export class SalesRepository {
 
     const n = await this.knex('sales_orders')
       .where({ id: orderId, tenant_id: tenantId })
-      .whereNot({ is_reversed: true })
+      .where(rawSalesOrderNotReversed(this.knex, 'sales_orders'))
       .update({
         withhold_ref: null,
         withhold_confirmation: false,
@@ -1252,7 +1252,7 @@ export class SalesRepository {
       })
       .where('so.tenant_id', tenantId)
       .where('so.status', 'completed')
-      .where('so.is_reversed', false)
+      .where(rawSalesOrderNotReversed(this.knex, 'so'))
     return { export: rows }
   }
 }
