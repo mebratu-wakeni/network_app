@@ -1,0 +1,120 @@
+# Push selected api/ source files to server.masatechplc.com via FTPS + restart Node.
+# Same FTPS pattern as "Repair Managed Windows Downloads" (DOWNLOADS_* secrets).
+#
+# Use for code-only API hotfixes when a full masatech-deploy.tar.gz extract is not required.
+# Does NOT run npm install on the server — if package.json changed, use the Release tarball instead.
+
+name: Deploy Managed API (FTPS hotfix)
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: 'Branch or tag to deploy api/ from'
+        required: true
+        default: 'release/managed-cloud'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref }}
+
+      - name: Check downloads secrets
+        shell: bash
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          missing=0
+          [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
+          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
+          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
+          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR" && missing=1
+          exit $missing
+
+      - name: Verify withhold PG fix present
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'IS TRUE' api/src/utils/salesWithhold.js
+          grep -q 'pg-boolean-v2' api/src/app.js
+          grep -q 'pg-boolean-v2' api/src/routes/index.js
+          echo "OK: Postgres withhold SQL + health marker found in checkout"
+
+      - name: Stage restart.txt
+        shell: bash
+        run: |
+          mkdir -p hotfix/api/tmp
+          date -u +"%Y-%m-%dT%H:%M:%SZ deploy-managed-api-ftps-hotfix ref=${{ inputs.git_ref }} sha=${GITHUB_SHA}" > hotfix/api/tmp/restart.txt
+
+      - name: Upload API files via FTPS
+        id: ftps
+        shell: bash
+        env:
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          set -euo pipefail
+          SERVER_DIR="${DOWNLOADS_SERVER_DIR%/}"
+          DOMAIN_ROOT="$(dirname "$(dirname "$SERVER_DIR")")"
+          echo "Domain root (FTP relative): ${DOMAIN_ROOT}"
+
+          curl_put() {
+            local local_path="$1"
+            local remote_rel="$2"
+            echo "put ftp://${HOST}/${DOMAIN_ROOT}/${remote_rel}"
+            curl -sS --fail --ftp-ssl --insecure --ftp-pasv \
+              --connect-timeout 30 --max-time 300 \
+              --retry 3 --retry-delay 5 \
+              --user "${USER}:${PASS}" \
+              -T "${local_path}" \
+              "ftp://${HOST}/${DOMAIN_ROOT}/${remote_rel}"
+          }
+
+          echo "== probe =="
+          curl -sS --fail --ftp-ssl --insecure --ftp-pasv \
+            --connect-timeout 30 --max-time 60 \
+            --user "${USER}:${PASS}" \
+            --list-only "ftp://${HOST}/${DOMAIN_ROOT}/" | head -20
+
+          FILES=(
+            api/src/utils/salesWithhold.js
+            api/src/modules/sales/sales.repository.js
+            api/src/modules/financial/financial.repository.js
+            api/src/modules/sales/sales.service.js
+            api/src/modules/purchase/purchase.repository.js
+            api/src/services/ledger.helper.js
+            api/src/app.js
+            api/src/routes/index.js
+          )
+
+          for rel in "${FILES[@]}"; do
+            test -f "$rel" || { echo "Missing $rel"; exit 1; }
+            curl_put "$rel" "$rel"
+          done
+
+          curl_put hotfix/api/tmp/restart.txt "api/tmp/restart.txt"
+          echo "FTPS upload complete"
+
+      - name: Verify live health marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 15
+          body="$(curl -sS --max-time 30 https://server.masatechplc.com/api/health || true)"
+          echo "$body"
+          echo "$body" | grep -q 'pg-boolean-v2' || {
+            echo "::warning::Health check did not yet show sales_withhold_sql=pg-boolean-v2 (Passenger may still be restarting)"
+            exit 0
+          }
