@@ -4,7 +4,10 @@
 import { LedgerHelper } from '../../services/ledger.helper.js'
 import {
   effectiveWithholdConfirmed,
-  rawWithholdEffectivelyConfirmed
+  rawSalesOrderNotReversed,
+  rawWithholdEffectivelyConfirmed,
+  rawWithholdNotSettled,
+  rawWithholdSettled
 } from '../../utils/salesWithhold.js'
 
 export class FinancialRepository {
@@ -573,15 +576,15 @@ export class FinancialRepository {
     let base = this.knex('sales_orders as so')
       .leftJoin('customers as c', 'so.customer_id', 'c.id')
       .where('so.status', 'completed')
-      .where('so.is_reversed', false)
+      .where(rawSalesOrderNotReversed(this.knex, 'so'))
       .whereRaw('coalesce(so.withhold_amount, 0) > 0.009')
 
     if (status === 'confirmed_unsettled') {
-      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', false)
+      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere(rawWithholdNotSettled(this.knex, 'so'))
     } else if (status === 'unconfirmed') {
-      base = base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', false)
+      base = base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere(rawWithholdNotSettled(this.knex, 'so'))
     } else if (status === 'settled') {
-      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', true)
+      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere(rawWithholdSettled(this.knex, 'so'))
     }
 
     base = base.select(
@@ -603,7 +606,7 @@ export class FinancialRepository {
     // Stats: all with withhold_amount > 0
     const statsRows = await this.knex('sales_orders as so')
       .where('so.status', 'completed')
-      .where('so.is_reversed', false)
+      .where(rawSalesOrderNotReversed(this.knex, 'so'))
       .whereRaw('coalesce(so.withhold_amount, 0) > 0.009')
       .select(
         'so.withhold_confirmation',
@@ -675,9 +678,9 @@ export class FinancialRepository {
       const orders = await trx('sales_orders')
         .whereIn('id', sales_order_ids)
         .where('status', 'completed')
-        .where('is_reversed', false)
+        .where(rawSalesOrderNotReversed(trx, 'sales_orders'))
         .whereRaw('coalesce(withhold_amount, 0) > 0.009')
-        .where('withhold_settled', false)
+        .where(rawWithholdNotSettled(trx, 'sales_orders'))
         .whereRaw(rawWithholdEffectivelyConfirmed(trx, 'sales_orders'))
         .select('id', 'receipt_no', 'withhold_amount')
 
@@ -754,9 +757,9 @@ export class FinancialRepository {
       .whereRaw('coalesce(po.withhold_amount, 0) > 0.009')
 
     if (status === 'unsettled') {
-      base = base.andWhere('po.withhold_settled', false)
+      base = base.andWhere(rawWithholdNotSettled(this.knex, 'po'))
     } else if (status === 'settled') {
-      base = base.andWhere('po.withhold_settled', true)
+      base = base.andWhere(rawWithholdSettled(this.knex, 'po'))
     }
 
     base = base.select(
@@ -827,7 +830,7 @@ export class FinancialRepository {
         .whereIn('id', purchase_order_ids)
         .where('status', 'completed')
         .whereRaw('coalesce(withhold_amount, 0) > 0.009')
-        .where('withhold_settled', false)
+        .where(rawWithholdNotSettled(trx, 'purchase_orders'))
         .select('id', 'receipt_no', 'withhold_amount')
 
       if (orders.length !== purchase_order_ids.length) {
