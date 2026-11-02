@@ -3,6 +3,7 @@
  * Encapsulates all database queries for inventories table
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
+import { rawExpiringSoonUpperBound } from '../../utils/knexDialect.js'
 import { DEFAULT_STOCK_IMPORT_LOCATION } from './importCsvHelpers.js'
 
 export class InventoriesRepository {
@@ -1273,6 +1274,7 @@ export class InventoriesRepository {
     if (filter !== 'all' && filter !== 'borrowed-from' && filter !== 'borrowed-to') {
       const today = new Date()
       const todayStr = today.toISOString().split('T')[0]
+      const knexRef = this.knex
 
       query = query.where(function() {
         if (filter === 'out-of-stock') {
@@ -1285,9 +1287,12 @@ export class InventoriesRepository {
           // Only batches with valid expiry_date; use product-level expiry_threshold (days)
           this.whereNotNull('inventories.expiry_date')
             .where('inventories.expiry_date', '>=', todayStr)
-            .whereRaw(
-              `DATE(inventories.expiry_date) <= DATE(?, '+' || COALESCE(products.expiry_threshold, ?) || ' days')`,
-              [todayStr, InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD]
+            .where(
+              rawExpiringSoonUpperBound(
+                knexRef,
+                todayStr,
+                InventoriesRepository.DEFAULT_EXPIRY_THRESHOLD
+              )
             )
         } else if (filter === 'high-value') {
           this.where('inventories.purchase_price', '>=', HIGH_VALUE_THRESHOLD)

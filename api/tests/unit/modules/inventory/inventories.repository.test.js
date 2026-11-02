@@ -51,6 +51,20 @@ describe('InventoriesRepository tenant isolation', () => {
     if (db) await db.destroy()
   })
 
+  it('findAll with expiring-soon filter runs without error (sqlite DATE syntax)', async () => {
+    const inTenDays = new Date()
+    inTenDays.setDate(inTenDays.getDate() + 10)
+    await db('inventories').where({ id: 1 }).update({
+      expiry_date: inTenDays.toISOString().split('T')[0],
+      quantity: 3
+    })
+    await db('products').where({ id: 1 }).update({ expiry_threshold: 30 })
+
+    const result = await repo.findAll(1, { limit: 10, offset: 0, filter: 'expiring-soon' })
+    expect(result.total).toBeGreaterThanOrEqual(1)
+    expect(result.stock.some((s) => s.id === 1)).toBe(true)
+  })
+
   it('findAll only returns inventories for the requested tenant', async () => {
     const t1 = await repo.findAll(1, { limit: 10, offset: 0 })
     const t2 = await repo.findAll(2, { limit: 10, offset: 0 })
