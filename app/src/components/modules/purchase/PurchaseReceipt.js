@@ -61,8 +61,12 @@ export function PurchaseReceipt(receiptData, delegator = Liteframe.mainDelegator
       receiptMetaGrid(
         [
           { label: 'Date', value: receiptData.dateIssued || '—' },
-          { label: 'Receipt No.', value: receiptNo || '—' },
-          ref ? { label: 'Ref', value: ref } : null,
+          {
+            label: 'Receipt No.',
+            value: receiptNo || '—',
+            valueClass: 'receipt-doc-id',
+          },
+          ref ? { label: 'Ref', value: ref, valueClass: 'receipt-doc-id' } : null,
           orderDetails.paymentMode ? { label: 'Payment', value: orderDetails.paymentMode } : null,
           orderDetails.status
             ? {

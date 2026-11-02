@@ -57,7 +57,11 @@ export function SalesReceipt(receiptData, delegator = Liteframe.mainDelegator, i
       receiptMetaGrid(
         [
           { label: 'Date', value: receiptData.dateIssued || '—' },
-          { label: 'Receipt No.', value: receiptNo || '—' },
+          {
+            label: 'Receipt No.',
+            value: receiptNo || '—',
+            valueClass: 'receipt-doc-id',
+          },
           receiptData.invoiceNo ? { label: 'Invoice No.', value: receiptData.invoiceNo } : null,
           orderDetails.paymentMode ? { label: 'Payment', value: orderDetails.paymentMode } : null,
           orderDetails.status

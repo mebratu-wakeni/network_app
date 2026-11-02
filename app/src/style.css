@@ -229,6 +229,15 @@
   word-break: break-word;
 }
 
+/* SO/PO-style document ids (e.g. SO000123, PO000456) — match customer_code monospace in UI */
+.receipt-print-area .receipt-meta-value.receipt-doc-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  word-break: normal;
+}
+
 /* Status stays same ink as body text for print visibility (hierarchy via weight). */
 .receipt-print-area .receipt-meta-value.receipt-status-paid,
 .receipt-print-area .receipt-meta-value.receipt-status-partial,
