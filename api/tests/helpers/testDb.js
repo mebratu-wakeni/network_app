@@ -805,3 +805,134 @@ export async function seedTwoTenantsWithReports(db) {
     { tenant_id: 2, transaction_date: '2026-06-01', account_code: '5100', account_name: 'Sales', debit: 0, credit: 500 }
   ])
 }
+
+const SALES_REVERSAL_GL_ACCOUNTS = [
+  { account_code: '1100', account_name: 'Cash', account_type: 'Asset' },
+  { account_code: '1200', account_name: 'Accounts Receivable', account_type: 'Asset' },
+  { account_code: '1300', account_name: 'Inventory', account_type: 'Asset' },
+  { account_code: '3210', account_name: 'Withhold Payable', account_type: 'Liability' },
+  { account_code: '5100', account_name: 'Sales Revenue', account_type: 'Revenue' },
+  { account_code: '6100', account_name: 'COGS', account_type: 'Expense' }
+]
+
+/** Sales schema + bin cards, payments, and GL tables for reversal integration tests. */
+export async function createSalesReversalSchema(db) {
+  await createSalesSchema(db)
+  await db.schema.alterTable('sales_orders', (table) => {
+    table.integer('encoder_id')
+    table.string('encoder_fullname')
+    table.string('invoice_no')
+    table.string('sync_status').defaultTo('pending')
+    table.decimal('withhold_percentage', 15, 2)
+  })
+  await db.schema.alterTable('sales_order_items', (table) => {
+    table.string('sync_status').defaultTo('pending')
+    table.timestamp('created_at').defaultTo(db.fn.now())
+    table.timestamp('last_updated').defaultTo(db.fn.now())
+  })
+  await db.schema.alterTable('inventories', (table) => {
+    table.timestamp('last_updated').defaultTo(db.fn.now())
+    table.string('sync_status').defaultTo('pending')
+  })
+  await db.schema.createTable('bin_cards', (table) => {
+    table.increments('id').primary()
+    table.integer('tenant_id').unsigned().notNullable()
+    table.integer('product_id').notNullable()
+    table.integer('inventory_id')
+    table.string('batch_no')
+    table.date('expiry_date')
+    table.date('transaction_date')
+    table.string('transaction_type')
+    table.integer('reference_id')
+    table.string('reference_table')
+    table.string('document_no')
+    table.integer('opening_balance')
+    table.integer('quantity_in').defaultTo(0)
+    table.integer('quantity_out').defaultTo(0)
+    table.integer('balance').defaultTo(0)
+    table.decimal('unit_cost', 15, 2)
+    table.decimal('total_cost', 15, 2)
+    table.string('reason')
+    table.text('notes')
+    table.integer('created_by')
+    table.timestamp('created_at')
+    table.timestamp('last_updated')
+    table.string('sync_status').defaultTo('pending')
+  })
+  await db.schema.createTable('sales_payments', (table) => {
+    table.increments('id').primary()
+    table.integer('tenant_id').unsigned().notNullable()
+    table.integer('sales_order_id').notNullable()
+    table.date('payment_date')
+    table.decimal('amount', 15, 2).notNullable()
+    table.string('payment_method').defaultTo('cash')
+    table.text('note')
+    table.string('cheque_no')
+    table.string('bank_name')
+    table.date('cheque_date')
+    table.date('cleared_date')
+    table.timestamp('created_at').defaultTo(db.fn.now())
+    table.timestamp('last_updated').defaultTo(db.fn.now())
+    table.string('sync_status').defaultTo('pending')
+  })
+  await db.schema.createTable('chart_of_accounts', (table) => {
+    table.increments('id').primary()
+    table.integer('tenant_id').unsigned().notNullable()
+    table.string('account_code').notNullable()
+    table.string('account_name').notNullable()
+    table.string('account_type')
+    table.integer('level').defaultTo(2)
+    table.integer('parent_account_id')
+    table.boolean('is_active').defaultTo(true)
+  })
+  await db.schema.createTable('account_ledger', (table) => {
+    table.increments('id').primary()
+    table.integer('tenant_id').unsigned().notNullable()
+    table.date('transaction_date').notNullable()
+    table.string('account_code').notNullable()
+    table.string('account_name')
+    table.decimal('debit').defaultTo(0)
+    table.decimal('credit').defaultTo(0)
+    table.decimal('balance').defaultTo(0)
+    table.string('reference_no')
+    table.string('reference_table')
+    table.integer('reference_id')
+    table.text('description')
+    table.string('transaction_type')
+    table.string('fiscal_year')
+    table.string('fiscal_period')
+    table.integer('inventory_id')
+    table.integer('created_by')
+    table.timestamp('created_at').defaultTo(db.fn.now())
+    table.timestamp('last_updated').defaultTo(db.fn.now())
+    table.string('sync_status').defaultTo('pending')
+  })
+}
+
+export async function seedSalesReversalTenant(db, tenantId = 1) {
+  await db('tenants').insert({ id: tenantId, client_code: 'REVTEST', business_name: 'Reversal Test' })
+  for (const acc of SALES_REVERSAL_GL_ACCOUNTS) {
+    await db('chart_of_accounts').insert({
+      tenant_id: tenantId,
+      ...acc,
+      level: 2,
+      is_active: true
+    })
+  }
+  await db('customers').insert({
+    id: 1,
+    tenant_id: tenantId,
+    customer_code: 'C1',
+    name: 'Customer',
+    customer_type: 'retailer'
+  })
+  await db('products').insert({ id: 1, tenant_id: tenantId, product_code: 'P1', name: 'Product' })
+  await db('inventories').insert({
+    id: 1,
+    tenant_id: tenantId,
+    product_id: 1,
+    quantity: 20,
+    purchase_price: 4,
+    batch_no: 'B1'
+  })
+}

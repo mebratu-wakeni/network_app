@@ -6,6 +6,7 @@
 import { LedgerHelper } from '../../services/ledger.helper.js'
 import {
   effectiveWithholdConfirmed,
+  getSalesReverseBlockReason,
   isActiveSalesOrderForStats,
   rawWithholdEffectivelyConfirmed
 } from '../../utils/salesWithhold.js'
@@ -926,6 +927,13 @@ export class SalesRepository {
       }
       if (order.is_reversed) {
         const err = new Error('Order is already reversed')
+        err.status = 400
+        throw err
+      }
+
+      const blockReason = getSalesReverseBlockReason(order)
+      if (blockReason) {
+        const err = new Error(blockReason)
         err.status = 400
         throw err
       }
