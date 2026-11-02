@@ -13,6 +13,12 @@ on:
         description: 'Branch or tag to deploy api/ from'
         required: true
         default: 'release/managed-cloud'
+  push:
+    branches:
+      - release/managed-cloud
+    paths:
+      - 'api/**'
+      - '.github/workflows/deploy-managed-api-ftps-hotfix.yml'
 
 permissions:
   contents: read
@@ -24,7 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.git_ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.git_ref || github.ref }}
 
       - name: Check downloads secrets
         shell: bash
