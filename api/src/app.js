@@ -139,7 +139,9 @@ export function createApp() {
   app.use((req, _res, next) => { req.knex = knex; next() })
 
   // Live health indicators
-  app.get('/health', (_req, res) => res.json({ ok: true }))
+  app.get('/health', (_req, res) =>
+    res.json({ ok: true, sales_withhold_sql: 'pg-boolean-v2' })
+  )
   app.get('/api/db-health', async (_req, res, next) => {
     try {
       await knex.raw('select 1 as ok')
