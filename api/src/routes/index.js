@@ -19,7 +19,13 @@ import platformAdmin from '../modules/platformAdmins/platformAdmins.routes.js'
 
 const router = Router()
 
-router.get('/health', (_req, res) => res.json({ ok: true }))
+router.get('/health', (_req, res) =>
+  res.json({
+    ok: true,
+    /** Bump when sales withhold SQL changes — desktop can log if stat filters fail. */
+    sales_withhold_sql: 'pg-boolean-v2'
+  })
+)
 router.get('/db-health', async (_req, res, next) => {
   try {
     // Defer to app-level handler that attached knex on req? For now, handled in app.

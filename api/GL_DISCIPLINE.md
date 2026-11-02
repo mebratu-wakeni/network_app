@@ -79,7 +79,7 @@ Each **business transaction** (e.g. one expense, one purchase order, one deposit
 | Withhold payable settlement | 1 `recordWithholdPayableSettlement` | Single post |
 | Sales order completion | 1 `recordSalesOrder` | Single post |
 | Sales payment | 1 `recordSalesPayment` | Single post |
-| Sales reversal | 1 `reverseSalesOrder` | Single reversal |
+| Sales reversal | `reverseSalesOrder` + `reverseSalesPaymentsForOrder` | Reverses checkout `sale` GL and any follow-up `sales_payment` posts |
 | Purchase reversal | 1 `reversePurchaseOrder` | Single reversal |
 | Stock adjustments, borrow/return, etc. | 1 `postGLTransaction` or record* | One call per operation |
 

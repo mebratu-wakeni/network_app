@@ -1571,6 +1571,50 @@ export class LedgerHelper {
    * @param {Object} trx - Knex transaction (optional)
    * @returns {Promise<Object>} Created reverse ledger entries
    */
+  /**
+   * Swap debits/credits for ledger rows and post one reversal transaction.
+   */
+  async _postGroupedReversalFromEntries(originalEntries, postParams, trx) {
+    if (!originalEntries.length) {
+      return { success: true, message: 'No ledger entries to reverse', entries: [] }
+    }
+
+    const accountGroups = {}
+    originalEntries.forEach((entry) => {
+      const code = entry.account_code
+      if (!accountGroups[code]) {
+        accountGroups[code] = { debit: 0, credit: 0 }
+      }
+      accountGroups[code].debit += parseFloat(entry.debit || 0)
+      accountGroups[code].credit += parseFloat(entry.credit || 0)
+    })
+
+    const reverseEntries = Object.keys(accountGroups).map((accountCode) => {
+      const group = accountGroups[accountCode]
+      return {
+        account_code: accountCode,
+        debit: group.credit,
+        credit: group.debit,
+        description: postParams.lineDescription
+      }
+    })
+
+    return await this.postGLTransaction(
+      {
+        tenant_id: postParams.tenant_id,
+        transaction_date: postParams.transactionDate,
+        reference_no: postParams.reference_no,
+        reference_table: postParams.reference_table,
+        reference_id: postParams.reference_id,
+        description: postParams.description,
+        transaction_type: postParams.transaction_type,
+        entries: reverseEntries,
+        created_by: postParams.createdBy
+      },
+      trx
+    )
+  }
+
   async reverseSalesOrder(params, trx = null) {
     const {
       tenant_id = null,
@@ -1581,48 +1625,91 @@ export class LedgerHelper {
       createdBy = null
     } = params
 
-    const originalEntries = await (trx || this.knex)('account_ledger')
+    let entriesQuery = (trx || this.knex)('account_ledger')
       .where({
         reference_table: 'sales_orders',
         reference_id: salesOrderId,
         transaction_type: 'sale'
       })
-      .orderBy('id', 'asc')
+    if (tenant_id != null) {
+      entriesQuery = entriesQuery.where({ tenant_id })
+    }
+    const originalEntries = await entriesQuery.orderBy('id', 'asc')
 
-    if (originalEntries.length === 0) {
-      return { success: true, message: 'No ledger entries to reverse', entries: [] }
+    const refNo = referenceNumber || `REV-SO-${salesOrderId}`
+    return this._postGroupedReversalFromEntries(
+      originalEntries,
+      {
+        tenant_id,
+        transactionDate,
+        reference_no: refNo,
+        reference_table: 'sales_orders',
+        reference_id: salesOrderId,
+        description: `Sales Order Reversal - ${reason}`,
+        transaction_type: 'sale_reversal',
+        lineDescription: `REVERSAL: ${originalEntries[0]?.description || 'Sales Order'} - ${reason}`,
+        createdBy
+      },
+      trx
+    )
+  }
+
+  /**
+   * Reverse follow-up payment GL (DR Cash / CR AR). Checkout payment is in {@link recordSalesOrder}.
+   */
+  async reverseSalesPaymentsForOrder(params, trx = null) {
+    const {
+      tenant_id = null,
+      salesOrderId,
+      transactionDate,
+      reason,
+      referenceNumber = null,
+      createdBy = null
+    } = params
+
+    const db = trx || this.knex
+    let paymentsQuery = db('sales_payments').where({ sales_order_id: salesOrderId })
+    if (tenant_id != null) {
+      paymentsQuery = paymentsQuery.where({ tenant_id })
+    }
+    const payments = await paymentsQuery.select('id')
+
+    const results = []
+    for (const { id: paymentId } of payments) {
+      let entriesQuery = db('account_ledger')
+        .where({
+          reference_table: 'sales_payments',
+          reference_id: paymentId,
+          transaction_type: 'sales_payment'
+        })
+      if (tenant_id != null) {
+        entriesQuery = entriesQuery.where({ tenant_id })
+      }
+      const originalEntries = await entriesQuery.orderBy('id', 'asc')
+      if (originalEntries.length === 0) continue
+
+      const refNo = referenceNumber
+        ? `${referenceNumber}-PAY-${paymentId}`
+        : `REV-SO-${salesOrderId}-PAY-${paymentId}`
+
+      const posted = await this._postGroupedReversalFromEntries(
+        originalEntries,
+        {
+          tenant_id,
+          transactionDate,
+          reference_no: refNo,
+          reference_table: 'sales_payments',
+          reference_id: paymentId,
+          description: `Sales Payment Reversal (order ${salesOrderId}) - ${reason}`,
+          transaction_type: 'sales_payment_reversal',
+          lineDescription: `REVERSAL: ${originalEntries[0]?.description || 'Sales Payment'} - ${reason}`,
+          createdBy
+        },
+        trx
+      )
+      results.push(posted)
     }
 
-    const accountGroups = {}
-    originalEntries.forEach(entry => {
-      const code = entry.account_code
-      if (!accountGroups[code]) {
-        accountGroups[code] = { debit: 0, credit: 0 }
-      }
-      accountGroups[code].debit += parseFloat(entry.debit || 0)
-      accountGroups[code].credit += parseFloat(entry.credit || 0)
-    })
-
-    const reverseEntries = Object.keys(accountGroups).map(accountCode => {
-      const group = accountGroups[accountCode]
-      return {
-        account_code: accountCode,
-        debit: group.credit,
-        credit: group.debit,
-        description: `REVERSAL: ${originalEntries[0].description || 'Sales Order'} - ${reason}`
-      }
-    })
-
-    return await this.postGLTransaction({
-      tenant_id,
-      transaction_date: transactionDate,
-      reference_no: referenceNumber || `REV-SO-${salesOrderId}`,
-      reference_table: 'sales_orders',
-      reference_id: salesOrderId,
-      description: `Sales Order Reversal - ${reason}`,
-      transaction_type: 'sale_reversal',
-      entries: reverseEntries,
-      created_by: createdBy
-    }, trx)
+    return { success: true, reversed_payments: results.length, results }
   }
 }

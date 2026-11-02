@@ -3,6 +3,7 @@
  * createOrder builds sales_orders + sales_order_items payload and delegates to repository.
  */
 import { assertFiscalYearOpen } from '../../services/fiscal-year.guard.js'
+import { getSalesReverseBlockReason } from '../../utils/salesWithhold.js'
 
 export class SalesService {
   constructor(repository) {
@@ -287,9 +288,23 @@ export class SalesService {
 
   /** Reverse sales order: restore inventory, set is_reversed. */
   async reverseOrder(tenantId, orderId, user) {
+    const id = Number(orderId)
+    const full = await this.repository.getOrderById(tenantId, id)
+    if (!full?.order) {
+      const err = new Error('Sales order not found')
+      err.status = 404
+      throw err
+    }
+    const blockReason = getSalesReverseBlockReason(full.order)
+    if (blockReason) {
+      const err = new Error(blockReason)
+      err.status = 400
+      throw err
+    }
+
     const reversalDate = new Date().toISOString().split('T')[0]
     await assertFiscalYearOpen(this.repository.knex, tenantId, reversalDate)
-    return this.repository.reverseOrder(tenantId, Number(orderId), user?.id ?? null)
+    return this.repository.reverseOrder(tenantId, id, user?.id ?? null)
   }
 
   /** Export sales order to CSV. Grouped by order: order meta only on first row of each order (like import purchase preview). */

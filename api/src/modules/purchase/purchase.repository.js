@@ -1233,16 +1233,34 @@ export class PurchaseRepository {
     const productIds = [...new Set((order_items || []).map(it => it.product_id).filter(Boolean))]
     let productMap = {}
     if (productIds.length > 0) {
-      const products = await this.knex('products')
-        .where({ tenant_id: tenantId })
-        .whereIn('id', productIds)
-        .select('id', 'name', 'product_code')
-      products.forEach(p => { productMap[p.id] = { name: p.name, product_code: p.product_code } })
+      const products = await this.knex('products as p')
+        .leftJoin('units as u', function () {
+          this.on('p.unit_id', 'u.id').andOn('p.tenant_id', 'u.tenant_id')
+        })
+        .where({ 'p.tenant_id': tenantId })
+        .whereIn('p.id', productIds)
+        .select(
+          'p.id',
+          'p.name',
+          'p.product_code',
+          'u.name as unit_name',
+          'u.abbreviation as unit_abbreviation'
+        )
+      products.forEach((p) => {
+        const abbrev = p.unit_abbreviation != null ? String(p.unit_abbreviation).trim() : ''
+        const unitLabel = abbrev || (p.unit_name != null ? String(p.unit_name).trim() : '') || null
+        productMap[p.id] = {
+          name: p.name,
+          product_code: p.product_code,
+          unit_name: unitLabel
+        }
+      })
     }
     const enrichedItems = (order_items || []).map(it => ({
       ...it,
       product_name: (productMap[it.product_id] && productMap[it.product_id].name) || `Product #${it.product_id}`,
-      product_code: (productMap[it.product_id] && productMap[it.product_id].product_code) || ''
+      product_code: (productMap[it.product_id] && productMap[it.product_id].product_code) || '',
+      unit_name: (productMap[it.product_id] && productMap[it.product_id].unit_name) || it.unit_name || null
     }))
     let supplier_name = null
     let supplier_address = null
@@ -1290,9 +1308,11 @@ export class PurchaseRepository {
   }
 
   async getReceiptByReceiptNo(tenantId, receiptNo) {
-    return this.knex('purchase_receipts')
+    const row = await this.knex('purchase_receipts')
       .where({ tenant_id: tenantId, receipt_no: receiptNo })
       .first()
+    if (!row) return null
+    return this._enrichReceipt(tenantId, row)
   }
 
   async listReceipts(tenantId, { limit = 20, offset = 0, search, voided, date_from, date_to, sort_by, order_by }) {

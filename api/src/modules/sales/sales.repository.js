@@ -6,7 +6,13 @@
 import { LedgerHelper } from '../../services/ledger.helper.js'
 import {
   effectiveWithholdConfirmed,
-  rawWithholdEffectivelyConfirmed
+  getSalesReverseBlockReason,
+  isActiveSalesOrderForStats,
+  rawSalesOrderNotReversed,
+  rawSalesOrderReversed,
+  rawWithholdEffectivelyConfirmed,
+  rawWithholdNotSettled,
+  rawWithholdSettled
 } from '../../utils/salesWithhold.js'
 
 export class SalesRepository {
@@ -283,9 +289,9 @@ export class SalesRepository {
 
     // Status filter: reversed = is_reversed; completed = status completed and not reversed; archived = status archived
     if (status === 'reversed') {
-      base.andWhere('so.is_reversed', true)
+      base.andWhere(rawSalesOrderReversed(this.knex, 'so'))
     } else if (status === 'completed') {
-      base.andWhere('so.status', 'completed').andWhere('so.is_reversed', false)
+      base.andWhere('so.status', 'completed').andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
     } else if (status === 'archived') {
       base.andWhere('so.status', 'archived')
     } else if (status) {
@@ -305,25 +311,37 @@ export class SalesRepository {
 
     // Stat filter: apply to list query when user clicks a stat
     if (stat_filter === 'outstanding' || has_outstanding_balance === true || has_outstanding_balance === 'true') {
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
       base.andWhereRaw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0) - coalesce(so.amount_paid,0)) > 0.009')
     } else if (has_outstanding_balance === false || has_outstanding_balance === 'false') {
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
       base.andWhereRaw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0) - coalesce(so.amount_paid,0)) <= 0.009')
     }
     if (stat_filter === 'withhold_unconfirmed') {
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_settled', false)
+      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
       base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
     } else if (stat_filter === 'withhold_confirmed') {
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
-      base.andWhere('so.withhold_settled', false)
+      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
     } else if (stat_filter === 'settled') {
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
-      base.andWhere('so.withhold_settled', true)
+      base.andWhere(rawWithholdSettled(this.knex, 'so'))
     } else if (stat_filter === 'unsettled') {
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_settled', false)
+      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
+    } else if (stat_filter === 'all') {
+      // No extra slice filter (status filter still applies)
     }
 
     const netRaw = this.knex.raw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0)) as net_amount')
@@ -409,19 +427,17 @@ export class SalesRepository {
       const paid = Number(row.amount_paid || 0)
       const withhold = Number(row.withhold_amount || 0)
       const outstanding = net - paid
-      const isReversed = !!row.is_reversed
-      const isArchived = row.status === 'archived'
-      const isCompleted = row.status === 'completed'
       const confirmed = effectiveWithholdConfirmed(row)
       const settled = !!row.withhold_settled
+      const activeForStats = isActiveSalesOrderForStats(row)
 
       // All: completed, non-reversed (exclude reversed and archived)
-      if (isCompleted && !isReversed) {
+      if (activeForStats) {
         stats.all.count += 1
         stats.all.value += net
       }
 
-      if (withhold > 0.009) {
+      if (activeForStats && withhold > 0.009) {
         if (!confirmed && !settled) {
           stats.withhold_unconfirmed.count += 1
           stats.withhold_unconfirmed.value += withhold
@@ -440,7 +456,7 @@ export class SalesRepository {
         }
       }
 
-      if (outstanding > 0.009) {
+      if (activeForStats && outstanding > 0.009) {
         stats.outstanding.count += 1
         stats.outstanding.value += outstanding
       }
@@ -925,6 +941,13 @@ export class SalesRepository {
         throw err
       }
 
+      const blockReason = getSalesReverseBlockReason(order)
+      if (blockReason) {
+        const err = new Error(blockReason)
+        err.status = 400
+        throw err
+      }
+
       const items = await trx('sales_order_items').where({ sales_order_id: orderId, tenant_id: tenantId })
       const reversalDate = new Date().toISOString().split('T')[0]
 
@@ -979,12 +1002,21 @@ export class SalesRepository {
       // 3) Reverse ledger entries
       const hasLedger = await trx.schema.hasTable('account_ledger')
       if (hasLedger) {
+        const revRef = order.receipt_no ? `REV-${order.receipt_no}` : null
         await this.ledgerHelper.reverseSalesOrder({
           tenant_id: tenantId,
           salesOrderId: orderId,
           transactionDate: reversalDate,
           reason: 'Order reversal',
-          referenceNumber: order.receipt_no ? `REV-${order.receipt_no}` : null,
+          referenceNumber: revRef,
+          createdBy: userId
+        }, trx)
+        await this.ledgerHelper.reverseSalesPaymentsForOrder({
+          tenant_id: tenantId,
+          salesOrderId: orderId,
+          transactionDate: reversalDate,
+          reason: 'Order reversal',
+          referenceNumber: revRef,
           createdBy: userId
         }, trx)
       }
@@ -1104,6 +1136,9 @@ export class SalesRepository {
           .leftJoin('inventories as inv', function () {
             this.on('i.inventory_id', 'inv.id').andOn('i.tenant_id', 'inv.tenant_id')
           })
+          .leftJoin('units as u', function () {
+            this.on('p.unit_id', 'u.id').andOn('p.tenant_id', 'u.tenant_id')
+          })
           .where({ 'i.sales_order_id': orderId, 'i.tenant_id': tenantId })
           .select(
             'i.product_id',
@@ -1112,6 +1147,8 @@ export class SalesRepository {
             'i.total_price',
             'p.product_code',
             'p.name as product_name',
+            'u.name as unit_name',
+            'u.abbreviation as unit_abbreviation',
             'inv.batch_no as batch_number',
             'inv.expiry_date'
           )
@@ -1153,16 +1190,21 @@ export class SalesRepository {
       withhold_confirmation: effectiveWithholdConfirmed(order),
     }
 
-    const order_items = items.map((it) => ({
-      product_id: it.product_id,
-      product_code: it.product_code || '',
-      product_name: it.product_name || `Product #${it.product_id}`,
-      quantity: it.quantity,
-      unit_price: Number(it.unit_price),
-      total_price: Number(it.total_price),
-      batch_number: it.batch_number || null,
-      expiry_date: it.expiry_date || null,
-    }))
+    const order_items = items.map((it) => {
+      const abbrev = it.unit_abbreviation != null ? String(it.unit_abbreviation).trim() : ''
+      const unitLabel = abbrev || (it.unit_name != null ? String(it.unit_name).trim() : '') || null
+      return {
+        product_id: it.product_id,
+        product_code: it.product_code || '',
+        product_name: it.product_name || `Product #${it.product_id}`,
+        unit_name: unitLabel,
+        quantity: it.quantity,
+        unit_price: Number(it.unit_price),
+        total_price: Number(it.total_price),
+        batch_number: it.batch_number || null,
+        expiry_date: it.expiry_date || null,
+      }
+    })
 
     const order_payment = {
       initial_payment_amount: amountPaid,
