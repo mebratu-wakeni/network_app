@@ -6,6 +6,7 @@ import { printReceiptArea } from '../../utils/printReceipt';
 import {
   RECEIPT_FOOTER_WARNING,
   formatPaymentMode,
+  isReceiptOrderReversed,
   paymentStatusLabel,
 } from '../../utils/receiptHelpers.js';
 import { SalesReceipt } from './SalesReceipt';
@@ -31,9 +32,11 @@ function formatDateDDMMYYYY(value) {
 export function buildReceiptData(receipt, settings) {
   const meta = receipt.order_meta || {};
   const payment = receipt.order_payment || {};
+  const isReversed = isReceiptOrderReversed(receipt);
   const companyName = (settings.company_name || '').trim() || 'Company';
   const logoUrl = (settings.company_logo_url || '').trim() || null;
   const paymentStatus = paymentStatusLabel(meta.payment_status, {
+    isReversed,
     remainingBalance: payment.remaining_balance ?? 0,
   });
   const withholdPct = meta.withhold_percentage != null ? Number(meta.withhold_percentage) : null;
@@ -112,7 +115,8 @@ export function buildReceiptData(receipt, settings) {
       emailLink: (settings.company_email || '').trim(),
       softwareCredit: 'PharmaSuit by MasaTech',
     },
-    watermarkText: 'ATTACHEMENT',
+    watermarkText: isReversed ? 'REVERSED' : 'ATTACHEMENT',
+    isReversed,
   };
 }
 
@@ -149,8 +153,9 @@ export async function openReceiptModal(options) {
 
 function ReceiptModalContent({ receipt, settings, handleClose, delegator }) {
   const receiptData = buildReceiptData(receipt, settings);
+  const isReversed = receiptData.isReversed === true;
 
-  const receiptContainer = SalesReceipt(receiptData, delegator, false);
+  const receiptContainer = SalesReceipt(receiptData, delegator, isReversed);
 
   const printWrapper = document.createElement('div');
   printWrapper.id = 'receipt-print-area';

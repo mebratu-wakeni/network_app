@@ -1402,17 +1402,22 @@ export class PurchaseRepository {
       }
     }
     let encoder_fullname = null
+    let liveOrderStatus = null
     if (row.purchase_order_id) {
       const order = await this.knex('purchase_orders')
         .where({ id: row.purchase_order_id, tenant_id: tenantId })
-        .select('encoder_fullname')
+        .select('encoder_fullname', 'status')
         .first()
-      encoder_fullname = order ? order.encoder_fullname : null
+      if (order) {
+        encoder_fullname = order.encoder_fullname
+        liveOrderStatus = order.status || null
+      }
     }
     return {
       ...row,
       order_meta: {
         ...order_meta,
+        ...(liveOrderStatus != null ? { status: liveOrderStatus } : {}),
         supplier_name,
         supplier_address,
         supplier_phone,

@@ -6,6 +6,7 @@ import { printReceiptArea } from '../../utils/printReceipt';
 import {
   RECEIPT_FOOTER_WARNING,
   formatPaymentMode,
+  isReceiptOrderReversed,
   paymentStatusLabel,
 } from '../../utils/receiptHelpers.js';
 import { PurchaseReceipt } from './PurchaseReceipt';
@@ -152,7 +153,8 @@ export async function openReceiptModal(options) {
     return;
   }
 
-  const orderStatus = receipt.order_meta?.status || null;
+  const isReversed = isReceiptOrderReversed(receipt);
+  const orderStatus = isReversed ? 'reversed' : receipt.order_meta?.status || null;
 
   Modal(
     {
@@ -172,7 +174,7 @@ export async function openReceiptModal(options) {
 function ReceiptModalContent({ receipt, settings, orderStatus, handleClose, delegator }) {
   const receiptData = buildReceiptData(receipt, settings, { orderStatus });
 
-  const receiptContainer = PurchaseReceipt(receiptData, delegator, orderStatus === 'reversed');
+  const receiptContainer = PurchaseReceipt(receiptData, delegator, isReceiptOrderReversed(receipt));
 
   const printWrapper = document.createElement('div');
   printWrapper.id = 'receipt-print-area';

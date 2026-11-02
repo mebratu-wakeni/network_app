@@ -32,6 +32,16 @@ export function formatPaymentMode(mode) {
   return String(mode).replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** True when live order or receipt snapshot marks the sale/purchase as reversed. */
+export function isReceiptOrderReversed(receipt) {
+  const meta = receipt?.order_meta || {};
+  if (String(meta.status || '').toLowerCase() === 'reversed') return true;
+  const flag = meta.is_reversed;
+  if (flag === true || flag === 1) return true;
+  if (typeof flag === 'string' && ['1', 'true', 'yes'].includes(flag.trim().toLowerCase())) return true;
+  return false;
+}
+
 export function paymentStatusLabel(paymentStatus, { isReversed = false, remainingBalance = 0 } = {}) {
   if (isReversed) return 'REVERSED';
   const raw = String(paymentStatus || '').toLowerCase();
