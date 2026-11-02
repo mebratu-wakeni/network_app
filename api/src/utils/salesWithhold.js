@@ -31,38 +31,61 @@ export function effectiveWithholdConfirmed(row) {
   return toBooleanFlag(row.withhold_confirmation)
 }
 
+function knexUsesSqliteBooleans(knex) {
+  const client = knex?.client?.config?.client ?? ''
+  return client === 'sqlite3' || client === 'better-sqlite3' || String(client).includes('sqlite')
+}
+
+/** SQL: boolean column is true (PG boolean vs SQLite 0/1). */
+function rawColumnIsTrue(knex, tableRef, column) {
+  const t = tableRef
+  const col = `${t}.${column}`
+  if (knexUsesSqliteBooleans(knex)) {
+    return knex.raw(`COALESCE(${col}, 0) != 0`)
+  }
+  return knex.raw(`COALESCE(${col}, false) IS TRUE`)
+}
+
+/** SQL: boolean column is false or null. */
+function rawColumnIsFalse(knex, tableRef, column) {
+  const t = tableRef
+  const col = `${t}.${column}`
+  if (knexUsesSqliteBooleans(knex)) {
+    return knex.raw(`COALESCE(${col}, 0) = 0`)
+  }
+  return knex.raw(`COALESCE(${col}, false) IS NOT TRUE`)
+}
+
 /**
- * SQLite expression: row is effectively withhold-confirmed (matches {@link effectiveWithholdConfirmed}).
+ * Row is effectively withhold-confirmed (matches {@link effectiveWithholdConfirmed}).
  * @param {import('knex').Knex} knex
  * @param {string} tableRef Qualified table or alias (e.g. 'so', 'sales_orders')
  */
 export function rawWithholdEffectivelyConfirmed(knex, tableRef = 'so') {
   const t = tableRef
+  const confirmedCheck = knexUsesSqliteBooleans(knex)
+    ? `COALESCE(${t}.withhold_confirmation, 0) != 0`
+    : `COALESCE(${t}.withhold_confirmation, false) IS TRUE`
   return knex.raw(
-    `(COALESCE(${t}.withhold_confirmation, 0) != 0
-      OR (TRIM(COALESCE(${t}.withhold_ref, '')) != ''))`
+    `(${confirmedCheck} OR (TRIM(COALESCE(${t}.withhold_ref, '')) != ''))`
   )
 }
 
-/** SQLite/Postgres: treat null is_reversed as not reversed. */
+/** Treat null is_reversed as not reversed. */
 export function rawSalesOrderNotReversed(knex, tableRef = 'so') {
-  const t = tableRef
-  return knex.raw(`COALESCE(${t}.is_reversed, false) = false`)
+  return rawColumnIsFalse(knex, tableRef, 'is_reversed')
 }
 
 export function rawSalesOrderReversed(knex, tableRef = 'so') {
-  const t = tableRef
-  return knex.raw(`COALESCE(${t}.is_reversed, false) = true`)
+  return rawColumnIsTrue(knex, tableRef, 'is_reversed')
 }
 
 export function rawWithholdNotSettled(knex, tableRef = 'so') {
-  const t = tableRef
-  return knex.raw(`COALESCE(${t}.withhold_settled, false) = false`)
+  return rawColumnIsFalse(knex, tableRef, 'withhold_settled')
 }
 
 export function rawWithholdSettled(knex, tableRef = 'so') {
-  const t = tableRef
-  return knex.raw(`COALESCE(${t}.withhold_settled, false) = true`)
+  return rawColumnIsTrue(knex, tableRef, 'withhold_settled')
 }
 
 /**

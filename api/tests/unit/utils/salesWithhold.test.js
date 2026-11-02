@@ -1,8 +1,10 @@
+import knex from 'knex'
 import { describe, expect, it } from 'vitest'
 import {
   effectiveWithholdConfirmed,
   getSalesReverseBlockReason,
-  isActiveSalesOrderForStats
+  isActiveSalesOrderForStats,
+  rawWithholdEffectivelyConfirmed
 } from '../../../src/utils/salesWithhold.js'
 
 describe('salesWithhold reverse rules', () => {
@@ -47,6 +49,14 @@ describe('salesWithhold reverse rules', () => {
       withhold_ref: null
     })
     expect(reason).toBeNull()
+  })
+
+  it('rawWithholdEffectivelyConfirmed uses PG boolean SQL (not integer coalesce)', () => {
+    const pg = knex({ client: 'pg' })
+    const sql = rawWithholdEffectivelyConfirmed(pg, 'so').toString()
+    expect(sql).toContain('IS TRUE')
+    expect(sql).not.toMatch(/withhold_confirmation, 0\)/)
+    pg.destroy()
   })
 
   it('isActiveSalesOrderForStats excludes reversed completed orders', () => {

@@ -4,7 +4,9 @@
 import { LedgerHelper } from '../../services/ledger.helper.js'
 import {
   effectiveWithholdConfirmed,
-  rawWithholdEffectivelyConfirmed
+  rawWithholdEffectivelyConfirmed,
+  rawWithholdNotSettled,
+  rawWithholdSettled
 } from '../../utils/salesWithhold.js'
 
 export class FinancialRepository {
@@ -616,11 +618,11 @@ export class FinancialRepository {
       .whereRaw('coalesce(so.withhold_amount, 0) > 0.009')
 
     if (status === 'confirmed_unsettled') {
-      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', false)
+      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere(rawWithholdNotSettled(this.knex, 'so'))
     } else if (status === 'unconfirmed') {
-      base = base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', false)
+      base = base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere(rawWithholdNotSettled(this.knex, 'so'))
     } else if (status === 'settled') {
-      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere('so.withhold_settled', true)
+      base = base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so')).andWhere(rawWithholdSettled(this.knex, 'so'))
     }
 
     base = base.select(
