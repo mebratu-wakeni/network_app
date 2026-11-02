@@ -235,8 +235,8 @@ function OrderHistoryTableSection(props) {
     }
   };
 
-  const handleShowReceipt = (orderId) => {
-    openReceiptModal({ orderId });
+  const handleShowReceipt = async (orderId) => {
+    await openReceiptModal({ orderId });
   };
 
   const getStatusBadge = (status) => {

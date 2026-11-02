@@ -1217,8 +1217,127 @@ export class PurchaseRepository {
       .orderBy('generated_at', 'desc')
       .orderBy('id', 'desc')
       .first()
-    if (!row) return null
-    return this._enrichReceipt(tenantId, row)
+    if (row) return this._enrichReceipt(tenantId, row)
+    return this.buildReceiptFromOrderId(tenantId, orderId)
+  }
+
+  /**
+   * Build receipt payload from live order data when no purchase_receipts snapshot exists
+   * (e.g. bulk import, legacy rows). Same shape as _enrichReceipt for the UI.
+   */
+  async buildReceiptFromOrderId(tenantId, orderId) {
+    const order = await this.knex('purchase_orders as po')
+      .leftJoin('customers as c', function () {
+        this.on('po.supplier_id', 'c.id').andOn('po.tenant_id', 'c.tenant_id')
+      })
+      .where({ 'po.id': orderId, 'po.tenant_id': tenantId })
+      .select(
+        'po.id',
+        'po.receipt_no',
+        'po.order_date',
+        'po.invoice_no',
+        'po.total_amount',
+        'po.withhold_percentage',
+        'po.withhold_amount',
+        'po.amount_paid',
+        'po.payment_mode',
+        'po.payment_status',
+        'po.status',
+        'po.remark',
+        'po.supplier_id',
+        'po.encoder_fullname',
+        'c.name as supplier_name',
+        'c.address as supplier_address',
+        'c.phone as supplier_phone',
+        'c.contact_person as supplier_contact',
+        'c.email as supplier_email',
+        'c.tin_no as supplier_tin'
+      )
+      .first()
+
+    if (!order) return null
+
+    const items = await this.knex('purchase_order_items as i')
+      .leftJoin('products as p', function () {
+        this.on('i.product_id', 'p.id').andOn('i.tenant_id', 'p.tenant_id')
+      })
+      .leftJoin('units as u', function () {
+        this.on('p.unit_id', 'u.id').andOn('p.tenant_id', 'u.tenant_id')
+      })
+      .leftJoin('inventories as inv', function () {
+        this.on('i.inventory_id', 'inv.id').andOn('i.tenant_id', 'inv.tenant_id')
+      })
+      .where({ 'i.purchase_order_id': orderId, 'i.tenant_id': tenantId })
+      .select(
+        'i.product_id',
+        'i.quantity',
+        'i.unit_price',
+        'i.total_price',
+        'p.product_code',
+        'p.name as product_name',
+        'u.name as unit_name',
+        'u.abbreviation as unit_abbreviation',
+        'inv.batch_no as batch_number',
+        'inv.expiry_date'
+      )
+
+    const subtotal = Number(order.total_amount ?? 0)
+    const withholdAmount = Number(order.withhold_amount ?? 0)
+    const netAmount = subtotal - withholdAmount
+    const amountPaid = Number(order.amount_paid ?? 0)
+    const remainingBalance = Math.max(0, netAmount - amountPaid)
+
+    const order_meta = {
+      supplier_id: order.supplier_id,
+      order_date: order.order_date,
+      payment_mode: order.payment_mode,
+      payment_status: order.payment_status,
+      status: order.status,
+      subtotal,
+      withhold_percentage: order.withhold_percentage != null ? Number(order.withhold_percentage) : null,
+      withhold_amount: withholdAmount,
+      net_amount: netAmount,
+      invoice_no: order.invoice_no || null,
+      reference_po: order.receipt_no,
+      notes: order.remark || null,
+      supplier_name: order.supplier_name || null,
+      supplier_address: order.supplier_address || null,
+      supplier_phone: order.supplier_phone || null,
+      supplier_contact: order.supplier_contact || null,
+      supplier_email: order.supplier_email || null,
+      supplier_tin: order.supplier_tin || null,
+    }
+
+    const order_items = items.map((it) => {
+      const abbrev = it.unit_abbreviation != null ? String(it.unit_abbreviation).trim() : ''
+      const unitLabel = abbrev || (it.unit_name != null ? String(it.unit_name).trim() : '') || null
+      return {
+        product_id: it.product_id,
+        product_code: it.product_code || '',
+        product_name: it.product_name || `Product #${it.product_id}`,
+        unit_name: unitLabel,
+        quantity: it.quantity,
+        unit_price: Number(it.unit_price),
+        total_price: Number(it.total_price),
+        batch_number: it.batch_number || null,
+        expiry_date: it.expiry_date || null,
+      }
+    })
+
+    const order_payment = {
+      initial_payment_mode: order.payment_mode,
+      initial_payment_amount: amountPaid,
+      remaining_balance: remainingBalance,
+    }
+
+    return {
+      receipt_no: order.receipt_no,
+      purchase_order_id: order.id,
+      order_meta,
+      order_items,
+      order_payment,
+      encoder_fullname: order.encoder_fullname || null,
+    }
   }
 
   async _enrichReceipt(tenantId, row) {

@@ -175,7 +175,10 @@ class PurchaseManager {
       };
     } catch (error) {
       console.error('[PurchaseManager] getOrderReceipt error:', error);
-      throw error;
+      return {
+        success: false,
+        error: error.message || 'Failed to load receipt',
+      };
     }
   }
 
