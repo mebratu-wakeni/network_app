@@ -16,9 +16,21 @@ export function isSalesReverseDisabled(order) {
 /**
  * Must stay aligned with api/src/utils/salesWithhold.js getSalesReverseBlockReason.
  */
+function toBooleanFlag(v) {
+  if (v === true || v === 1 || v === '1') return true;
+  if (v === false || v === 0 || v === '0') return false;
+  if (v == null) return false;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true' || s === 't') return true;
+    if (s === 'false' || s === 'f' || s === '') return false;
+  }
+  return Boolean(v);
+}
+
 export function getSalesReverseBlockReason(order) {
   if (!order) return 'Sales order not found';
-  if (order.is_reversed) return 'Order is already reversed';
+  if (toBooleanFlag(order.is_reversed)) return 'Order is already reversed';
 
   const settled =
     order.withhold_settled === true ||

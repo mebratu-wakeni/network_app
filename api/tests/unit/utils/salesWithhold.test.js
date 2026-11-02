@@ -51,6 +51,8 @@ describe('salesWithhold reverse rules', () => {
 
   it('isActiveSalesOrderForStats excludes reversed completed orders', () => {
     expect(isActiveSalesOrderForStats({ status: 'completed', is_reversed: false })).toBe(true)
+    expect(isActiveSalesOrderForStats({ status: 'completed', is_reversed: 1 })).toBe(false)
+    expect(isActiveSalesOrderForStats({ status: 'completed', is_reversed: '1' })).toBe(false)
     expect(isActiveSalesOrderForStats({ status: 'archived', is_reversed: true })).toBe(false)
     expect(isActiveSalesOrderForStats({ status: 'archived', is_reversed: false })).toBe(false)
   })

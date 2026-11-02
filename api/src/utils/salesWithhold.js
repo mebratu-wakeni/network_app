@@ -6,7 +6,17 @@ export function toBooleanFlag(v) {
   if (v === true || v === 1 || v === '1') return true
   if (v === false || v === 0 || v === '0') return false
   if (v == null) return false
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    if (s === 'true' || s === 't') return true
+    if (s === 'false' || s === 'f' || s === '') return false
+  }
   return Boolean(v)
+}
+
+/** True when the sale was reversed (ledger/inventory rolled back). */
+export function isReversedSalesOrder(row) {
+  return toBooleanFlag(row?.is_reversed)
 }
 
 /**
@@ -32,6 +42,27 @@ export function rawWithholdEffectivelyConfirmed(knex, tableRef = 'so') {
     `(COALESCE(${t}.withhold_confirmation, 0) != 0
       OR (TRIM(COALESCE(${t}.withhold_ref, '')) != ''))`
   )
+}
+
+/** SQLite/Postgres: treat null is_reversed as not reversed. */
+export function rawSalesOrderNotReversed(knex, tableRef = 'so') {
+  const t = tableRef
+  return knex.raw(`COALESCE(${t}.is_reversed, false) = false`)
+}
+
+export function rawSalesOrderReversed(knex, tableRef = 'so') {
+  const t = tableRef
+  return knex.raw(`COALESCE(${t}.is_reversed, false) = true`)
+}
+
+export function rawWithholdNotSettled(knex, tableRef = 'so') {
+  const t = tableRef
+  return knex.raw(`COALESCE(${t}.withhold_settled, false) = false`)
+}
+
+export function rawWithholdSettled(knex, tableRef = 'so') {
+  const t = tableRef
+  return knex.raw(`COALESCE(${t}.withhold_settled, false) = true`)
 }
 
 /**
@@ -60,5 +91,5 @@ export function getSalesReverseBlockReason(order) {
 
 /** Active sales / withhold KPIs: completed, not reversed (reversal sets archived + is_reversed). */
 export function isActiveSalesOrderForStats(row) {
-  return row.status === 'completed' && !row.is_reversed
+  return row?.status === 'completed' && !isReversedSalesOrder(row)
 }

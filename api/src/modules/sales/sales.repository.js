@@ -8,7 +8,11 @@ import {
   effectiveWithholdConfirmed,
   getSalesReverseBlockReason,
   isActiveSalesOrderForStats,
-  rawWithholdEffectivelyConfirmed
+  rawSalesOrderNotReversed,
+  rawSalesOrderReversed,
+  rawWithholdEffectivelyConfirmed,
+  rawWithholdNotSettled,
+  rawWithholdSettled
 } from '../../utils/salesWithhold.js'
 
 export class SalesRepository {
@@ -285,9 +289,9 @@ export class SalesRepository {
 
     // Status filter: reversed = is_reversed; completed = status completed and not reversed; archived = status archived
     if (status === 'reversed') {
-      base.andWhere('so.is_reversed', true)
+      base.andWhere(rawSalesOrderReversed(this.knex, 'so'))
     } else if (status === 'completed') {
-      base.andWhere('so.status', 'completed').andWhere('so.is_reversed', false)
+      base.andWhere('so.status', 'completed').andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
     } else if (status === 'archived') {
       base.andWhere('so.status', 'archived')
     } else if (status) {
@@ -307,31 +311,37 @@ export class SalesRepository {
 
     // Stat filter: apply to list query when user clicks a stat
     if (stat_filter === 'outstanding' || has_outstanding_balance === true || has_outstanding_balance === 'true') {
-      base.andWhere('so.is_reversed', false)
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
       base.andWhereRaw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0) - coalesce(so.amount_paid,0)) > 0.009')
     } else if (has_outstanding_balance === false || has_outstanding_balance === 'false') {
-      base.andWhere('so.is_reversed', false)
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
       base.andWhereRaw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0) - coalesce(so.amount_paid,0)) <= 0.009')
     }
     if (stat_filter === 'withhold_unconfirmed') {
-      base.andWhere('so.is_reversed', false)
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_settled', false)
+      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
       base.whereNot(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
     } else if (stat_filter === 'withhold_confirmed') {
-      base.andWhere('so.is_reversed', false)
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
-      base.andWhere('so.withhold_settled', false)
+      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
     } else if (stat_filter === 'settled') {
-      base.andWhere('so.is_reversed', false)
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
       base.andWhere(rawWithholdEffectivelyConfirmed(this.knex, 'so'))
-      base.andWhere('so.withhold_settled', true)
+      base.andWhere(rawWithholdSettled(this.knex, 'so'))
     } else if (stat_filter === 'unsettled') {
-      base.andWhere('so.is_reversed', false)
+      base.andWhere(rawSalesOrderNotReversed(this.knex, 'so'))
+      base.andWhere('so.status', 'completed')
       base.andWhere('so.withhold_amount', '>', 0.009)
-      base.andWhere('so.withhold_settled', false)
+      base.andWhere(rawWithholdNotSettled(this.knex, 'so'))
+    } else if (stat_filter === 'all') {
+      // No extra slice filter (status filter still applies)
     }
 
     const netRaw = this.knex.raw('(coalesce(so.total_amount,0) - coalesce(so.withhold_amount,0)) as net_amount')

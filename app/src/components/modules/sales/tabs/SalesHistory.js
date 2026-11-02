@@ -9,7 +9,7 @@ import { formatDateDDMMYYYY } from '../../../utils/DateUtils';
 import { openReceiptModal } from '../ReceiptModal';
 import { openBulkCustomerPaymentModal } from '../BulkCustomerPaymentModal';
 import { SalesOrderDetailsDrawer } from '../SalesOrderDetailsDrawer';
-import { getSalesReverseBlockReason, isSalesReverseDisabled } from '../salesReverseRules.js';
+import { isSalesReverseDisabled, isWithholdEffectivelyConfirmed } from '../salesReverseRules.js';
 
 const { Row } = Liteframe;
 
@@ -129,7 +129,7 @@ function SalesHistoryStatsAndFilters(props) {
         ),
       Row({ class: 'w-24' }, [
         SelectFluid({
-          value: getStatusLabel(props.getLocalState('statusFilter')),
+          value: getStatusLabel(tableConfig.status ?? props.getLocalState('statusFilter')),
           selectClass: SELECT_SMALL_CLASS,
           containerClass: 'w-full',
           onChange: (e) => {
@@ -138,7 +138,7 @@ function SalesHistoryStatsAndFilters(props) {
             props.setLocalState('statusFilter', configVal);
             handleFilterChange('status', configVal);
           },
-        }, [SelectOptions({ options: statusOptions, selectedOption: getStatusLabel(props.getLocalState('statusFilter')) })]),
+        }, [SelectOptions({ options: statusOptions, selectedOption: getStatusLabel(tableConfig.status ?? props.getLocalState('statusFilter')) })]),
       ]),
       Row({ class: 'w-24' }, [
         SelectFluid({
@@ -446,7 +446,7 @@ function SalesHistoryTableSection(props) {
                             },
                           })
                         : null,
-                      Number(order.withhold_amount ?? 0) > 0.009 && !order.withhold_confirmation
+                      Number(order.withhold_amount ?? 0) > 0.009 && !isWithholdEffectivelyConfirmed(order)
                         ? ActionItem({
                             label: 'Confirm withhold',
                             icon: 'checkmark-circle-outline',
@@ -456,7 +456,7 @@ function SalesHistoryTableSection(props) {
                             },
                           })
                         : null,
-                      order.withhold_confirmation
+                      isWithholdEffectivelyConfirmed(order)
                         ? ActionItem({
                             label: 'Rollback withhold',
                             icon: 'arrow-undo-outline',

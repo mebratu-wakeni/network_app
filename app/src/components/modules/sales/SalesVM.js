@@ -695,7 +695,13 @@ export class SalesVM extends ViewModel {
   }
 
   updateOrderStatFilter(statKey) {
-    this.updateSalesOrderTableConfig({ stat_filter: statKey || 'all', offset: 0 });
+    const key = statKey || 'all';
+    const updates = { stat_filter: key, offset: 0 };
+    // Withhold/outstanding stat slices apply to completed, non-reversed sales only.
+    if (key !== 'all') {
+      updates.status = 'completed';
+    }
+    this.updateSalesOrderTableConfig(updates);
   }
 
   async updateHoldOrderTableConfig(updates) {
@@ -709,8 +715,10 @@ export class SalesVM extends ViewModel {
     // Remove loading guard - allow filters/search/pagination to always trigger reload
     // Multiple concurrent requests are fine - the last one will set the final state
     this.updateState('loading', true);
+    const previousList = this.getSalesOrderList();
     try {
       const config = this.getState('sales-order-table-config') || {};
+      const statFilter = config.stat_filter;
       const result = await window.ipcRenderer.invoke('sales:get-orders', {
         limit: config.limit,
         offset: config.offset,
@@ -721,18 +729,30 @@ export class SalesVM extends ViewModel {
         payment_mode: config.payment_type || config.payment_mode,
         date_from: config.date_from,
         date_to: config.date_to,
-        stat_filter: config.stat_filter,
+        stat_filter: statFilter && statFilter !== 'all' ? statFilter : undefined,
         sort_by: config.sort_by,
         order_by: config.order_by,
       });
       if (result && result.success) {
-        this.updateState('sales-order-list', { orders: result.orders || [], total: result.total || 0, stats: result.stats || {} });
+        this.updateState('sales-order-list', {
+          orders: result.orders || [],
+          total: result.total || 0,
+          stats: result.stats || previousList.stats || {},
+        });
       } else {
-        this.updateState('sales-order-list', { orders: [], total: 0, stats: {} });
+        this.updateState('sales-order-list', {
+          orders: previousList.orders || [],
+          total: previousList.total || 0,
+          stats: previousList.stats || {},
+        });
       }
     } catch (error) {
       console.error('[SalesVM] loadSalesOrders error:', error);
-      this.updateState('sales-order-list', { orders: [], total: 0, stats: {} });
+      this.updateState('sales-order-list', {
+        orders: previousList.orders || [],
+        total: previousList.total || 0,
+        stats: previousList.stats || {},
+      });
     } finally {
       this.updateState('loading', false);
     }

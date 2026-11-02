@@ -56,9 +56,10 @@ class SalesManager {
   async getOrders(searchParams, token) {
     const params = new URLSearchParams()
     Object.keys(searchParams || {}).forEach(key => {
-      if (searchParams[key] !== undefined && searchParams[key] !== null) {
-        params.append(key, searchParams[key])
-      }
+      const val = searchParams[key]
+      if (val === undefined || val === null || val === '') return
+      if (key === 'stat_filter' && val === 'all') return
+      params.append(key, val)
     })
     const response = await this.apiRequest(`/sales/orders?${params.toString()}`, { method: 'GET' }, token)
     return {
