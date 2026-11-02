@@ -235,8 +235,8 @@ function OrderHistoryTableSection(props) {
     }
   };
 
-  const handleShowReceipt = async (orderId) => {
-    await openReceiptModal({ orderId });
+  const handleShowReceipt = (orderId) => {
+    openReceiptModal({ orderId });
   };
 
   const getStatusBadge = (status) => {
@@ -395,16 +395,14 @@ function OrderHistoryTableSection(props) {
                               },
                             })
                           : null,
-                        order.status === 'completed'
-                          ? ActionItem({
-                              label: 'Show receipt',
-                              icon: 'receipt-outline',
-                              onClick: () => {
-                                props.setLocalState('actionId', null);
-                                handleShowReceipt(order.id);
-                              },
-                            })
-                          : null,
+                        ActionItem({
+                          label: 'View receipt',
+                          icon: 'receipt-outline',
+                          onClick: () => {
+                            props.setLocalState('actionId', null);
+                            handleShowReceipt(order.id);
+                          },
+                        }),
                       ].filter(Boolean)),
                     ]),
                   ])

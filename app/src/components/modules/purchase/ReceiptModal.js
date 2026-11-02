@@ -119,37 +119,23 @@ export async function openReceiptModal(options) {
 
   let receipt = null;
   let settings = {};
-  let orderStatus = null;
   try {
-    const [receiptResult, settingsResult, orderResult] = await Promise.all([
+    const [receiptResult, settingsResult] = await Promise.all([
       window.ipcRenderer.invoke('purchase:get-order-receipt', orderId),
       window.ipcRenderer.invoke('settings:get').catch(() => ({ success: false, settings: {} })),
-      window.ipcRenderer.invoke('purchase:get-order-by-id', orderId).catch(() => ({ success: false })),
     ]);
-    if (receiptResult?.success && receiptResult.receipt) receipt = receiptResult.receipt;
-    if (settingsResult?.success && settingsResult.settings) settings = settingsResult.settings;
-    if (orderResult?.success && orderResult.order) orderStatus = orderResult.order.status || null;
-
-    if (receiptResult && !receiptResult.success && !receipt) {
-      await showAlert({
-        message: receiptResult.error || 'Could not load purchase receipt.',
-        variant: 'error',
-      });
-      return;
-    }
+    if (receiptResult && receiptResult.success && receiptResult.receipt) receipt = receiptResult.receipt;
+    if (settingsResult && settingsResult.success && settingsResult.settings) settings = settingsResult.settings;
   } catch (e) {
     console.error('ReceiptModal fetch error:', e);
-    await showAlert({
-      message: e?.message || 'Could not load purchase receipt.',
-      variant: 'error',
-    });
-    return;
   }
 
   if (!receipt) {
     await showAlert({ message: 'Receipt not found for this order.', variant: 'error' });
     return;
   }
+
+  const orderStatus = receipt.order_meta?.status || null;
 
   Modal({}, (delegator, handleClose) => {
     return ReceiptModalContent({ receipt, settings, orderStatus, handleClose, delegator });

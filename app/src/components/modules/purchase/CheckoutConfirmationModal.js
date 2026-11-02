@@ -84,7 +84,7 @@ function CheckoutConfirmationContent(props, delegator, handleClose) {
       handleClose();
       await showAlert({ message: 'Purchase order completed successfully.', variant: 'success' });
       if (order && order.id) {
-        openReceiptModal({ orderId: order.id });
+        await openReceiptModal({ orderId: order.id });
       }
     } catch (err) {
       showAlert({ message: err.message || 'Failed to complete order.', variant: 'error' });

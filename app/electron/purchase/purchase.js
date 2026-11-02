@@ -159,7 +159,10 @@ class PurchaseManager {
       };
     } catch (error) {
       console.error('[PurchaseManager] getOrderById error:', error);
-      throw error;
+      return {
+        success: false,
+        error: error.message || 'Failed to load order',
+      };
     }
   }
 

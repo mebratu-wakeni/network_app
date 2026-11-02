@@ -28,12 +28,22 @@ export function PurchaseIpcHandlers() {
     return await purchaseManager.getOrders(searchParams, getToken());
   });
 
-  ipcMain.handle('purchase:get-order-by-id', async (event, orderId) => {
-    return await purchaseManager.getOrderById(orderId, getToken());
+  ipcMain.handle('purchase:get-order-by-id', async (_event, orderId) => {
+    try {
+      return await purchaseManager.getOrderById(orderId, getToken());
+    } catch (error) {
+      console.error('[Purchase IPC] get-order-by-id:', error);
+      return { success: false, error: error.message };
+    }
   });
 
-  ipcMain.handle('purchase:get-order-receipt', async (event, orderId) => {
-    return await purchaseManager.getOrderReceipt(orderId, getToken());
+  ipcMain.handle('purchase:get-order-receipt', async (_event, orderId) => {
+    try {
+      return await purchaseManager.getOrderReceipt(orderId, getToken());
+    } catch (error) {
+      console.error('[Purchase IPC] get-order-receipt:', error);
+      return { success: false, receipt: null, error: error.message };
+    }
   });
 
   ipcMain.handle('purchase:pay-order', async (event, { orderId, paymentData }) => {

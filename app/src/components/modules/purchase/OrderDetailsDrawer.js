@@ -53,13 +53,13 @@ export function OrderDetailsDrawer(props) {
     }
   };
 
-  const handleViewReceipt = () => {
+  const handleViewReceipt = async () => {
     if (typeof props.onDismissBeforeReceipt === 'function') {
       props.onDismissBeforeReceipt();
     } else {
       onClose();
     }
-    openReceiptModal({ orderId: selectedOrder.id });
+    await openReceiptModal({ orderId: selectedOrder.id });
   };
 
   const isPaymentView = contentType === 'payment';
