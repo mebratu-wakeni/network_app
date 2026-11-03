@@ -609,11 +609,11 @@ function StockTable({ filter, searchQuery, stockList = [], loading = false, ...p
                       const hasPermission = await permissionChecker.checkPermission('CanSeeStockItemDetails', { actionName: 'view stock details' });
                       if (hasPermission) { props.viewModel.openStockDrawer(item, 'view-details'); props.setLocalState('actionId', null); } else { props.setLocalState('actionId', null); }
                     } }),
-                    (item.status === 'borrowed-from' || item.borrowFromId || filter === 'borrowed-from') && item.borrowStatus !== 'returned' && ActionItem({ label: 'Return Borrowed From', icon: 'return-down-back-outline', onClick: async () => {
+                    (item.status === 'borrowed-from' || item.borrowFromId || filter === 'borrowed-from') && (item.remaining ?? 0) > 0 && ActionItem({ label: 'Return Borrowed From', icon: 'return-down-back-outline', onClick: async () => {
                       const hasPermission = await permissionChecker.checkPermission('CanReturnBorrowedFromStock', { actionName: 'return borrowed from items' });
                       if (hasPermission) { props.viewModel.openStockDrawer(item, 'return-borrowed'); props.setLocalState('actionId', null); } else { props.setLocalState('actionId', null); }
                     } }),
-                    (item.status === 'borrowed-to' || item.borrowToId || filter === 'borrowed-to') && item.borrowStatus !== 'returned' && ActionItem({ label: 'Return Borrowed To', icon: 'return-up-forward-outline', onClick: async () => {
+                    (item.status === 'borrowed-to' || item.borrowToId || filter === 'borrowed-to') && (item.remaining ?? 0) > 0 && ActionItem({ label: 'Return Borrowed To', icon: 'return-up-forward-outline', onClick: async () => {
                       const hasPermission = await permissionChecker.checkPermission('CanReturnBorrowedToStock', { actionName: 'return borrowed to items' });
                       if (hasPermission) { props.viewModel.openStockDrawer(item, 'return-borrowed-to'); props.setLocalState('actionId', null); } else { props.setLocalState('actionId', null); }
                     } }),

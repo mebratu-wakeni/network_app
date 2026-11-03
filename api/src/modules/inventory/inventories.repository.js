@@ -3,6 +3,7 @@
  * Encapsulates all database queries for inventories table
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
+import { deriveBorrowObligationStatus } from '../../utils/borrowObligationStatus.js'
 import { rawExpiringSoonUpperBound } from '../../utils/knexDialect.js'
 import { DEFAULT_STOCK_IMPORT_LOCATION } from './importCsvHelpers.js'
 
@@ -844,11 +845,19 @@ export class InventoriesRepository {
       })
       .leftJoin('customers', 'borrow_from_inventories.partner_id', 'customers.id')
     
-    // Filter: show all statuses if includeReturned=true, otherwise exclude fully 'returned'
+    // Filter: open obligations only — use quantities, not stale status column alone
     if (!includeReturned) {
-      query = query.where('borrow_from_inventories.status', '!=', 'returned')
+      query = query.where(function () {
+        this.where('borrow_from_inventories.status', '!=', 'returned').orWhereRaw(
+          `borrow_from_inventories.quantity > COALESCE((
+            SELECT SUM(COALESCE(r.quantity_returned, 0))
+            FROM borrow_from_returns AS r
+            WHERE r.tenant_id = borrow_from_inventories.tenant_id
+              AND r.borrow_from_inventory_id = borrow_from_inventories.id
+          ), 0)`
+        )
+      })
     }
-    // Otherwise show all (active, partially_returned, returned)
 
     // Apply search filter
     if (search && search.trim()) {
@@ -961,8 +970,9 @@ export class InventoriesRepository {
         }
       }
       const remaining = Math.max(0, totalBorrowed - totalReturned)
-      const borrowStatus = item.status || 'active' // 'active', 'partially_returned', 'returned'
-      
+      const borrowStatus = deriveBorrowObligationStatus(totalBorrowed, totalReturned)
+      const storedStatus = item.status || 'active'
+
       return {
         id: item.id,
         borrowFromId: item.id, // borrow_from_inventories id
@@ -980,7 +990,8 @@ export class InventoriesRepository {
         expiryDate: item.expiry_date,
         batchNumber: item.batch_no,
         status: 'borrowed-from', // UI status for filtering
-        borrowStatus: borrowStatus, // Actual borrow status: 'active', 'partially_returned', 'returned'
+        borrowStatus,
+        storedBorrowStatus: storedStatus,
         expiry_threshold: 30, // Default, can be enhanced later
         product: {
           expiry_threshold: 30
@@ -1059,11 +1070,18 @@ export class InventoriesRepository {
           .andOn('borrow_to_inventories.tenant_id', 'inventories.tenant_id')
       })
     
-    // Filter: show all statuses if includeReturned=true, otherwise exclude fully 'returned'
     if (!includeReturned) {
-      query = query.where('borrow_to_inventories.status', '!=', 'returned')
+      query = query.where(function () {
+        this.where('borrow_to_inventories.status', '!=', 'returned').orWhereRaw(
+          `borrow_to_inventories.quantity > COALESCE((
+            SELECT SUM(COALESCE(r.quantity_returned, 0))
+            FROM borrow_to_returns AS r
+            WHERE r.tenant_id = borrow_to_inventories.tenant_id
+              AND r.borrow_to_inventory_id = borrow_to_inventories.id
+          ), 0)`
+        )
+      })
     }
-    // Otherwise show all (active, partially_returned, returned)
 
     // Apply search filter
     if (search && search.trim()) {
@@ -1134,8 +1152,9 @@ export class InventoriesRepository {
       const totalBorrowed = parseInt(item.quantity, 10) || 0
       const totalReturned = returnDataMap.get(borrowToId) || 0
       const remaining = Math.max(0, totalBorrowed - totalReturned)
-      const borrowStatus = item.status || 'active' // 'active', 'partially_returned', 'returned'
-      
+      const borrowStatus = deriveBorrowObligationStatus(totalBorrowed, totalReturned)
+      const storedStatus = item.status || 'active'
+
       return {
         id: item.id,
         borrowToId: item.id, // borrow_to_inventories id
@@ -1153,7 +1172,8 @@ export class InventoriesRepository {
         expiryDate: item.expiry_date,
         batchNumber: item.batch_no,
         status: 'borrowed-to', // UI status for filtering
-        borrowStatus: borrowStatus, // Actual borrow status: 'active', 'partially_returned', 'returned'
+        borrowStatus,
+        storedBorrowStatus: storedStatus,
         expiry_threshold: 30, // Default, can be enhanced later
         product: {
           expiry_threshold: 30
@@ -1176,6 +1196,88 @@ export class InventoriesRepository {
       stock: transformedStock,
       total: parseInt(total || 0, 10)
     }
+  }
+
+  /**
+   * Reconcile borrow_from_inventories.status from return quantities (fixes stale "returned" rows).
+   * @param {number} tenantId
+   * @param {{ dryRun?: boolean }} opts
+   */
+  async reconcileBorrowFromInventoryStatuses(tenantId, opts = {}) {
+    const dryRun = opts.dryRun !== false
+    const tableExists = await this.knex.schema.hasTable('borrow_from_inventories')
+    if (!tableExists) return { dryRun, updated: [], count: 0 }
+
+    const rows = await this.knex('borrow_from_inventories').where({ tenant_id: tenantId }).select('*')
+    const updated = []
+
+    for (const row of rows) {
+      const totalBorrowed = parseInt(row.quantity, 10) || 0
+      const totalReturned = await this._sumReturnedQuantityForBorrowFrom(tenantId, Number(row.id), row)
+      const derived = deriveBorrowObligationStatus(totalBorrowed, totalReturned)
+      const stored = row.status || 'active'
+      if (derived !== stored) {
+        updated.push({
+          id: Number(row.id),
+          from: stored,
+          to: derived,
+          totalBorrowed,
+          totalReturned,
+          remaining: Math.max(0, totalBorrowed - totalReturned),
+        })
+        if (!dryRun) {
+          await this.knex('borrow_from_inventories')
+            .where({ id: row.id, tenant_id: tenantId })
+            .update({ status: derived, last_updated: this.knex.fn.now() })
+        }
+      }
+    }
+
+    return { dryRun, updated, count: updated.length }
+  }
+
+  /**
+   * Reconcile borrow_to_inventories.status from borrow_to_returns sums.
+   */
+  async reconcileBorrowToInventoryStatuses(tenantId, opts = {}) {
+    const dryRun = opts.dryRun !== false
+    const tableExists = await this.knex.schema.hasTable('borrow_to_inventories')
+    if (!tableExists) return { dryRun, updated: [], count: 0 }
+
+    const returnsTableExists = await this.knex.schema.hasTable('borrow_to_returns')
+    const rows = await this.knex('borrow_to_inventories').where({ tenant_id: tenantId }).select('*')
+    const updated = []
+
+    for (const row of rows) {
+      const totalBorrowed = parseInt(row.quantity, 10) || 0
+      let totalReturned = 0
+      if (returnsTableExists) {
+        const sumRow = await this.knex('borrow_to_returns')
+          .where({ tenant_id: tenantId, borrow_to_inventory_id: row.id })
+          .sum('quantity_returned as total')
+          .first()
+        totalReturned = parseInt(sumRow?.total, 10) || 0
+      }
+      const derived = deriveBorrowObligationStatus(totalBorrowed, totalReturned)
+      const stored = row.status || 'active'
+      if (derived !== stored) {
+        updated.push({
+          id: Number(row.id),
+          from: stored,
+          to: derived,
+          totalBorrowed,
+          totalReturned,
+          remaining: Math.max(0, totalBorrowed - totalReturned),
+        })
+        if (!dryRun) {
+          await this.knex('borrow_to_inventories')
+            .where({ id: row.id, tenant_id: tenantId })
+            .update({ status: derived, last_updated: this.knex.fn.now() })
+        }
+      }
+    }
+
+    return { dryRun, updated, count: updated.length }
   }
 
   /**
@@ -2478,10 +2580,22 @@ export class InventoriesRepository {
         0
       )
 
+      let isSettled = finalBorrow?.status === 'returned'
+      if (finalBorrow) {
+        const totalReturnedAfter = await this._sumReturnedQuantityForBorrowFrom(
+          tenantId,
+          borrow_from_inventory_id_value,
+          finalBorrow,
+          trx
+        )
+        isSettled =
+          deriveBorrowObligationStatus(finalBorrow.quantity, totalReturnedAfter) === 'returned'
+      }
+
       return {
         success: true,
         borrowReturnIds: processedReturns.map(r => r.borrowReturnId),
-        isSettled: finalBorrow?.status === 'returned',
+        isSettled,
         obligationUnitCost: processedReturns[0]?.obligationUnitCost ?? null,
         totalQuantityReturned,
         processedReturns

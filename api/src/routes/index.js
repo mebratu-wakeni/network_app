@@ -25,7 +25,9 @@ router.get('/health', (_req, res) =>
     /** Bump when sales withhold SQL changes — desktop can log if stat filters fail. */
     sales_withhold_sql: 'pg-boolean-v2',
     /** Receipt payload includes order_meta.is_reversed + top-level reversed (SO watermark). */
-    sales_receipt_meta: 'v2-is-reversed'
+    sales_receipt_meta: 'v2-is-reversed',
+    /** List/detail borrow obligation status derived from return quantities, not stale DB status alone. */
+    borrow_obligation_status: 'v2-qty-derived'
   })
 )
 router.get('/db-health', async (_req, res, next) => {

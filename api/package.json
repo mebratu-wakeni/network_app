@@ -20,6 +20,7 @@
     "db:diagnose-ledger": "node scripts/diagnose-ledger.js",
     "db:clear-financial": "node scripts/clear-financial-data.js",
     "db:reset-operational-full": "node scripts/clear-financial-data.js --yes --scope=full",
+    "db:reconcile-borrow-status": "node scripts/reconcile-borrow-obligation-status.js",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

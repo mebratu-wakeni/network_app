@@ -55,8 +55,10 @@ jobs:
           grep -q 'pg-boolean-v2' api/src/app.js
           grep -q 'pg-boolean-v2' api/src/routes/index.js
           grep -q 'v2-is-reversed' api/src/routes/index.js
+          grep -q 'v2-qty-derived' api/src/routes/index.js
           grep -q 'reversed,' api/src/modules/sales/sales.repository.js
-          echo "OK: Postgres withhold SQL + sales receipt reversed meta found in checkout"
+          grep -q 'deriveBorrowObligationStatus' api/src/modules/inventory/inventories.repository.js
+          echo "OK: Postgres withhold SQL + sales receipt reversed + borrow obligation qty-derived status found in checkout"
 
       - name: Stage restart.txt
         shell: bash
@@ -98,10 +100,12 @@ jobs:
 
           FILES=(
             api/src/utils/salesWithhold.js
+            api/src/utils/borrowObligationStatus.js
             api/src/modules/sales/sales.repository.js
             api/src/modules/financial/financial.repository.js
             api/src/modules/sales/sales.service.js
             api/src/modules/purchase/purchase.repository.js
+            api/src/modules/inventory/inventories.repository.js
             api/src/services/ledger.helper.js
             api/src/app.js
             api/src/routes/index.js
@@ -128,5 +132,9 @@ jobs:
           }
           echo "$body" | grep -q 'v2-is-reversed' || {
             echo "::warning::Health check missing sales_receipt_meta=v2-is-reversed (API may still be old build)"
+            exit 0
+          }
+          echo "$body" | grep -q 'v2-qty-derived' || {
+            echo "::warning::Health check missing borrow_obligation_status=v2-qty-derived (API may still be old build)"
             exit 0
           }
