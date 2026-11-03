@@ -18,6 +18,7 @@ on:
       - release/managed-cloud
     paths:
       - 'api/**'
+      - 'masatech-admin/**'
       - '.github/workflows/deploy-managed-api-ftps-hotfix.yml'
 
 permissions:
@@ -148,3 +149,66 @@ jobs:
             echo "::warning::Health check missing borrow_obligation_status=v2-qty-derived (API may still be old build)"
             exit 0
           }
+
+  deploy-admin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.git_ref || github.ref }}
+
+      - name: Check downloads secrets
+        shell: bash
+        env:
+          DOWNLOADS_HOST: ${{ secrets.DOWNLOADS_HOST }}
+          DOWNLOADS_USERNAME: ${{ secrets.DOWNLOADS_USERNAME }}
+          DOWNLOADS_PASSWORD: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          missing=0
+          [ -z "$DOWNLOADS_HOST" ] && echo "Missing secret: DOWNLOADS_HOST" && missing=1
+          [ -z "$DOWNLOADS_USERNAME" ] && echo "Missing secret: DOWNLOADS_USERNAME" && missing=1
+          [ -z "$DOWNLOADS_PASSWORD" ] && echo "Missing secret: DOWNLOADS_PASSWORD" && missing=1
+          [ -z "$DOWNLOADS_SERVER_DIR" ] && echo "Missing secret: DOWNLOADS_SERVER_DIR" && missing=1
+          exit $missing
+
+      - name: Build masatech-admin
+        shell: bash
+        working-directory: masatech-admin
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html
+
+      - name: Upload admin static via FTPS
+        shell: bash
+        env:
+          HOST: ${{ secrets.DOWNLOADS_HOST }}
+          USER: ${{ secrets.DOWNLOADS_USERNAME }}
+          PASS: ${{ secrets.DOWNLOADS_PASSWORD }}
+          DOWNLOADS_SERVER_DIR: ${{ secrets.DOWNLOADS_SERVER_DIR }}
+        run: |
+          set -euo pipefail
+          SERVER_DIR="${DOWNLOADS_SERVER_DIR%/}"
+          DOMAIN_ROOT="$(dirname "$(dirname "$SERVER_DIR")")"
+
+          curl_put() {
+            local local_path="$1"
+            local remote_rel="$2"
+            echo "put ftp://${HOST}/${DOMAIN_ROOT}/${remote_rel}"
+            curl -sS --fail --ftp-ssl --insecure --ftp-pasv \
+              --connect-timeout 30 --max-time 300 \
+              --retry 3 --retry-delay 5 \
+              --user "${USER}:${PASS}" \
+              -T "${local_path}" \
+              "ftp://${HOST}/${DOMAIN_ROOT}/${remote_rel}"
+          }
+
+          while IFS= read -r -d '' f; do
+            rel="masatech-admin/dist/${f#masatech-admin/dist/}"
+            curl_put "$f" "$rel"
+            curl_put "$f" "api/admin-dist/${f#masatech-admin/dist/}"
+          done < <(find masatech-admin/dist -type f -print0)
+
+          echo "Admin FTPS upload complete"

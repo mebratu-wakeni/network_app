@@ -65,6 +65,13 @@ function CreateModal({ onClose, onCreated }) {
 
         <div className="text-sm text-slate-600 space-y-1 bg-slate-50 rounded-lg px-4 py-3 border border-slate-100">
           <div><span className="font-medium">Business:</span> {created.business_name}</div>
+          {created.id != null && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-medium">Tenant ID:</span>
+              <span className="font-mono text-sm font-bold text-slate-800">{created.id}</span>
+              <span className="text-xs text-slate-400">(for ops scripts e.g. borrow status reconcile)</span>
+            </div>
+          )}
           <div><span className="font-medium">Admin login:</span> {form.adminUsername}</div>
           <div className="text-xs text-slate-400 mt-1">
             The customer connects with server URL + tenant code, then signs in with the admin username/password you set.
@@ -197,7 +204,8 @@ export default function TenantList({ onSelect }) {
         t.business_name?.toLowerCase().includes(q) ||
         t.client_code?.toLowerCase().includes(q) ||
         t.contact_name?.toLowerCase().includes(q) ||
-        t.email?.toLowerCase().includes(q)
+        t.email?.toLowerCase().includes(q) ||
+        String(t.id ?? '').includes(q)
       )
     }
     setItems(filtered)
@@ -233,7 +241,7 @@ export default function TenantList({ onSelect }) {
         <input
           type="search" value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by business name, tenant code, contact, or email…"
+          placeholder="Search by business name, tenant code, tenant ID, contact, or email…"
           className="flex-1 border border-slate-300 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
         />
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
@@ -262,6 +270,7 @@ export default function TenantList({ onSelect }) {
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/70">
                 <th className="text-left px-5 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wide">Business</th>
+                <th className="text-left px-5 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wide hidden lg:table-cell w-24">Tenant ID</th>
                 <th className="text-left px-5 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wide hidden md:table-cell">Tenant Code</th>
                 <th className="text-left px-5 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wide hidden sm:table-cell">Contact</th>
                 <th className="text-left px-5 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wide hidden sm:table-cell">Created</th>
@@ -279,6 +288,19 @@ export default function TenantList({ onSelect }) {
                   <td className="px-5 py-4">
                     <div className="font-medium text-slate-800">{t.business_name}</div>
                     {t.email && <div className="text-xs text-slate-400 mt-0.5">{t.email}</div>}
+                  </td>
+                  <td className="px-5 py-4 hidden lg:table-cell">
+                    <button
+                      type="button"
+                      title="Copy tenant ID"
+                      className="font-mono text-xs text-slate-600 bg-slate-100 hover:bg-indigo-100 px-2 py-0.5 rounded"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        navigator.clipboard.writeText(String(t.id))
+                      }}
+                    >
+                      {t.id}
+                    </button>
                   </td>
                   <td className="px-5 py-4 hidden md:table-cell">
                     <span className="font-mono text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded">{t.client_code}</span>

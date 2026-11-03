@@ -82,6 +82,7 @@ export default function TenantDetail({ tenantId, onBack }) {
   const [actionError, setActionError] = useState(null)
   const [actionSuccess, setActionSuccess] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [copiedId, setCopiedId] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -129,6 +130,12 @@ export default function TenantDetail({ tenantId, onBack }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  function copyTenantId() {
+    navigator.clipboard.writeText(String(tenant.id))
+    setCopiedId(true)
+    setTimeout(() => setCopiedId(false), 2000)
+  }
+
   if (loading) return <div className="flex items-center justify-center py-24 text-slate-400 text-sm">Loading…</div>
   if (error) return (
     <div className="flex flex-col items-center gap-3 py-24">
@@ -160,8 +167,16 @@ export default function TenantDetail({ tenantId, onBack }) {
             </p>
           )}
 
-          {/* Tenant code */}
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className="text-xs text-slate-400">Tenant ID:</span>
+            <span className="font-mono text-sm font-bold text-slate-800">{tenant.id}</span>
+            <button onClick={copyTenantId} className="text-slate-400 hover:text-indigo-600 transition" title="Copy tenant ID">
+              {copiedId
+                ? <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                : <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+              }
+            </button>
+            <span className="text-xs text-slate-300 hidden sm:inline">|</span>
             <span className="text-xs text-slate-400">Tenant Code:</span>
             <span className="font-mono text-base font-bold text-indigo-700 tracking-wider">{tenant.client_code}</span>
             <button onClick={copyCode} className="text-slate-400 hover:text-indigo-600 transition" title="Copy code">
