@@ -110,6 +110,7 @@ jobs:
             api/src/services/ledger.helper.js
             api/src/app.js
             api/src/routes/index.js
+            api/scripts/reconcile-borrow-obligation-status.js
           )
           shopt -s nullglob
           for util in api/src/utils/*.js; do
