@@ -143,7 +143,8 @@ export function createApp() {
     res.json({
       ok: true,
       sales_withhold_sql: 'pg-boolean-v2',
-      sales_receipt_meta: 'v2-is-reversed'
+      sales_receipt_meta: 'v2-is-reversed',
+      borrow_obligation_status: 'v2-qty-derived'
     })
   )
   app.get('/api/db-health', async (_req, res, next) => {

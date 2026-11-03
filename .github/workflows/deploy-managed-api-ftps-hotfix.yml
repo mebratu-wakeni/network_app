@@ -101,18 +101,20 @@ jobs:
             --list-only "ftp://${HOST}/${DOMAIN_ROOT}/" | head -20
 
           FILES=(
-            api/src/utils/salesWithhold.js
-            api/src/utils/knexDialect.js
-            api/src/utils/borrowObligationStatus.js
             api/src/modules/sales/sales.repository.js
             api/src/modules/financial/financial.repository.js
             api/src/modules/sales/sales.service.js
             api/src/modules/purchase/purchase.repository.js
             api/src/modules/inventory/inventories.repository.js
+            api/src/modules/inventory/importCsvHelpers.js
             api/src/services/ledger.helper.js
             api/src/app.js
             api/src/routes/index.js
           )
+          shopt -s nullglob
+          for util in api/src/utils/*.js; do
+            FILES+=("$util")
+          done
 
           for rel in "${FILES[@]}"; do
             test -f "$rel" || { echo "Missing $rel"; exit 1; }
