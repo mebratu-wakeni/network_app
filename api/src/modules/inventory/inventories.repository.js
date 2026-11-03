@@ -3,8 +3,17 @@
  * Encapsulates all database queries for inventories table
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
-import { deriveBorrowObligationStatus } from '../../utils/borrowObligationStatus.js'
 import { rawExpiringSoonUpperBound } from '../../utils/knexDialect.js'
+
+/** @see ../../utils/borrowObligationStatus.js — duplicated here so FTPS hotfixes cannot break boot if utils file is missing on disk */
+function deriveBorrowObligationStatus(totalBorrowed, totalReturned) {
+  const borrowed = parseInt(totalBorrowed, 10) || 0
+  const returned = parseInt(totalReturned, 10) || 0
+  const remaining = Math.max(0, borrowed - returned)
+  if (remaining <= 0) return 'returned'
+  if (returned > 0) return 'partially_returned'
+  return 'active'
+}
 import { DEFAULT_STOCK_IMPORT_LOCATION } from './importCsvHelpers.js'
 
 export class InventoriesRepository {
