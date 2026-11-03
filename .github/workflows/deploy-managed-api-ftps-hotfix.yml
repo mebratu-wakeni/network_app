@@ -58,7 +58,9 @@ jobs:
           grep -q 'v2-qty-derived' api/src/routes/index.js
           grep -q 'reversed,' api/src/modules/sales/sales.repository.js
           grep -q 'deriveBorrowObligationStatus' api/src/modules/inventory/inventories.repository.js
-          echo "OK: Postgres withhold SQL + sales receipt reversed + borrow obligation qty-derived status found in checkout"
+          grep -q 'knexDialect.js' api/src/modules/inventory/inventories.repository.js
+          test -f api/src/utils/knexDialect.js
+          echo "OK: Postgres withhold SQL + sales receipt reversed + borrow obligation + knexDialect present in checkout"
 
       - name: Stage restart.txt
         shell: bash
@@ -100,6 +102,7 @@ jobs:
 
           FILES=(
             api/src/utils/salesWithhold.js
+            api/src/utils/knexDialect.js
             api/src/utils/borrowObligationStatus.js
             api/src/modules/sales/sales.repository.js
             api/src/modules/financial/financial.repository.js
@@ -126,6 +129,10 @@ jobs:
           sleep 15
           body="$(curl -sS --max-time 30 https://server.masatechplc.com/api/health || true)"
           echo "$body"
+          echo "$body" | grep -q '"ok":true' || {
+            echo "::error::Live /api/health did not return JSON ok:true — check api/startup-error.log on server (partial FTPS may omit imports)"
+            exit 1
+          }
           echo "$body" | grep -q 'pg-boolean-v2' || {
             echo "::warning::Health check did not yet show sales_withhold_sql=pg-boolean-v2 (Passenger may still be restarting)"
             exit 0

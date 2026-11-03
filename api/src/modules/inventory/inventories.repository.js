@@ -4,6 +4,7 @@
  */
 import { LedgerHelper } from '../../services/ledger.helper.js'
 import { rawExpiringSoonUpperBound } from '../../utils/knexDialect.js'
+import { DEFAULT_STOCK_IMPORT_LOCATION } from './importCsvHelpers.js'
 
 /** @see ../../utils/borrowObligationStatus.js — duplicated here so FTPS hotfixes cannot break boot if utils file is missing on disk */
 function deriveBorrowObligationStatus(totalBorrowed, totalReturned) {
@@ -14,7 +15,6 @@ function deriveBorrowObligationStatus(totalBorrowed, totalReturned) {
   if (returned > 0) return 'partially_returned'
   return 'active'
 }
-import { DEFAULT_STOCK_IMPORT_LOCATION } from './importCsvHelpers.js'
 
 export class InventoriesRepository {
   constructor(knex) {
